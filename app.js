@@ -653,13 +653,13 @@ const coordOf = q => ovr(q) || gc.cache[gKey(q)];
 const knownQ = q => !!ovr(q) || (gKey(q) in gc.cache);
 function dayWaypoints(di) {
   const p = data.plan, d = p && p.days[di]; if (!d) return [];
-  const out = [], add = (n, t) => {
+  const out = [], add = (n, t, how) => {
     if (!n) return; const q = qName(n); if (!q) return;
     if (GENERIC.test(n.trim()) && !ovr(q)) return;
-    if (out.length && out[out.length - 1].q === q) return;
-    out.push({ name: n.trim(), q, time: t || '', di, day: dayTitle(d, di) });
+    if (out.length && out[out.length - 1].q === q) { if (how && !out[out.length - 1].how) out[out.length - 1].how = how; return; }
+    out.push({ name: n.trim(), q, time: t || '', di, day: dayTitle(d, di), how: how || '' });
   };
-  d.steps.forEach((st, k) => { if (k === 0) add(st.from, st.time); add(st.to, st.toTime || st.time); });
+  d.steps.forEach((st, k) => { if (k === 0) add(st.from, st.time, ''); add(st.to, st.toTime || st.time, st.how); });
   return out;
 }
 function scopeDays() {
@@ -699,20 +699,26 @@ async function runGeocode() {
   } catch { } finally { gc.running = false; const rf = ui.refit; ui.refit = false; drawMap(rf); renderPlaces(); }
 }
 const bearing = (a, b) => Math.atan2(-(b.lat - a.lat), (b.lng - a.lng) * Math.cos(a.lat * Math.PI / 180)) * 180 / Math.PI;
+const legIcon = (how, color) => L.divIcon({ className: '', iconSize: [0, 0], iconAnchor: [0, 0], html: `<div class="seglbl" style="--c:${color}">${howIcon(how, false)} ${esc(String(how).length > 20 ? String(how).slice(0, 20) + '…' : how)}</div>` });
 const arrowIcon = (deg, color) => L.divIcon({ className: '', iconSize: [20, 20], iconAnchor: [10, 10], html: `<svg viewBox="0 0 24 24" width="20" height="20" style="transform:rotate(${deg}deg);display:block"><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>` });
 function drawPlaces() {
   if (!map || !plLayer) return []; plLayer.clearLayers();
   if (!ui.f.route) return [];
-  const all = [];
+  const all = []; let counter = 0; const continuous = ui.placeDay === 'all';
   for (const di of scopeDays()) {
     const color = COLORS[di % 8], seq = dayWaypoints(di).map(w => ({ ...w, c: coordOf(w.q) })).filter(w => w.c), ll = seq.map(w => [w.c.lat, w.c.lng]);
     all.push(...ll);
     if (ll.length > 1) {
       L.polyline(ll, { color: '#fff', weight: 9, opacity: .95, lineCap: 'round' }).addTo(plLayer);
       L.polyline(ll, { color, weight: 4, opacity: 1, dashArray: '10 9', lineCap: 'round' }).addTo(plLayer);
-      for (let i = 0; i < seq.length - 1; i++) { const a = seq[i].c, b = seq[i + 1].c; if (distM(a, b) < 80) continue; L.marker([(a.lat + b.lat) / 2, (a.lng + b.lng) / 2], { icon: arrowIcon(bearing(a, b), color), interactive: false }).addTo(plLayer); }
+      for (let i = 0; i < seq.length - 1; i++) {
+        const a = seq[i].c, b = seq[i + 1].c, d = distM(a, b), how = seq[i + 1].how; if (d < 80) continue;
+        const at = f => [a.lat + (b.lat - a.lat) * f, a.lng + (b.lng - a.lng) * f];
+        L.marker(at(how && d >= 150 ? .66 : .5), { icon: arrowIcon(bearing(a, b), color), interactive: false }).addTo(plLayer);
+        if (how && d >= 150) L.marker(at(.36), { icon: legIcon(how, color), interactive: false, zIndexOffset: 300 }).addTo(plLayer);
+      }
     }
-    seq.forEach((w, k) => L.marker([w.c.lat, w.c.lng], { icon: placeIcon(k + 1, di), zIndexOffset: 500 }).addTo(plLayer).bindPopup(`<b>${k + 1}. ${esc(w.name)}</b><br>${esc(w.day)} ${esc(w.time)}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${w.c.lat},${w.c.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`));
+    seq.forEach((w, k) => { const num = continuous ? ++counter : k + 1; L.marker([w.c.lat, w.c.lng], { icon: placeIcon(num, di), zIndexOffset: 500 }).addTo(plLayer).bindPopup(`<b>${num}. ${esc(w.name)}</b><br>${esc(w.day)} ${esc(w.time)}${w.how ? `<br>มาโดย ${howIcon(w.how, false)} ${esc(w.how)}` : ''}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${w.c.lat},${w.c.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`); });
   }
   return all;
 }
@@ -732,14 +738,15 @@ function renderPlaces() {
   const cur = ui.placeDay != null ? ui.placeDay : (ui.day || 0), days = scopeDays();
   const needHotel = !ovr('ที่พัก') && p.days.some(d => d.steps.some(s => /^ที่พัก$/.test((s.from || '').trim()) || /^ที่พัก$/.test((s.to || '').trim())));
   let h = `<div class="card"><div class="row2"><h3>เส้นทางตามแผน</h3><select class="dropdown" id="placeSel"><option value="none" ${cur === 'none' ? 'selected' : ''}>ซ่อน</option><option value="all" ${cur === 'all' ? 'selected' : ''}>ทั้งทริป</option>${p.days.map((d, i) => `<option value="${i}" ${cur === i ? 'selected' : ''}>${esc(dayTitle(d, i))}</option>`).join('')}</select></div>`;
-  let n = 0;
+  let n = 0, counter = 0; const continuous = ui.placeDay === 'all';
   for (const di of days) {
     const wps = dayWaypoints(di); if (days.length > 1 && wps.length) h += `<div class="dgroup" style="margin:10px 0 2px!important">${esc(dayTitle(p.days[di], di))}</div>`;
     let seq = 0;
     wps.forEach((x, k) => {
       const c = coordOf(x.q), st = !knownQ(x.q) ? '⏳' : c ? '' : 'ตั้งพิกัด'; if (!knownQ(x.q)) n++;
-      if (c) seq++;
-      h += `<button class="pl" data-d="${di}" data-k="${k}"><span class="plc sm" style="--c:${c ? COLORS[di % 8] : '#94a3b8'}">${c ? seq : '–'}</span><div><b>${esc(x.name)}</b><small>${x.time ? esc(x.time) : ''}</small></div>${st ? `<span class="chip">${st}</span>` : ''}</button>`;
+      if (c) { seq++; counter++; }
+      const num = continuous ? counter : seq;
+      h += `<button class="pl" data-d="${di}" data-k="${k}"><span class="plc sm" style="--c:${c ? COLORS[di % 8] : '#94a3b8'}">${c ? num : '–'}</span><div><b>${esc(x.name)}</b><small>${[x.time, x.how ? howIcon(x.how, false) + ' ' + x.how : ''].filter(Boolean).map(esc).join(' · ')}</small></div>${st ? `<span class="chip">${st}</span>` : ''}</button>`;
     });
   }
   if (n) h += `<small>กำลังค้นหาพิกัด…</small>`;
