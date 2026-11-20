@@ -30,7 +30,7 @@ if (cfg.v !== 5) {
 const saveCfg = () => store.set('tt.cfg', cfg);
 const trip = () => cfg.trips.find(t => t.id === cfg.active) || cfg.trips[0];
 let me = sess.get('tt.me') || '';
-let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, me: null, meLabel: '' };
+let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], me: null, meLabel: '' };
 const ui = { tab: 'plan', day: null, exFilter: 'all', cur: null, edit: false, dirty: false, saving: false, loaded: false };
 
 /* ---------- CSV / Sheets ---------- */
@@ -161,11 +161,18 @@ function parseLocations(rows) {
   for (const r of rows.slice(1)) { const la = num(r[ix.lat])[0], lo = num(r[ix.lng])[0]; if (r[ix.n] && la != null && lo != null) out[r[ix.n]] = { lat: la, lng: lo, label: r[ix.l] || '', at: r[ix.t] || '' }; }
   return out;
 }
+const spotType = t => /food|eat|restaurant|cafe|ร้าน|อาหาร|กิน|คาเฟ่/i.test(t) ? 'food' : /sight|attraction|tour|visit|เที่ยว|สถานที่/i.test(t) ? 'sight' : 'other';
 function parsePlaces(rows) {
   const h = rows[0] || [], ni = colIndex(h, ['name', 'place', 'ชื่อ', 'สถานที่']), la = colIndex(h, ['lat', 'latitude']), lo = colIndex(h, ['lng', 'lon', 'long', 'longitude']);
   if (ni < 0 || la < 0 || lo < 0) return null;
-  const out = {}; rows.slice(1).forEach(r => { const a = num(r[la])[0], b = num(r[lo])[0]; if (r[ni] && a != null && b != null) out[norm(r[ni])] = { lat: a, lng: b }; });
-  return out;
+  const ti = colIndex(h, ['type', 'ประเภท', 'kind']), mi = colIndex(h, ['meal', 'มื้อ']), ci = colIndex(h, ['cuisine', 'อาหาร']), no = colIndex(h, ['note', 'โน้ต', 'หมายเหตุ']);
+  const over = {}, spots = [], g = (r, i) => i >= 0 ? (r[i] || '') : '';
+  rows.slice(1).forEach(r => {
+    const a = num(r[la])[0], b = num(r[lo])[0]; if (!(r[ni] && a != null && b != null)) return;
+    over[norm(r[ni])] = { lat: a, lng: b };
+    const t = g(r, ti).trim(); if (t) spots.push({ name: r[ni], lat: a, lng: b, type: spotType(t), meal: g(r, mi), cuisine: g(r, ci), note: g(r, no), src: 'sheet' });
+  });
+  return { over, spots };
 }
 const users = () => data.users;
 const colorOf = n => { const i = users().findIndex(u => u.name === n); return COLORS[(i < 0 ? String(n).length : i) % COLORS.length]; };
@@ -213,14 +220,14 @@ const sameAsPlan = r => rawPlanHead && (r[0] || []).join('|') === rawPlanHead;
 async function load() {
   const t = trip(); $('#tripTitle').textContent = t.name;
   const keep = { me: data.me, meLabel: data.meLabel };
-  const next = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, ...keep };
+  const next = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], ...keep };
   const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r); });
   await Promise.allSettled([planP]);
   const rest = [
     async () => { next.users = parseUsers(await fetchTab(t, { name: t.usersTab })) || []; },
     async () => { next.expenses = parseExpenses(await fetchTab(t, { name: t.expensesTab })) || []; },
     async () => { next.locs = parseLocations(await fetchTab(t, { name: t.locationsTab || 'Locations' })) || {}; },
-    async () => { next.places = parsePlaces(await fetchTab(t, { name: t.placesTab || 'Places' })) || {}; },
+    async () => { const pl = parsePlaces(await fetchTab(t, { name: t.placesTab || 'Places' })) || { over: {}, spots: [] }; next.places = pl.over; next.spots = pl.spots; },
     async () => { if (t.costTab) { const r = await fetchTab(t, { name: t.costTab }); next.costs = sameAsPlan(r) ? null : parseTable(r); } },
     async () => { for (const n of String(t.extraTabs || '').split(',').map(x => x.trim()).filter(Boolean)) { try { const r = await fetchTab(t, { name: n }); if (!sameAsPlan(r)) next.extra.push({ name: n, rows: parseTable(r) }); } catch { } } }
   ];
@@ -291,6 +298,7 @@ function renderPlan() {
   const d = p.days[ui.day], wd = d.dt && !isPast(d) ? d.dt.toLocaleDateString('th-TH', { weekday: 'long' }) : '';
   let h = `<div class="days">${p.days.map(pill).join('')}${ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : ''}</div>`;
   h += `<div class="dayh"><div><h2>${esc(dayTitle(d, ui.day))}</h2><small>${[wd, d.city].filter(Boolean).map(esc).join(' · ')}${isToday(d) ? ' <span class="chip">วันนี้</span>' : ''}</small></div><button class="edit-btn ${ui.edit ? 'on' : ''}" id="editBtn">${ui.edit ? 'เสร็จ' : '<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>แก้ไข'}</button></div>`;
+  if (isToday(d) && !ui.edit) { const sl = slotOf(), nm = { morning: 'อาหารเช้า', lunch: 'อาหารกลางวัน', afternoon: 'คาเฟ่/ของว่าง', dinner: 'อาหารเย็น', late: 'ของกินยามดึก' }[sl]; h += `<button class="nudge" id="nudge"><span>🍽</span><div><b>ถึงเวลา${nm}แล้ว</b><small>ดูร้านแนะนำใกล้ๆ ที่แวะได้</small></div></button>`; }
   h += `<div class="tl ${ui.edit ? 'editing' : ''}" id="tl">` + d.steps.map((s, k) => `<div class="step" data-i="${k}"><div class="step-t">${esc(s.time || '')}${s.toTime ? `<small>→ ${esc(s.toTime)}</small>` : ''}</div><div class="step-c"><div class="step-i">${howIcon(s.how, !!s.text)}</div><div class="step-b">
     ${s.text ? `<div>${link(s.text)}</div>` : ''}${(s.from || s.to) ? `<div class="route">${ui.edit ? esc(s.from) : mapLink(s.from)}${s.to ? ' <span class="arrow">→</span> ' + (ui.edit ? esc(s.to) : mapLink(s.to)) : ''}</div>` : ''}
     ${s.city ? `<span class="chip">${esc(s.city)}</span>` : ''}${s.how ? `<span class="chip">${esc(s.how)}</span>` : ''}${s.tickets ? `<span class="chip">🎫 ${esc(s.tickets)}</span>` : ''}
@@ -303,6 +311,7 @@ function renderPlan() {
   const sel = $('.pill.sel', el); sel && sel.scrollIntoView({ inline: 'center', block: 'nearest' });
   $$('.pill[data-day]', el).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; renderPlan(); });
   $('#editBtn').onclick = toggleEdit;
+  const nd = $('#nudge'); if (nd) nd.onclick = () => { ui.spotView = 'near'; ui.nearKind = null; ui.nearState = null; $('[data-tab=spots]').click(); };
   if (ui.edit) {
     $('#addStep').onclick = () => stepDialog(null);
     const ad = $('#addDay'); if (ad) ad.onclick = addDay;
@@ -406,8 +415,7 @@ function tableCard(title, rows) {
   if (!rows || !rows.length) return '';
   return `<div class="card"><h3>${esc(title)}</h3><div class="tbl"><table>${rows.map((r, i) => `<tr>${r.map(c => i === 0 ? `<th>${link(c)}</th>` : `<td>${link(c)}</td>`).join('')}</tr>`).join('')}</table></div></div>`;
 }
-function renderBudget() {
-  const el = $('#tab-budget');
+function renderBudget(el) {
   if (!users().length) { el.innerHTML = `<div class="card empty">ยังไม่มีสมาชิก<br><small>สร้างแท็บ “${esc(trip().usersTab)}” ในชีต (คอลัมน์ Name, Budget)</small></div>` + tableCard('ประมาณการ', data.costs); return; }
   const { out, order } = calcAll(); if (!ui.cur || !out[ui.cur]) ui.cur = order[0];
   const c = out[ui.cur], cur = ui.cur, who = me || users()[0].name, mine = c.list.find(u => u.name === who) || c.list[0];
@@ -429,14 +437,19 @@ function renderBudget() {
 
 /* ---------- expenses ---------- */
 const TYPE_TH = { shared: 'ส่วนกลาง', personal: 'ส่วนตัว', split: 'ออกให้' };
-function renderExpenses() {
-  const el = $('#tab-expenses');
+function renderExpenses(el) {
   let ex = data.expenses; if (ui.exFilter === 'mine' && me) ex = ex.filter(e => e.payer === me || e.with.includes(me) || (e.type === 'shared' && !e.with.length));
   const groups = {}; ex.forEach(e => (groups[e.date || 'ไม่ระบุวันที่'] = groups[e.date || 'ไม่ระบุวันที่'] || []).push(e));
   let h = `<div class="seg"><button data-f="all" class="${ui.exFilter === 'all' ? 'on' : ''}">ทั้งหมด</button><button data-f="mine" class="${ui.exFilter === 'mine' ? 'on' : ''}">เกี่ยวกับฉัน</button></div>`;
   h += Object.entries(groups).reverse().map(([d, list]) => `<div class="dgroup">${esc(d)}</div>` + list.slice().reverse().map(e => `<div class="ex">${avatar(e.payer)}<div><div class="it">${esc(e.item || '—')}</div><small>${esc(e.payer)} · ${TYPE_TH[e.type]}${e.cat ? ' · ' + esc(e.cat) : ''}${e.with.length ? ' · ' + esc(e.with.join(', ')) : ''}</small></div><div class="am">${fmt(e.amount)}<small style="display:block;font-weight:400">${esc(e.cur)}</small></div></div>`).join('')).join('') || '<div class="empty">ยังไม่มีรายการ<br><small>กด + เพื่อเพิ่มค่าใช้จ่าย</small></div>';
-  el.innerHTML = h + '<button class="fab" id="addExp" aria-label="เพิ่มค่าใช้จ่าย"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>';
-  $$('[data-f]', el).forEach(b => b.onclick = () => { ui.exFilter = b.dataset.f; renderExpenses(); });
+  el.innerHTML = h;
+  $$('[data-f]', el).forEach(b => b.onclick = () => { ui.exFilter = b.dataset.f; renderExpenses(el); });
+}
+function renderMoney() {
+  const el = $('#tab-money'), v = ui.moneyView || 'sum';
+  el.innerHTML = `<div class="seg"><button data-v="sum" class="${v === 'sum' ? 'on' : ''}">สรุป</button><button data-v="list" class="${v === 'list' ? 'on' : ''}">รายการ</button></div><div id="moneyBody"></div><button class="fab" id="addExp" aria-label="เพิ่มค่าใช้จ่าย"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>`;
+  (v === 'list' ? renderExpenses : renderBudget)($('#moneyBody'));
+  $$('[data-v]', el).forEach(b => b.onclick = () => { ui.moneyView = b.dataset.v; renderMoney(); });
   $('#addExp').onclick = expenseDialog;
 }
 async function copyText(t, okMsg) { try { await navigator.clipboard.writeText(t); toast(okMsg); } catch { prompt('คัดลอกข้อความนี้:', t); } }
@@ -536,15 +549,20 @@ async function reverse(lat, lng) {
 }
 
 /* ---------- map ---------- */
-let map, layer, plLayer;
+let map, layer, plLayer, spLayer, sgLayer;
+ui.f = store.get('tt.f', null) || { route: true, food: true, sight: true, other: true, friends: true };
 const pinIcon = (n, isMe) => L.divIcon({ className: '', iconSize: [34, 34], iconAnchor: [17, 34], popupAnchor: [0, -32], html: `<div class="pin ${isMe ? 'me' : ''}" style="--c:${colorOf(n)}"><span>${esc(initial(n))}</span></div>` });
+const SPOT = { food: ['🍽', '#f97316', 'ร้านอาหาร'], sight: ['🏛', '#0ea5e9', 'ที่เที่ยว'], other: ['📌', '#8b5cf6', 'อื่นๆ'] };
+const spotIcon = (type, soft) => L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -14], html: `<div class="spin ${soft ? 'soft' : ''}" style="--c:${SPOT[type][1]}">${SPOT[type][0]}</div>` });
+const sugIcon = kind => L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -12], html: `<div class="spin sug">${kind === 'sight' ? '🏛' : kind === 'cafe' ? '☕' : '🍽'}</div>` });
+const placeIcon = (n, di) => L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -12], html: `<div class="plc" style="--c:${COLORS[di % 8]}">${n}</div>` });
 function ensureMap() {
   const el = $('#map'); if (!el) return false;
   if (map && map._container !== el) { map.remove(); map = null; }
   if (!map) {
     map = L.map(el, { zoomControl: false }).setView([43.25, 76.95], 11);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(map);
-    layer = L.layerGroup().addTo(map); plLayer = L.layerGroup().addTo(map);
+    spLayer = L.layerGroup().addTo(map); plLayer = L.layerGroup().addTo(map); sgLayer = L.layerGroup().addTo(map); layer = L.layerGroup().addTo(map);
   }
   return true;
 }
@@ -553,12 +571,14 @@ function drawMap(fit) {
   layer.clearLayers(); const pts = [];
   const all = { ...data.locs }; if (data.me && me) all[me] = { ...data.me, label: data.meLabel || '' };
   for (const [n, p] of Object.entries(all)) {
+    if (n !== me && !ui.f.friends) continue;
     pts.push([p.lat, p.lng]);
     if (n === me && p.acc) L.circle([p.lat, p.lng], { radius: p.acc, color: '#5b4bf0', weight: 1, fillOpacity: .08 }).addTo(layer);
-    L.marker([p.lat, p.lng], { icon: pinIcon(n, n === me) }).addTo(layer).bindPopup(`<b>${esc(n)}</b><br>${esc(p.label || '')}`);
+    L.marker([p.lat, p.lng], { icon: pinIcon(n, n === me), zIndexOffset: 1000 }).addTo(layer).bindPopup(`<b>${esc(n)}</b><br>${esc(p.label || '')}`);
   }
-  pts.push(...placePts()); drawPlaces();
-  setTimeout(() => { map.invalidateSize(); if (fit && pts.length) pts.length === 1 ? map.setView(pts[0], 16) : map.fitBounds(pts, { maxZoom: 16, padding: [40, 40] }); }, 60);
+  const route = drawPlaces(), spots = drawSpots();
+  const focus = route.length ? [...pts.slice(0, 1), ...route] : [...pts, ...spots];
+  setTimeout(() => { map.invalidateSize(); if (fit && focus.length) focus.length === 1 ? map.setView(focus[0], 16) : map.fitBounds(focus, { maxZoom: 16, padding: [40, 40] }); }, 60);
 }
 const GEO_MSG = {
   idle: ['📍', 'ยังไม่ได้เปิดตำแหน่ง', 'กดปุ่มเพื่ออนุญาตให้แอปตรวจจับตำแหน่งของคุณ'],
@@ -594,14 +614,23 @@ function renderNext() {
   const n = geo.state === 'ok' ? nextStop() : null;
   el.innerHTML = n ? `<div class="card"><small>จุดหมายถัดไป</small><div class="route">${esc(n.to)}</div><div class="btns"><a class="btn pri" target="_blank" rel="noopener" href="${gmDir(n.to)}">นำทางด้วย Google Maps</a><a class="btn" target="_blank" rel="noopener" href="${gmDir(n.to, 'transit')}">ขนส่งสาธารณะ</a></div></div>` : '';
 }
+function renderFilters() {
+  const el = $('#mapFilters'); if (!el) return;
+  const cnt = t => allSpots().filter(s => s.type === t).length;
+  const chip = (k, ic, lb, n) => `<button class="tag ${ui.f[k] ? 'on' : ''}" data-f="${k}">${ic} ${lb}${n != null ? ` <small>${n}</small>` : ''}</button>`;
+  el.innerHTML = chip('route', '🧭', 'แผน') + chip('food', '🍽', 'ร้านอาหาร', cnt('food')) + chip('sight', '🏛', 'ที่เที่ยว', cnt('sight')) + chip('other', '📌', 'อื่นๆ', cnt('other')) + chip('friends', '👥', 'เพื่อน')
+    + (ui.sugPins && ui.sugPins.length ? `<button class="tag on" id="clrSug">✨ แนะนำ ${ui.sugPins.length} ✕</button>` : '');
+  $$('[data-f]', el).forEach(b => b.onclick = () => { const k = b.dataset.f; ui.f[k] = !ui.f[k]; store.set('tt.f', ui.f); renderFilters(); drawMap(false); renderPlaces(); if (k === 'sight' && ui.f.sight) runGeocode(); });
+  const c = $('#clrSug'); if (c) c.onclick = () => { ui.sugPins = []; renderFilters(); drawMap(false); };
+}
 function renderMap() {
   const el = $('#tab-map');
   if (!el.dataset.init) {
     el.dataset.init = 1;
-    el.innerHTML = `<div class="card" id="mapStatus"></div><div id="mapNext"></div><div class="mapwrap"><div id="map"></div><button class="locate" id="bLocate" aria-label="ไปที่ตำแหน่งฉัน"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button></div><div id="placesBox"></div><div id="mapPeople"></div>`;
+    el.innerHTML = `<div class="card" id="mapStatus"></div><div id="mapNext"></div><div class="chips" id="mapFilters"></div><div class="mapwrap"><div id="map"></div><button class="locate" id="bLocate" aria-label="ไปที่ตำแหน่งฉัน"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button></div><div id="placesBox"></div><div id="mapPeople"></div>`;
     $('#bLocate').onclick = () => { if (data.me) map.setView([data.me.lat, data.me.lng], 17); else { ui.centered = false; startLocation(); } };
   }
-  renderMapStatus(); renderPlaces(); renderMapPeople(); drawMap(true); runGeocode();
+  ui.refit = true; renderMapStatus(); renderFilters(); renderPlaces(); renderMapPeople(); drawMap(true); runGeocode();
 }
 function renderMapPeople() {
   const el = $('#mapPeople'); if (!el) return;
@@ -612,7 +641,7 @@ function renderMapPeople() {
   $$('.pcard', el).forEach(b => b.onclick = () => { const p = all[b.dataset.n]; if (!p) return toast('ยังไม่มีตำแหน่งของ ' + b.dataset.n); if (map) map.setView([p.lat, p.lng], 16); });
 }
 
-/* ---------- planned places on the map ---------- */
+/* ---------- plan route on the map (waypoints in order, dashed line + arrows) ---------- */
 const gc = { cache: store.get('tt.gc2', {}), running: false, center: null };
 const GENERIC = /^(ที่พัก|home|hotel|accommodation|พัก|สนามบิน|airport)$/i;
 const qName = n => String(n || '').replace(/\([^)]*\)/g, '').split(/\s\/\s|\s\+\s/)[0].trim();
@@ -620,24 +649,24 @@ const gKey = q => trip().id + '|' + q;
 const ovr = q => (data.places || {})[norm(q)];
 const coordOf = q => ovr(q) || gc.cache[gKey(q)];
 const knownQ = q => !!ovr(q) || (gKey(q) in gc.cache);
-function scopeStops() {
-  const p = data.plan; if (!p || ui.placeDay === 'none') return [];
-  const di = ui.placeDay === 'all' ? 'all' : (ui.placeDay != null ? ui.placeDay : (ui.day || 0));
-  const days = di === 'all' ? p.days.map((d, i) => [d, i]) : [[p.days[di], di]].filter(x => x[0]);
-  const out = [], seen = new Set();
-  for (const [d, i] of days) {
-    let last = '';
-    const add = (n, t) => {
-      if (!n || GENERIC.test(n.trim())) return; const q = qName(n); if (!q) return;
-      if (di !== 'all' && q === last) return; last = q;
-      if (di === 'all') { if (seen.has(q)) return; seen.add(q); }
-      out.push({ name: n.trim(), q, day: dayTitle(d, i), time: t || '', di: i });
-    };
-    d.steps.forEach((st, k) => { if (k === 0) add(st.from, st.time); add(st.to, st.toTime || st.time); });
-  }
-  if (di === 'all') p.ideas.forEach(g => g.items.forEach(it => { const q = qName(it); if (q && !GENERIC.test(q) && !seen.has(q)) { seen.add(q); out.push({ name: it, q, day: 'ไอเดีย', di: -1, time: '' }); } }));
+function dayWaypoints(di) {
+  const p = data.plan, d = p && p.days[di]; if (!d) return [];
+  const out = [], add = (n, t) => {
+    if (!n) return; const q = qName(n); if (!q) return;
+    if (GENERIC.test(n.trim()) && !ovr(q)) return;
+    if (out.length && out[out.length - 1].q === q) return;
+    out.push({ name: n.trim(), q, time: t || '', di, day: dayTitle(d, di) });
+  };
+  d.steps.forEach((st, k) => { if (k === 0) add(st.from, st.time); add(st.to, st.toTime || st.time); });
   return out;
 }
+function scopeDays() {
+  const p = data.plan; if (!p || ui.placeDay === 'none') return [];
+  const di = ui.placeDay === 'all' ? 'all' : (ui.placeDay != null ? ui.placeDay : (ui.day || 0));
+  return di === 'all' ? p.days.map((_, i) => i) : (p.days[di] ? [di] : []);
+}
+const scopeStops = () => scopeDays().flatMap(dayWaypoints);
+const ideaSpots = () => data.plan ? data.plan.ideas.flatMap(g => g.items.map(it => ({ name: it, q: qName(it), type: 'sight', src: 'idea' }))).filter(x => x.q && !GENERIC.test(x.q)) : [];
 const cityHint = () => { const w = tripWindow(); return w && w.where ? String(w.where).replace(/\b(international|airport|station)\b/ig, '').replace(/(สนามบิน|ท่าอากาศยาน).*/, '').replace(/\s+/g, ' ').trim() : ''; };
 async function nominatim(q, isCenter) {
   let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=en,th&q=${encodeURIComponent(q)}`;
@@ -662,32 +691,245 @@ async function runGeocode() {
     gc.center = gc.cache[gKey('__center')] || null;
     if (!gc.center) { const w = tripWindow(), name = w && qName(w.where); if (name) { const c = await geocode(name, true); if (c) { gc.center = c; gc.cache[gKey('__center')] = c; store.set('tt.gc2', gc.cache); } } }
     for (; ;) {
-      const need = scopeStops().find(x => !knownQ(x.q)); if (!need) break;
-      await geocode(need.q); drawPlaces(); renderPlaces(); await sleep(1100);
+      const need = [...(ui.f.route ? scopeStops() : []), ...(ui.f.sight ? ideaSpots() : [])].find(x => !knownQ(x.q)); if (!need) break;
+      await geocode(need.q); drawMap(false); renderPlaces(); await sleep(1100);
     }
-  } catch { } finally { gc.running = false; drawPlaces(); renderPlaces(); }
+  } catch { } finally { gc.running = false; const rf = ui.refit; ui.refit = false; drawMap(rf); renderPlaces(); }
 }
-const placeIcon = (n, di) => L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -12], html: `<div class="plc" style="--c:${COLORS[(di < 0 ? 7 : di) % 8]}">${n}</div>` });
-function placePts() { return scopeStops().map(x => coordOf(x.q)).filter(Boolean).map(c => [c.lat, c.lng]); }
+const bearing = (a, b) => Math.atan2(-(b.lat - a.lat), (b.lng - a.lng) * Math.cos(a.lat * Math.PI / 180)) * 180 / Math.PI;
+const arrowIcon = (deg, color) => L.divIcon({ className: '', iconSize: [20, 20], iconAnchor: [10, 10], html: `<svg viewBox="0 0 24 24" width="20" height="20" style="transform:rotate(${deg}deg);display:block"><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>` });
 function drawPlaces() {
-  if (!map || !plLayer) return; plLayer.clearLayers();
-  const pts = [];
-  scopeStops().forEach((x, k) => {
-    const c = coordOf(x.q); if (!c) return; pts.push([c.lat, c.lng]);
-    L.marker([c.lat, c.lng], { icon: placeIcon(k + 1, x.di) }).addTo(plLayer).bindPopup(`<b>${k + 1}. ${esc(x.name)}</b><br>${esc(x.day)} ${esc(x.time)}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`);
-  });
-  if (ui.placeDay !== 'all' && pts.length > 1) L.polyline(pts, { color: '#5b4bf0', weight: 3, opacity: .6, dashArray: '6 8' }).addTo(plLayer);
+  if (!map || !plLayer) return []; plLayer.clearLayers();
+  if (!ui.f.route) return [];
+  const all = [];
+  for (const di of scopeDays()) {
+    const color = COLORS[di % 8], seq = dayWaypoints(di).map(w => ({ ...w, c: coordOf(w.q) })).filter(w => w.c), ll = seq.map(w => [w.c.lat, w.c.lng]);
+    all.push(...ll);
+    if (ll.length > 1) {
+      L.polyline(ll, { color: '#fff', weight: 9, opacity: .95, lineCap: 'round' }).addTo(plLayer);
+      L.polyline(ll, { color, weight: 4, opacity: 1, dashArray: '10 9', lineCap: 'round' }).addTo(plLayer);
+      for (let i = 0; i < seq.length - 1; i++) { const a = seq[i].c, b = seq[i + 1].c; if (distM(a, b) < 80) continue; L.marker([(a.lat + b.lat) / 2, (a.lng + b.lng) / 2], { icon: arrowIcon(bearing(a, b), color), interactive: false }).addTo(plLayer); }
+    }
+    seq.forEach((w, k) => L.marker([w.c.lat, w.c.lng], { icon: placeIcon(k + 1, di), zIndexOffset: 500 }).addTo(plLayer).bindPopup(`<b>${k + 1}. ${esc(w.name)}</b><br>${esc(w.day)} ${esc(w.time)}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${w.c.lat},${w.c.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`));
+  }
+  return all;
+}
+function drawSpots() {
+  if (!map || !spLayer) return []; spLayer.clearLayers(); sgLayer.clearLayers(); const pts = [];
+  for (const s of allSpots()) {
+    if (!ui.f[s.type]) continue; const c = s.c; if (!c) continue; pts.push([c.lat, c.lng]);
+    L.marker([c.lat, c.lng], { icon: spotIcon(s.type, s.src === 'idea') }).addTo(spLayer).bindPopup(`<b>${esc(s.name)}</b><br>${[s.cuisine, s.meal].filter(Boolean).map(esc).join(' · ')}${s.note ? '<br><small>' + esc(s.note) + '</small>' : ''}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`);
+  }
+  (ui.sugPins || []).forEach(x => { L.marker([x.lat, x.lng], { icon: sugIcon(x.kind) }).addTo(sgLayer).bindPopup(`<b>${esc(x.name)}</b><br>${esc(x.sub || '')}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${x.lat},${x.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`); pts.push([x.lat, x.lng]); });
+  return pts;
 }
 function renderPlaces() {
   const el = $('#placesBox'); if (!el) return;
   const p = data.plan; if (!p || !p.days.length) { el.innerHTML = ''; return; }
   planDates(p);
-  const cur = ui.placeDay != null ? ui.placeDay : (ui.day || 0), stops = scopeStops(), done = stops.filter(x => knownQ(x.q)).length;
-  el.innerHTML = `<div class="card"><div class="row2"><h3>สถานที่ในแผน</h3><select class="dropdown" id="placeSel"><option value="none" ${cur === 'none' ? 'selected' : ''}>ซ่อน</option><option value="all" ${cur === 'all' ? 'selected' : ''}>ทั้งทริป</option>${p.days.map((d, i) => `<option value="${i}" ${cur === i ? 'selected' : ''}>${esc(dayTitle(d, i))}</option>`).join('')}</select></div>
-  ${stops.length && done < stops.length ? `<small>กำลังค้นหาพิกัด ${done}/${stops.length}…</small>` : ''}
-  ${stops.map((x, k) => { const c = coordOf(x.q), st = !knownQ(x.q) ? '⏳' : c ? '' : 'ตั้งพิกัด'; return `<button class="pl" data-k="${k}"><span class="plc sm" style="--c:${COLORS[(x.di < 0 ? 7 : x.di) % 8]}">${k + 1}</span><div><b>${esc(x.name)}</b><small>${esc(x.day)}${x.time ? ' · ' + esc(x.time) : ''}</small></div>${st ? `<span class="chip">${st}</span>` : ''}</button>`; }).join('')}</div>`;
-  $('#placeSel').onchange = e => { ui.placeDay = e.target.value === 'all' || e.target.value === 'none' ? e.target.value : +e.target.value; drawMap(true); renderPlaces(); runGeocode(); };
-  $$('.pl', el).forEach(b => b.onclick = () => { const x = stops[+b.dataset.k], c = coordOf(x.q); if (!c) return placeDialog(x.q); scrollTo({ top: 0, behavior: 'smooth' }); if (map) map.setView([c.lat, c.lng], 16); });
+  const cur = ui.placeDay != null ? ui.placeDay : (ui.day || 0), days = scopeDays();
+  const needHotel = !ovr('ที่พัก') && p.days.some(d => d.steps.some(s => /^ที่พัก$/.test((s.from || '').trim()) || /^ที่พัก$/.test((s.to || '').trim())));
+  let h = `<div class="card"><div class="row2"><h3>เส้นทางตามแผน</h3><select class="dropdown" id="placeSel"><option value="none" ${cur === 'none' ? 'selected' : ''}>ซ่อน</option><option value="all" ${cur === 'all' ? 'selected' : ''}>ทั้งทริป</option>${p.days.map((d, i) => `<option value="${i}" ${cur === i ? 'selected' : ''}>${esc(dayTitle(d, i))}</option>`).join('')}</select></div>`;
+  let n = 0;
+  for (const di of days) {
+    const wps = dayWaypoints(di); if (days.length > 1 && wps.length) h += `<div class="dgroup" style="margin:10px 0 2px!important">${esc(dayTitle(p.days[di], di))}</div>`;
+    let seq = 0;
+    wps.forEach((x, k) => {
+      const c = coordOf(x.q), st = !knownQ(x.q) ? '⏳' : c ? '' : 'ตั้งพิกัด'; if (!knownQ(x.q)) n++;
+      if (c) seq++;
+      h += `<button class="pl" data-d="${di}" data-k="${k}"><span class="plc sm" style="--c:${c ? COLORS[di % 8] : '#94a3b8'}">${c ? seq : '–'}</span><div><b>${esc(x.name)}</b><small>${x.time ? esc(x.time) : ''}</small></div>${st ? `<span class="chip">${st}</span>` : ''}</button>`;
+    });
+  }
+  if (n) h += `<small>กำลังค้นหาพิกัด…</small>`;
+  if (needHotel) h += `<div class="btns"><button class="btn" id="bHotel">📍 ตั้งตำแหน่งที่พัก (ให้เส้นทางต่อกัน)</button></div>`;
+  el.innerHTML = h + '</div>';
+  $('#placeSel').onchange = e => { ui.placeDay = e.target.value === 'all' || e.target.value === 'none' ? e.target.value : +e.target.value; ui.refit = true; drawMap(true); renderPlaces(); runGeocode(); };
+  const hb = $('#bHotel'); if (hb) hb.onclick = () => placeDialog('ที่พัก');
+  $$('.pl', el).forEach(b => b.onclick = () => { const x = dayWaypoints(+b.dataset.d)[+b.dataset.k], c = coordOf(x.q); if (!c) return placeDialog(x.q); scrollTo({ top: 0, behavior: 'smooth' }); if (map) map.setView([c.lat, c.lng], 16); });
+}
+
+/* ---------- spots: restaurants / sights saved in the Places tab + nearby suggestions ---------- */
+function allSpots() {
+  const sheet = data.spots.map(s => ({ ...s, c: { lat: s.lat, lng: s.lng } }));
+  const ideas = ideaSpots().map(s => ({ ...s, c: coordOf(s.q) || null }));
+  return [...sheet, ...ideas];
+}
+const SLOTS = [['morning', 'เช้า'], ['lunch', 'กลางวัน'], ['afternoon', 'บ่าย'], ['dinner', 'เย็น'], ['late', 'ดึก']];
+const slotOf = (d = new Date()) => { const h = d.getHours() + d.getMinutes() / 60; return h < 5 ? 'late' : h < 10.5 ? 'morning' : h < 14.5 ? 'lunch' : h < 17.5 ? 'afternoon' : h < 22 ? 'dinner' : 'late'; };
+const SLOT_KIND = { morning: 'cafe', lunch: 'food', afternoon: 'cafe', dinner: 'food', late: 'food' };
+const SLOT_MEAL = { morning: 'เช้า', lunch: 'กลางวัน', afternoon: 'คาเฟ่', dinner: 'เย็น', late: 'ดึก' };
+const mealMatches = (meal, slot) => { const m = String(meal || ''); if (!m || /ทุกมื้อ|any/i.test(m)) return true; return ({ morning: /เช้า|breakfast|brunch/i, lunch: /กลางวัน|เที่ยง|lunch/i, afternoon: /บ่าย|คาเฟ่|ของหวาน|cafe|dessert|snack/i, dinner: /เย็น|ค่ำ|dinner/i, late: /ดึก|late|bar|night/i })[slot].test(m); };
+const DI = { su: 0, mo: 1, tu: 2, we: 3, th: 4, fr: 5, sa: 6 };
+function daySet(spec) {
+  const out = new Set(); if (!spec.trim()) return new Set([0, 1, 2, 3, 4, 5, 6]);
+  for (const tok of spec.split(',')) { const m = tok.trim().toLowerCase().match(/^([a-z]{2})(?:\s*-\s*([a-z]{2}))?$/); if (!m || !(m[1] in DI) || (m[2] && !(m[2] in DI))) continue; const a = DI[m[1]], b = m[2] ? DI[m[2]] : a; for (let i = a; ; i = (i + 1) % 7) { out.add(i); if (i === b) break; } }
+  return out;
+}
+/* OSM opening_hours (common simple forms). true / false / null (unknown) */
+function openNow(oh, now = new Date()) {
+  const s = String(oh || '').trim(); if (!s) return null; if (/^24\/7$/.test(s)) return true;
+  const dow = now.getDay(), mins = now.getHours() * 60 + now.getMinutes(); let res = null;
+  for (const part of s.split(/[;]/)) {
+    const m = part.trim().match(/^([A-Za-z,\- ]*?)\s*((?:\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}[\s,]*)+|off|closed)$/i); if (!m) continue;
+    const days = daySet(m[1]); if (!days.has(dow)) continue;
+    if (/off|closed/i.test(m[2])) { res = false; continue; }
+    let open = false;
+    for (const r of m[2].matchAll(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/g)) { const a = +r[1] * 60 + +r[2], b = +r[3] * 60 + +r[4]; open = open || (b <= a ? (mins >= a || mins < b) : (mins >= a && mins < b)); }
+    res = open;
+  }
+  return res;
+}
+const LOCAL_CUISINE = /kazakh|uzbek|central_asian|regional|local|kebab|lagman|lapsha|georgian|kyrgyz|uyghur|plov|manti|beshbarmak|russian|ukrainian/i;
+const nice = s => String(s || '').replace(/_/g, ' ').split(';').filter(Boolean).slice(0, 3).join(' / ');
+const dist = d => d < 1000 ? `${Math.max(10, Math.round(d / 10) * 10)} ม.` : `${(d / 1000).toFixed(1)} กม.`;
+const walk = d => `เดิน ${Math.max(1, Math.round(d / 80))} นาที`;
+const near = { cache: {} };
+async function nearby(kind, c, r) {
+  const key = `${kind}|${c.lat.toFixed(3)},${c.lng.toFixed(3)}|${r}`, hit = near.cache[key];
+  if (hit && Date.now() - hit.t < 6e5) return hit.items;
+  const dLa = r / 111000, dLo = r / (111000 * Math.cos(c.lat * Math.PI / 180)), vb = `${c.lng - dLo},${c.lat + dLa},${c.lng + dLo},${c.lat - dLa}`;
+  const terms = kind === 'food' ? ['restaurant', 'fast food'] : kind === 'cafe' ? ['cafe', 'bakery'] : ['attraction', 'museum', 'park', 'viewpoint'];
+  const items = [], seen = new Set();
+  for (let i = 0; i < terms.length; i++) {
+    if (i) await sleep(1100);
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&extratags=1&namedetails=1&limit=30&bounded=1&viewbox=${vb}&accept-language=en,th&q=${encodeURIComponent(terms[i])}`);
+    if (!res.ok) throw new Error(`ค้นหาสถานที่ใกล้เคียงไม่ได้ (${res.status})`);
+    for (const e of await res.json()) {
+      const t = e.extratags || {}, nm = (e.namedetails && (e.namedetails['name:en'] || e.namedetails['name:th'])) || e.name; if (!nm) continue;
+      const k = nm.toLowerCase() + '|' + (+e.lat).toFixed(4) + (+e.lon).toFixed(4); if (seen.has(k)) continue; seen.add(k);
+      items.push({ name: nm, lat: +e.lat, lng: +e.lon, type: e.type, cuisine: t.cuisine || '', oh: t.opening_hours || '', wiki: !!(t.wikipedia || t.wikidata) });
+    }
+  }
+  near.cache[key] = { t: Date.now(), items }; return items;
+}
+function rank(items, kind, slot, a) {
+  return items.map(it => {
+    const d = distM(a.c, it), open = openNow(it.oh);
+    let sc = d / 100 - (open === true ? 6 : 0) + (open === false ? 60 : 0) - (LOCAL_CUISINE.test(it.cuisine) && kind === 'food' ? 3 : 0) - (it.cuisine ? 1 : 0) - (it.wiki ? 3 : 0);
+    if (kind === 'cafe' && slot === 'morning' && /breakfast/i.test(it.cuisine)) sc -= 3;
+    return { ...it, d, open, sc };
+  }).sort((x, y) => x.sc - y.sc);
+}
+function anchorOptions() {
+  const o = []; if (data.me) o.push({ id: 'me', label: 'ตำแหน่งของฉัน', c: { lat: data.me.lat, lng: data.me.lng } });
+  const p = data.plan; if (p && p.days.length) { planDates(p); let di = p.days.findIndex(isToday); if (di < 0) di = ui.day || 0; dayWaypoints(di).forEach((w, k) => { const c = coordOf(w.q); if (c) o.push({ id: 'w' + di + '_' + k, label: 'ใกล้ ' + w.name, c }); }); }
+  return o;
+}
+const currentAnchor = () => { const o = anchorOptions(); return o.find(x => x.id === ui.anchor) || o[0] || null; };
+let nearTok = 0;
+async function loadNear() {
+  const a = currentAnchor(); if (!a) { ui.nearState = 'noanchor'; return renderSpots(); }
+  const slot = ui.nearSlot || slotOf(), kind = ui.nearKind || SLOT_KIND[slot], tok = ++nearTok; ui.nearState = 'loading'; renderSpots();
+  try { const r = kind === 'sight' ? 1500 : 900; const items = (await nearby(kind, a.c, r)).filter(i => distM(a.c, i) <= r); if (tok !== nearTok) return; ui.nearItems = items; ui.nearState = 'ok'; }
+  catch (e) { if (tok !== nearTok) return; ui.nearState = 'err'; ui.nearErr = e.message; }
+  renderSpots();
+}
+function focusOnMap(c, pins) { if (pins) { ui.sugPins = pins; } $('[data-tab=map]').click(); setTimeout(() => { if (map) map.setView([c.lat, c.lng], 17); }, 500); }
+function spotCard(s, a) {
+  const [ic, col] = SPOT[s.type], d = a && s.c ? distM(a.c, s.c) : null;
+  return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic}</div><div class="spot-b"><b>${esc(s.name)}</b><small>${[nice(s.cuisine), s.meal, d != null ? dist(d) : ''].filter(Boolean).map(esc).join(' · ')}</small>${s.note ? `<div class="note">${esc(s.note)}</div>` : ''}
+  <div class="spot-a">${s.c ? `<a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.c.lat},${s.c.lng}">นำทาง</a><button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button>` : `<button class="tag" data-fix="${esc(s.q || s.name)}">ตั้งพิกัด</button>`}</div></div></div>`;
+}
+function listHtml() {
+  const a = currentAnchor(), f = ui.spotFilter || 'all', all = allSpots(), cnt = t => all.filter(s => s.type === t).length;
+  let h = `<div class="card"><label style="margin-top:0">เพิ่มสถานที่ — วางลิงก์ Google Maps</label><div class="addrow"><input id="linkIn" inputmode="url" placeholder="วางลิงก์ที่นี่ แล้วระบบหาพิกัดให้"><button class="btn pri" id="linkGo">เพิ่ม</button></div></div>`;
+  h += `<div class="chips">${[['all', 'ทั้งหมด', all.length], ['food', '🍽 ร้านอาหาร', cnt('food')], ['sight', '🏛 ที่เที่ยว', cnt('sight')], ['other', '📌 อื่นๆ', cnt('other')]].map(([k, l, n]) => `<button class="tag ${f === k ? 'on' : ''}" data-sf="${k}">${l} <small>${n}</small></button>`).join('')}</div>`;
+  const list = all.filter(s => f === 'all' || s.type === f).sort((x, y) => (a && x.c && y.c) ? distM(a.c, x.c) - distM(a.c, y.c) : 0);
+  h += list.length ? list.map(s => spotCard(s, a)).join('') : '<div class="empty">ยังไม่มีสถานที่<br><small>วางลิงก์ Google Maps ด้านบนเพื่อเพิ่ม</small></div>';
+  if (a) h += `<div class="mut" style="text-align:center"><small>ระยะทางนับจาก: ${esc(a.label)}</small></div>`;
+  return h;
+}
+function nearHtml() {
+  const o = anchorOptions(), a = currentAnchor(), slot = ui.nearSlot || slotOf(), kind = ui.nearKind || SLOT_KIND[slot], auto = slotOf();
+  let h = `<div class="card"><div class="row2"><h3>แนะนำใกล้ๆ</h3><select class="dropdown" id="anchorSel">${o.map(x => `<option value="${esc(x.id)}" ${a && x.id === a.id ? 'selected' : ''}>${esc(x.label)}</option>`).join('') || '<option>—</option>'}</select></div>
+  <div class="chips">${SLOTS.map(([k, l]) => `<button class="tag ${slot === k ? 'on' : ''}" data-slot="${k}">${l}${k === auto ? ' •' : ''}</button>`).join('')}</div>
+  <div class="seg" style="margin-top:10px">${[['food', '🍽 อาหาร'], ['cafe', '☕ คาเฟ่'], ['sight', '🏛 ที่เที่ยว']].map(([k, l]) => `<button data-kind="${k}" class="${kind === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+  <small>• = ช่วงเวลาตอนนี้ ข้อมูลจาก OpenStreetMap (เวลาเปิดอาจไม่ครบ ควรเช็กก่อนไป)</small></div>`;
+  if (!a) return h + '<div class="empty">ยังไม่ทราบตำแหน่ง<br><small>เปิดตำแหน่ง หรือตั้งพิกัดสถานที่ในแผนก่อน</small></div>';
+  const mine = allSpots().filter(s => s.c && s.src !== 'idea' && distM(a.c, s.c) <= 2500 && (kind === 'sight' ? s.type === 'sight' : s.type === 'food' && (kind === 'cafe' ? /คาเฟ่|ของหวาน|เช้า|cafe|coffee|breakfast/i.test(s.meal + ' ' + s.cuisine) : mealMatches(s.meal, slot)))).sort((x, y) => distM(a.c, x.c) - distM(a.c, y.c));
+  if (mine.length) h += `<div class="dgroup">⭐ ในลิสของเรา</div>` + mine.map(s => spotCard(s, a)).join('');
+  h += `<div class="dgroup">✨ แนะนำ${a.id === 'me' ? 'ใกล้ฉัน' : ' ' + esc(a.label)}</div>`;
+  if (ui.nearState === 'loading' || !ui.nearState) return h + '<div class="skeleton"></div><div class="skeleton" style="margin-top:8px"></div>';
+  if (ui.nearState === 'err') return h + `<div class="card">${esc(ui.nearErr || 'ค้นหาไม่ได้')}<div class="btns"><button class="btn" id="nearRetry">ลองใหม่</button></div></div>`;
+  const items = rank(ui.nearItems || [], kind, slot, a).filter(it => !mine.some(m => m.name.toLowerCase() === it.name.toLowerCase())).slice(0, 10);
+  if (!items.length) return h + '<div class="empty">ไม่พบสถานที่ในรัศมีนี้</div>';
+  const pins = items.map(it => ({ name: it.name, lat: it.lat, lng: it.lng, kind, sub: [nice(it.cuisine), dist(it.d)].filter(Boolean).join(' · ') }));
+  h += items.map((it, i) => `<div class="spot"><div class="spot-i" style="--c:${kind === 'sight' ? '#0ea5e9' : '#f97316'}">${kind === 'sight' ? '🏛' : kind === 'cafe' ? '☕' : '🍽'}</div><div class="spot-b"><b>${esc(it.name)}</b><small>${[nice(it.cuisine), dist(it.d), walk(it.d)].filter(Boolean).map(esc).join(' · ')}</small>
+    <div>${it.open === true ? '<span class="chip ok">เปิดอยู่</span>' : it.open === false ? '<span class="chip bad">ปิดอยู่</span>' : ''}${it.oh ? `<span class="chip">${esc(it.oh.length > 28 ? it.oh.slice(0, 28) + '…' : it.oh)}</span>` : ''}</div>
+    <div class="spot-a"><a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${it.lat},${it.lng}">นำทาง</a><button class="tag" data-add="${i}">+ บันทึกเข้าลิส</button></div></div></div>`).join('');
+  h += `<div class="btns" style="justify-content:center"><button class="btn" id="showAll">ดูทั้งหมดบนแผนที่</button></div>`;
+  ui._nearShown = { items, pins, kind, slot }; return h;
+}
+function renderSpots() {
+  const el = $('#tab-spots'); if (!el) return;
+  const v = ui.spotView || 'list';
+  el.innerHTML = `<div class="seg"><button data-v="list" class="${v === 'list' ? 'on' : ''}">ลิสของเรา</button><button data-v="near" class="${v === 'near' ? 'on' : ''}">แนะนำใกล้ๆ</button></div>` + (v === 'near' ? nearHtml() : listHtml()) + '<button class="fab" id="addSpot" aria-label="เพิ่มสถานที่"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>';
+  $$('[data-v]', el).forEach(b => b.onclick = () => { ui.spotView = b.dataset.v; if (b.dataset.v === 'near' && !ui.nearState) loadNear(); else renderSpots(); });
+  $('#addSpot').onclick = () => spotDialog();
+  $$('[data-sf]', el).forEach(b => b.onclick = () => { ui.spotFilter = b.dataset.sf; renderSpots(); });
+  $$('[data-focus]', el).forEach(b => b.onclick = () => { const s = allSpots().find(x => x.name === b.dataset.focus); if (s && s.c) focusOnMap(s.c); });
+  $$('[data-fix]', el).forEach(b => b.onclick = () => placeDialog(b.dataset.fix));
+  const gi = $('#linkIn'), go = $('#linkGo');
+  if (gi) { gi.onpaste = () => setTimeout(() => { if (gi.value.trim()) spotDialog({ url: gi.value.trim() }); }, 50); go.onclick = () => spotDialog({ url: gi.value.trim() }); }
+  const as = $('#anchorSel'); if (as) as.onchange = () => { ui.anchor = as.value; loadNear(); };
+  $$('[data-slot]', el).forEach(b => b.onclick = () => { ui.nearSlot = b.dataset.slot; ui.nearKind = SLOT_KIND[b.dataset.slot]; loadNear(); });
+  $$('[data-kind]', el).forEach(b => b.onclick = () => { ui.nearKind = b.dataset.kind; loadNear(); });
+  const rt = $('#nearRetry'); if (rt) rt.onclick = loadNear;
+  const sa = $('#showAll'); if (sa && ui._nearShown) sa.onclick = () => { const s = ui._nearShown, a = currentAnchor(); focusOnMap(a.c, s.pins); };
+  $$('[data-add]', el).forEach(b => b.onclick = () => { const s = ui._nearShown, it = s.items[+b.dataset.add]; spotDialog({ name: it.name, lat: it.lat, lng: it.lng, type: s.kind === 'sight' ? 'sight' : 'food', meal: s.kind === 'cafe' ? 'คาเฟ่' : s.kind === 'food' ? SLOT_MEAL[s.slot] : '', cuisine: nice(it.cuisine) }); });
+  if (ui.tab === 'spots' && v === 'near' && !ui.nearState) loadNear();
+}
+/* paste a Google Maps link -> name + coordinates */
+async function detectLink(url) {
+  url = String(url || '').trim(); if (!url) return null;
+  const nm = u => { try { const m = decodeURIComponent(u).match(/\/place\/([^/@?]+)/); return m ? m[1].replace(/\+/g, ' ').trim() : ''; } catch { return ''; } };
+  let c = coordsInText(url), name = nm(url);
+  if (!c && /(goo\.gl|maps\.app)/i.test(url)) {
+    if (!sheetApi.on()) throw new Error('ลิงก์สั้นต้องเชื่อมต่อชีตก่อน — หรือเปิดลิงก์แล้วคัดลอก “ลิงก์เต็ม” จากแถบ URL');
+    const r = await sheetApi.call('resolve', { url }); c = coordsInText(r.url); name = name || nm(r.url);
+  }
+  return c ? { ...c, name } : null;
+}
+function spotDialog(init = {}) {
+  let type = init.type || 'sight', meal = init.meal || '', c = init.lat != null ? { lat: init.lat, lng: init.lng } : null, tok = 0, timer;
+  const meals = ['เช้า', 'กลางวัน', 'เย็น', 'คาเฟ่', 'ของหวาน', 'ดึก', 'ได้ทุกมื้อ'], p = data.plan;
+  const d = openDlg(`<form method="dialog"><h3>เพิ่มสถานที่</h3>
+  <label>วางลิงก์ Google Maps</label><input name="u" inputmode="url" value="${esc(init.url || '')}" placeholder="https://maps.app.goo.gl/… หรือ 43.26, 76.95" ${c ? 'disabled' : ''}>
+  <div id="detect" class="mut" style="margin-top:6px;font-size:.85rem">${c ? `✓ พิกัด ${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}` : ''}</div>
+  <label>ชื่อสถานที่</label><input name="name" required value="${esc(init.name || '')}" placeholder="ชื่อร้าน / สถานที่">
+  <label>ประเภท</label><div class="seg" id="typeSeg">${[['food', '🍽 ร้านอาหาร'], ['sight', '🏛 ที่เที่ยว'], ['other', '📌 อื่นๆ']].map(([k, l]) => `<button type="button" data-t="${k}" class="${k === type ? 'on' : ''}">${l}</button>`).join('')}</div>
+  <div id="mealBox" ${type === 'food' ? '' : 'hidden'}><label>เหมาะกับมื้อ</label><div class="chips" style="margin:0;padding:0;flex-wrap:wrap">${meals.map(m => `<button type="button" class="tag ${m === meal ? 'on' : ''}" data-m="${m}">${m}</button>`).join('')}</div></div>
+  <label>โน้ต (ไม่บังคับ)</label><input name="note">
+  ${p && p.days.length ? `<label>เพิ่มเข้าแผนของวัน (ไม่บังคับ)</label><select name="day"><option value="">ไม่เพิ่มเข้าแผน</option>${p.days.map((x, k) => `<option value="${k}">${esc(dayTitle(x, k))}</option>`).join('')}</select>` : ''}
+  <div class="btns"><button value="ok" class="btn pri">บันทึก</button><button value="x" class="btn" formnovalidate>ยกเลิก</button></div></form>`);
+  const form = $('form', d), url = form.elements.u;
+  const detect = async () => {
+    const my = ++tok, box = $('#detect'); box.textContent = 'กำลังหาพิกัด…';
+    try { const r = await detectLink(url.value); if (my !== tok) return; if (r) { c = { lat: r.lat, lng: r.lng }; box.textContent = `✓ พบพิกัด ${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}`; if (r.name && !form.elements.name.value) form.elements.name.value = r.name; } else { c = null; box.textContent = url.value.trim() ? 'อ่านพิกัดจากลิงก์ไม่ได้' : ''; } }
+    catch (e) { if (my === tok) { c = null; box.textContent = e.message; } }
+  };
+  url.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(detect, 450); });
+  if (init.url) detect();
+  $$('#typeSeg button', d).forEach(b => b.onclick = () => { type = b.dataset.t; $$('#typeSeg button', d).forEach(x => x.classList.toggle('on', x === b)); $('#mealBox').hidden = type !== 'food'; });
+  $$('[data-m]', d).forEach(b => b.onclick = () => { meal = meal === b.dataset.m ? '' : b.dataset.m; $$('[data-m]', d).forEach(x => x.classList.toggle('on', x.dataset.m === meal)); });
+  form.onsubmit = ev => {
+    if (ev.submitter && ev.submitter.value !== 'ok') return;
+    if (!c) { ev.preventDefault(); toast('ยังไม่มีพิกัด — วางลิงก์ Google Maps ก่อน'); return; }
+    const f = new FormData(form), name = f.get('name').trim(); if (!name) { ev.preventDefault(); return; }
+    saveSpot({ name, lat: c.lat, lng: c.lng, type, meal: type === 'food' ? meal : '', cuisine: init.cuisine || '', note: f.get('note') || '', src: 'sheet' }, f.get('day'));
+  };
+}
+async function saveSpot(s, dayIdx) {
+  s.c = { lat: s.lat, lng: s.lng }; data.spots = data.spots.filter(x => norm(x.name) !== norm(s.name)); data.spots.push(s); data.places[norm(s.name)] = s.c;
+  renderSpots(); renderFilters(); drawMap(false);
+  const row = [s.name, +s.lat.toFixed(6), +s.lng.toFixed(6), s.note, s.type, s.meal, s.cuisine];
+  if (sheetApi.on()) { try { await sheetApi.call('upsert', { tab: trip().placesTab || 'Places', header: ['Name', 'Lat', 'Lng', 'Note', 'Type', 'Meal', 'Cuisine'], key: s.name, keyCol: 0, values: row }); toast('บันทึกลงชีตแล้ว ✓'); } catch (e) { toast(e.message); } }
+  else copyText(row.join('\t'), 'ยังไม่ได้เชื่อมต่อชีต — คัดลอกแถวแล้ว วางในแท็บ ' + (trip().placesTab || 'Places'));
+  if (dayIdx !== '' && dayIdx != null && data.plan) {
+    const d = data.plan.days[+dayIdx], ix = data.plan.cols, last = d.steps.length ? d.steps[d.steps.length - 1].to : '', r = [], set = (cc, v) => { if (cc >= 0) { while (r.length <= cc) r.push(''); r[cc] = v; } };
+    set(ix.sl, last); set(ix.al, s.name); d.steps.push(stepFromRow(r, ix, false)); renderPlan();
+    if (sheetApi.on()) scheduleSave(); else toast('เพิ่มเข้าแผนในเครื่องนี้เท่านั้น — เชื่อมต่อชีตเพื่อบันทึก');
+  }
 }
 
 /* ---------- menu / settings / sheet connection ---------- */
@@ -770,7 +1012,7 @@ function newTripDialog() {
 /* ---------- boot ---------- */
 function renderAll() {
   $('#btnMe').textContent = me ? initial(me) : '?';
-  renderPlan(); renderBudget(); renderExpenses(); renderMenu(); renderSub();
+  renderPlan(); renderMoney(); renderSpots(); renderMenu(); renderSub();
   if (ui.tab === 'map') renderMap();
 }
 $('#tabs').onclick = e => {
@@ -779,6 +1021,7 @@ $('#tabs').onclick = e => {
   $$('main > section').forEach(s => s.hidden = s.id !== 'tab-' + ui.tab);
   scrollTo(0, 0);
   if (ui.tab === 'map') { renderMap(); if (geo.state === 'idle' && me) startLocation(); }
+  if (ui.tab === 'spots') renderSpots();
 };
 setInterval(() => { if (!document.hidden && !dlg.open && $('#login').hidden && !ui.edit && !ui.dirty && !ui.saving) load(); }, 60000);
 setInterval(() => {

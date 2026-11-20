@@ -11,7 +11,7 @@ https://ninenpn.github.io/TravelTracker/
 | Users | `Name, Budget` (หลายสกุล: `Budget KZT`, `Budget USD`) |
 | Expenses | `Date, Item, Category, Amount, Currency, PaidBy, Type, SplitWith` — Type: `shared` / `personal` / `split` |
 | Locations | `Name, Lat, Lng, Label, Updated` |
-| Places | `Name, Lat, Lng, Note` (พิกัดสถานที่ในแผน) |
+| Places | `Name, Lat, Lng, Note, Type, Meal, Cuisine` — `Type` ว่าง = ใช้เป็นพิกัดของสถานที่ในแผนเท่านั้น; `Type` = `food` / `sight` / `other` = แสดงในแท็บสถานที่และฟิลเตอร์บนแผนที่ (`Meal`: เช้า/กลางวัน/เย็น/คาเฟ่/ของหวาน/ดึก) |
 
 ## บันทึกลงชีตอัตโนมัติ (ไม่บังคับ)
 เมนู → เชื่อมต่อชีต: แอปมีขั้นตอนและโค้ดให้วางใน Apps Script (`apps-script/Code.gs`) ของชีต แล้ว Deploy เป็น Web app
@@ -20,3 +20,8 @@ https://ninenpn.github.io/TravelTracker/
 
 ## ตำแหน่ง
 ขอสิทธิ์ตำแหน่งเฉพาะช่วงตั้งแต่เที่ยวบินแรกลงจอดจนถึงเที่ยวบินสุดท้ายออก (คำนวณจากแผนในชีต)
+
+## สถานที่ & แนะนำใกล้ๆ
+- แท็บ **สถานที่**: ลิสร้านอาหาร/ที่เที่ยว/อื่นๆ — วางลิงก์ Google Maps แล้วแอปดึงพิกัดและชื่อให้ (ลิงก์สั้นต้องเชื่อมต่อชีต)
+- **แนะนำใกล้ๆ**: ค้นร้านอาหาร/คาเฟ่/ที่เที่ยวรอบตำแหน่งของคุณหรือรอบจุดในแผน ตามช่วงเวลาตอนนี้ (ข้อมูลจาก OpenStreetMap ผ่าน Nominatim พร้อมเวลาเปิดถ้ามี)
+- **แผนที่**: ฟิลเตอร์ แผน / ร้านอาหาร / ที่เที่ยว / อื่นๆ / เพื่อน และเส้นทางตามลำดับด้วยเส้นประพร้อมลูกศร

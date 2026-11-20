@@ -12,7 +12,8 @@ body{margin:0 auto;max-width:430px;min-height:100dvh;background:var(--bg);color:
   font:15px/1.5 "Noto Sans Thai",system-ui,-apple-system,sans-serif;overflow-x:hidden}
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer;border:0;background:none;padding:0}
-svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+button svg,nav svg,.btn svg,.fab svg,.edit-btn svg,.locate svg,.grip svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.donut svg{fill:none}
 a{color:var(--pri);text-decoration:none}
 h1,h2,h3{margin:0}h2{font-size:1.02rem}h3{font-size:.95rem}
 small,.mut{color:var(--mut)}
@@ -168,3 +169,23 @@ ol.steps{padding-left:18px;margin:8px 0;color:var(--ink);font-size:.88rem}ol.ste
 @media(prefers-color-scheme:dark){.leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.9)}}
 
 .row .amt{white-space:normal;max-width:52%;font-size:.85rem}
+
+/* chips, spots, nudge */
+.chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin:0 -16px;padding:2px 16px}
+.chips::-webkit-scrollbar{display:none}
+.tag{padding:7px 13px;border-radius:99px;background:var(--card);border:1px solid var(--line);font-size:.82rem;font-weight:500;white-space:nowrap;color:var(--mut);flex:none;display:inline-flex;gap:4px;align-items:center;text-decoration:none}
+.tag.on{background:var(--pri);color:#fff;border-color:transparent}
+.tag small{color:inherit;opacity:.7}
+.spot{display:flex;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:12px;margin-top:8px}
+.spot-i{width:42px;height:42px;border-radius:14px;background:color-mix(in srgb,var(--c) 16%,var(--card));display:grid;place-items:center;font-size:1.25rem;flex:none}
+.spot-b{flex:1;min-width:0}.spot-b b{display:block}.spot-b small{display:block}
+.spot-a{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.spot-a .tag{background:var(--soft);border:0;color:var(--ink)}
+.addrow{display:flex;gap:8px}
+.addrow input{flex:1;min-width:0;padding:11px 13px;border-radius:14px;border:1px solid var(--line);background:var(--soft);font-size:16px;outline:none;color:var(--ink)}
+.spin{width:30px;height:30px;border-radius:10px;background:var(--c);display:grid;place-items:center;font-size:15px;border:2px solid #fff;box-shadow:0 3px 8px #0005}
+.spin.soft{opacity:.75;transform:scale(.85)}
+.spin.sug{background:#fff;border:2px dashed #f97316;box-shadow:0 3px 8px #0004}
+.nudge{display:flex;gap:12px;align-items:center;width:100%;text-align:left;background:linear-gradient(135deg,#fff4e5,#ffe8d6);color:#7c2d12;border-radius:18px;padding:12px 14px;margin-top:12px;border:1px solid #fed7aa}
+.nudge span{font-size:1.5rem}.nudge b{display:block}.nudge small{color:#9a3412}
+.leaflet-container{font-family:inherit}
