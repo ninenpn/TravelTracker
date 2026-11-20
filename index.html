@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Travel Tracker</title>
+<meta name="theme-color" content="#0f766e">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="top">
+    <div>
+      <h1>✈️ <span id="tripTitle">Travel Tracker</span></h1>
+      <small id="syncInfo"></small>
+    </div>
+    <div class="top-actions">
+      <select id="tripSelect" title="สลับแผนการเที่ยว"></select>
+      <button id="btnReload" title="โหลดใหม่">⟳</button>
+      <button id="btnSettings" title="ตั้งค่า">⚙️</button>
+    </div>
+  </div>
+  <nav id="tabs">
+    <button data-tab="plan" class="active">📅 แผน</button>
+    <button data-tab="budget">💰 งบ/สรุป</button>
+    <button data-tab="expenses">🧾 ค่าใช้จ่าย</button>
+    <button data-tab="map">📍 ตำแหน่ง</button>
+    <button data-tab="people">👥 สมาชิก</button>
+  </nav>
+</header>
+<main>
+  <div id="error" class="error" hidden></div>
+  <section id="tab-plan"></section>
+  <section id="tab-budget" hidden></section>
+  <section id="tab-expenses" hidden></section>
+  <section id="tab-map" hidden></section>
+  <section id="tab-people" hidden></section>
+</main>
+<dialog id="dlg"></dialog>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
