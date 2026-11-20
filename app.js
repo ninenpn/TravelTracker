@@ -157,9 +157,14 @@ const sheetApi = {
           reqs.push({ duplicateSheet: { sourceSheetId: target.sheetId, newSheetId: newId, newSheetName: '_plan_backup' } }, { updateSheetProperties: { properties: { sheetId: newId, hidden: true }, fields: 'hidden' } });
           await shApi.req(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: reqs }) }); try { sessionStorage.setItem('tt.bak', String(Date.now())); } catch { }
         }
-        await shApi.req(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: [{ unmergeCells: { range: { sheetId: target.sheetId, startRowIndex: 0, endRowIndex: Math.max(p.rows.length + 60, 300), startColumnIndex: 0, endColumnIndex: 26 } } }] }) });   // merged cells swallow values the app writes into them
-        await shApi.req(`/values/${encodeURIComponent(qa(target.title) + '!A:ZZ')}:clear`, { method: 'POST', body: '{}' });
-        await shApi.req(`/values/${encodeURIComponent(qa(target.title) + '!A1')}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: p.rows }) });
+        if (!p.rows || p.rows.length < 2) throw new Error('ไม่บันทึก: ไม่มีข้อมูลแผนให้เขียน (กันชีตว่าง)');
+        const g = target.gridProperties || {}, W = Math.max(...p.rows.map(r => r.length), 1);
+        try { await shApi.req(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: [{ unmergeCells: { range: { sheetId: target.sheetId, startRowIndex: 0, endRowIndex: g.rowCount || 1000, startColumnIndex: 0, endColumnIndex: g.columnCount || 26 } } }] }) }); } catch { }   // merged cells swallow values
+        const T = qa(target.title), put = await shApi.req(`/values/${encodeURIComponent(T + '!A1')}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: p.rows }) });   // write FIRST ...
+        if (!put.updatedCells) throw new Error('เขียนลงชีตไม่สำเร็จ');
+        const gc = g.columnCount || 26, gr = g.rowCount || 1000;                                                                                                                           // ... then clear only what is left over
+        if (gr > p.rows.length) await shApi.req(`/values/${encodeURIComponent(T + '!A' + (p.rows.length + 1) + ':ZZ')}:clear`, { method: 'POST', body: '{}' });
+        if (gc > W) await shApi.req(`/values/${encodeURIComponent(T + '!' + colLetter(W) + '1:ZZ' + p.rows.length)}:clear`, { method: 'POST', body: '{}' });
         return { ok: true, rows: p.rows.length };
       }
       default: throw new Error('unknown action ' + action);
