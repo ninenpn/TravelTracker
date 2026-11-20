@@ -13,10 +13,16 @@ https://ninenpn.github.io/TravelTracker/
 | Locations | `Name, Lat, Lng, Label, Updated` |
 | Places | `Name, Lat, Lng, Note, Type, Meal, Cuisine` — `Type` ว่าง = ใช้เป็นพิกัดของสถานที่ในแผนเท่านั้น; `Type` = `food` / `sight` / `other` = แสดงในแท็บสถานที่และฟิลเตอร์บนแผนที่ (`Meal`: เช้า/กลางวัน/เย็น/คาเฟ่/ของหวาน/ดึก) |
 
-## บันทึกลงชีตอัตโนมัติ (ไม่บังคับ)
-เมนู → เชื่อมต่อชีต: แอปมีขั้นตอนและโค้ดให้วางใน Apps Script (`apps-script/Code.gs`) ของชีต แล้ว Deploy เป็น Web app
-เมื่อเชื่อมต่อแล้ว: แก้/ลากวางแผน, เพิ่มค่าใช้จ่าย, ตั้งพิกัดจากลิงก์ Google Maps, แชร์ตำแหน่ง จะบันทึกลงชีตอัตโนมัติ
-(สคริปต์สำรองแผนเดิมไว้ที่แท็บซ่อน `_plan_backup` ก่อนเขียนทับทุกครั้ง)
+## แก้ไขและบันทึกลงชีต (เข้าสู่ระบบด้วย Google)
+ไม่ใช้ Apps Script — ผู้ใช้เข้าสู่ระบบด้วยบัญชี Google (เมนู → บัญชี Google) แล้วแอปเรียก Google Sheets API ด้วยสิทธิ์ของบัญชีนั้นโดยตรง
+ใครมีสิทธิ์ “ผู้แก้ไข” ในชีตอยู่แล้วก็แก้ผ่านแอปได้ ใครไม่มีสิทธิ์ Google จะไม่อนุญาต
+ทำได้: แก้/ลากวางแผน, เพิ่มค่าใช้จ่าย, บันทึกสถานที่/พิกัดจากลิงก์ Google Maps, แชร์ตำแหน่ง (ก่อนเขียนทับแผนจะสำรองไว้ที่แท็บซ่อน `_plan_backup`)
+
+**ตั้งค่าครั้งเดียวโดยเจ้าของแอป** — สร้าง OAuth Client ID แล้วใส่ใน `config.js` (`googleClientId`):
+1. console.cloud.google.com → สร้างโปรเจกต์ → เปิดใช้ **Google Sheets API**
+2. OAuth consent screen → External → เพิ่มอีเมลเพื่อนๆ ใน **Test users** (สถานะ Testing)
+3. Credentials → OAuth client ID → **Web application** → Authorized JavaScript origins: `https://ninenpn.github.io`
+4. คัดลอก Client ID (ลงท้าย `.apps.googleusercontent.com`) ไปใส่ `config.js` — ไม่ใช่ความลับ ใส่ใน repo ได้
 
 ## ตำแหน่ง
 ขอสิทธิ์ตำแหน่งเฉพาะช่วงตั้งแต่เที่ยวบินแรกลงจอดจนถึงเที่ยวบินสุดท้ายออก (คำนวณจากแผนในชีต)

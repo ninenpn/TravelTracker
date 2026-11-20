@@ -6,7 +6,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const COLORS = ['#2f7bff', '#ff6b6b', '#12b886', '#ffb020', '#9b6bff', '#ff6bb5', '#22c55e', '#10c6d8'];
 const fmt = n => (Math.round(n * 100) / 100).toLocaleString('th-TH', { maximumFractionDigits: 2 });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const DEFAULT_TRIP = { id: '1PW6xAogCla1lhb4wMwhOQeo2d8g_OXmaRONo1OMSlOw', name: 'Almaty Trip', planGid: '101963523', usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', placesTab: 'Places', costTab: 'ค่าใช้จ่าย', extraTabs: '', currency: 'THB', scriptUrl: '', scriptToken: '' };
+const DEFAULT_TRIP = { id: '1PW6xAogCla1lhb4wMwhOQeo2d8g_OXmaRONo1OMSlOw', name: 'Almaty Trip', planGid: '101963523', usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', placesTab: 'Places', costTab: 'ค่าใช้จ่าย', extraTabs: '', currency: 'THB' };
 const OLD_PRESETS = ['10SWKXgZ1Tw1YUhZGYkrLdNv_99DYBk9N', '18xlP9LoISk-_Gy3Y0ATXkQM0lWElkvh3', '1ec6Jq7HhUSjsyC50sjyLoFvw-gNXS9gN', '1Lii3MIGLVncBMjXrVBAKZDfxHORD222Z'];
 
 /* ---------- storage ---------- */
@@ -23,7 +23,7 @@ if (cfg.v !== 5) {
   cfg.v = 5;
   cfg.trips = cfg.trips.filter(t => !OLD_PRESETS.includes(t.id) || t.id === cfg.active);
   if (!cfg.trips.some(t => t.id === DEFAULT_TRIP.id)) cfg.trips.unshift(DEFAULT_TRIP);
-  cfg.trips.forEach(t => { t.placesTab = t.placesTab || 'Places'; t.scriptUrl = t.scriptUrl || ''; t.scriptToken = t.scriptToken || ''; });
+  cfg.trips.forEach(t => { t.placesTab = t.placesTab || 'Places'; });
   cfg.lastMe = cfg.lastMe || cfg.me || '';
   delete cfg.rates;
 }
@@ -32,7 +32,7 @@ function applyTheme() { const d = cfg.theme === 'dark'; document.documentElement
 applyTheme();
 const trip = () => cfg.trips.find(t => t.id === cfg.active) || cfg.trips[0];
 let me = sess.get('tt.me') || '';
-let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], shared: {}, me: null, meLabel: '' };
+let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], me: null, meLabel: '' };
 const ui = { tab: 'plan', day: null, exFilter: 'all', cur: null, edit: false, dirty: false, saving: false, loaded: false };
 
 /* ---------- CSV / Sheets ---------- */
@@ -60,22 +60,90 @@ function colIndex(header, names) { const h = header.map(norm); for (const n of n
 const num = s => { const m = String(s ?? '').replace(/,/g, '').match(/-?\d+(\.\d+)?/g); return m ? m.map(Number) : []; };
 
 /* ---------- write-back (Apps Script) ---------- */
-/* One person connects once; the URL + token live in the sheet's "Settings" tab so every device picks it up. */
-function conn() {
-  const t = trip(); if (t.scriptOff) return null;
-  const sh = data.shared || {}, url = sh.url || t.scriptUrl, token = sh.token || t.scriptToken;
-  return url && token ? { url, token, by: sh.by || '', at: sh.at || '', shared: !!sh.url } : null;
+/* ---------- Google sign-in (OAuth) + Sheets API: anyone with edit access to the sheet can edit through the app ---------- */
+const clientId = () => cfg.googleClientId || (window.TT_CONFIG && window.TT_CONFIG.googleClientId) || '';
+const auth = { token: '', exp: 0, email: '', name: '' };
+try { const a = JSON.parse(sessionStorage.getItem('tt.auth') || 'null'); if (a && a.exp > Date.now()) Object.assign(auth, a); } catch { }
+auth.valid = () => !!auth.token && Date.now() < auth.exp - 60000;
+let gisPromise;
+const loadGis = () => gisPromise = gisPromise || new Promise((res, rej) => {
+  if (window.google && google.accounts && google.accounts.oauth2) return res();
+  const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; sc.onload = res; sc.onerror = () => { gisPromise = null; rej(new Error('โหลด Google Sign-in ไม่ได้ — ตรวจอินเทอร์เน็ต')); }; document.head.appendChild(sc);
+});
+async function signIn() {
+  if (!clientId()) throw new Error('ยังไม่ได้ตั้งค่า Google Client ID');
+  await loadGis();
+  return new Promise((resolve, reject) => {
+    const tc = google.accounts.oauth2.initTokenClient({
+      client_id: clientId(), scope: 'https://www.googleapis.com/auth/spreadsheets openid email profile',
+      callback: async resp => {
+        if (resp.error) return reject(new Error(resp.error_description || resp.error));
+        auth.token = resp.access_token; auth.exp = Date.now() + (+resp.expires_in || 3600) * 1000;
+        try { const u = await (await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: 'Bearer ' + auth.token } })).json(); auth.email = u.email || ''; auth.name = u.name || ''; } catch { }
+        try { sessionStorage.setItem('tt.auth', JSON.stringify({ token: auth.token, exp: auth.exp, email: auth.email, name: auth.name })); } catch { }
+        try { renderMenu(); renderMapStatus(); } catch { }
+        resolve(auth.token);
+      },
+      error_callback: e => reject(new Error(e && e.type === 'popup_closed' ? 'ปิดหน้าต่างเข้าสู่ระบบก่อนเสร็จ' : 'เข้าสู่ระบบไม่สำเร็จ'))
+    });
+    tc.requestAccessToken(auth.email ? { prompt: '', hint: auth.email } : { prompt: 'select_account' });
+  });
 }
-const sheetApi = {
-  on: () => !!conn(),
-  async call(action, payload, override) {
-    const c = override || conn(); if (!c) throw new Error('ยังไม่ได้เชื่อมต่อชีต');
-    let r; try { r = await fetch(c.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ token: c.token, action, ...payload }) }); }
-    catch { throw new Error('เรียกสคริปต์ไม่ได้ — ตรวจว่า Deploy เป็น Web app, “Who has access” = Anyone และใช้ URL ที่ลงท้าย /exec'); }
-    const j = await r.json().catch(() => null);
-    if (j && !j.ok && /รหัสลับ/.test(j.error || '')) throw new Error('รหัสลับไม่ตรงกับในสคริปต์ — ใส่ค่า TOKEN ในสคริปต์ลงช่อง “รหัสลับ” หรือคัดลอกโค้ดใหม่จากหน้านี้ไปวางแล้ว Deploy เวอร์ชันใหม่');
-    if (!j || !j.ok) throw new Error((j && j.error) || 'สคริปต์ตอบกลับไม่ถูกต้อง — ตรวจว่าวางโค้ดล่าสุดแล้ว Deploy เวอร์ชันใหม่');
+async function signOut() {
+  try { if (auth.token && window.google && google.accounts) google.accounts.oauth2.revoke(auth.token, () => { }); } catch { }
+  auth.token = ''; auth.exp = 0; auth.email = ''; auth.name = ''; try { sessionStorage.removeItem('tt.auth'); } catch { }
+  ui.edit = false; renderAll();
+}
+const getToken = async () => auth.valid() ? auth.token : signIn();
+const qa = n => `'${String(n).replace(/'/g, "''")}'`;
+const shApi = {
+  async req(path, opt = {}) {
+    const tok = await getToken();
+    const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${trip().id}${path}`, { ...opt, headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json', ...(opt.headers || {}) } });
+    if (r.status === 401) { auth.token = ''; auth.exp = 0; throw new Error('หมดเวลาเข้าสู่ระบบ — แตะเพื่อเข้าสู่ระบบอีกครั้ง'); }
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 403) throw new Error('บัญชี Google นี้ไม่มีสิทธิ์แก้ไขชีต — ขอให้เจ้าของชีตแชร์สิทธิ์ “ผู้แก้ไข” ให้');
+    if (!r.ok) { const e = new Error((j.error && j.error.message) || ('HTTP ' + r.status)); e.status = r.status; throw e; }
     return j;
+  },
+  meta: async () => (await shApi.req('?fields=sheets.properties')).sheets.map(x => x.properties),
+  async ensureTab(name, header) {
+    if ((await shApi.meta()).some(x => x.title === name)) return;
+    await shApi.req(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: [{ addSheet: { properties: { title: name } } }] }) });
+    if (header) await shApi.req(`/values/${encodeURIComponent(qa(name) + '!A1')}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: [header] }) });
+  },
+  async inTab(p, fn) { try { return await fn(); } catch (e) { if (e.status === 400 && /Unable to parse range|not found/i.test(e.message)) { await shApi.ensureTab(p.tab, p.header); return fn(); } throw e; } }
+};
+const lastBackup = () => +(sessionStorage.getItem('tt.bak') || 0);
+const sheetApi = {
+  on: () => !!clientId(),                 // feature is available (Client ID configured)
+  ready: () => auth.valid(),              // signed in right now (no popup needed)
+  async call(action, p) {
+    switch (action) {
+      case 'append':
+        await shApi.inTab(p, () => shApi.req(`/values/${encodeURIComponent(qa(p.tab) + '!A:A')}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: 'POST', body: JSON.stringify({ values: [p.values] }) }));
+        return { ok: true };
+      case 'upsert': {
+        const col = await shApi.inTab(p, () => shApi.req(`/values/${encodeURIComponent(qa(p.tab) + '!A:A')}`));
+        const key = String(p.key).trim().toLowerCase(), idx = (col.values || []).findIndex((r, i) => i > 0 && String(r[0] || '').trim().toLowerCase() === key);
+        if (idx >= 0) { await shApi.req(`/values/${encodeURIComponent(qa(p.tab) + '!A' + (idx + 1))}?valueInputOption=USER_ENTERED`, { method: 'PUT', body: JSON.stringify({ values: [p.values] }) }); return { ok: true, updated: true }; }
+        return sheetApi.call('append', p);
+      }
+      case 'savePlan': {
+        const props = await shApi.meta(), target = p.gid ? props.find(x => String(x.sheetId) === String(p.gid)) : props[0];
+        if (!target) throw new Error('ไม่พบแท็บแผนในชีต');
+        if (Date.now() - lastBackup() > 10 * 60000) {            // keep one hidden backup, refreshed at most every 10 minutes
+          const old = props.find(x => x.title === '_plan_backup'), newId = Math.floor(Math.random() * 2e9) + 1, reqs = [];
+          if (old) reqs.push({ deleteSheet: { sheetId: old.sheetId } });
+          reqs.push({ duplicateSheet: { sourceSheetId: target.sheetId, newSheetId: newId, newSheetName: '_plan_backup' } }, { updateSheetProperties: { properties: { sheetId: newId, hidden: true }, fields: 'hidden' } });
+          await shApi.req(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: reqs }) }); try { sessionStorage.setItem('tt.bak', String(Date.now())); } catch { }
+        }
+        await shApi.req(`/values/${encodeURIComponent(qa(target.title) + '!A:ZZ')}:clear`, { method: 'POST', body: '{}' });
+        await shApi.req(`/values/${encodeURIComponent(qa(target.title) + '!A1')}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: p.rows }) });
+        return { ok: true, rows: p.rows.length };
+      }
+      default: throw new Error('unknown action ' + action);
+    }
   }
 };
 function setSub(msg, ms) { ui.subMsg = msg; renderSub(); if (ms) { clearTimeout(setSub.t); setSub.t = setTimeout(() => { ui.subMsg = ''; renderSub(); }, ms); } }
@@ -140,11 +208,6 @@ function parseTable(rows) {
 }
 
 /* ---------- users, expenses, locations, places ---------- */
-function parseSettings(rows) {
-  const h = rows[0] || [], ki = colIndex(h, ['key', 'คีย์']), vi = colIndex(h, ['value', 'ค่า']); if (ki < 0 || vi < 0) return {};
-  const o = {}; rows.slice(1).forEach(r => { if (r[ki]) o[norm(r[ki])] = r[vi] || ''; });
-  return { url: o.scripturl || '', token: o.scripttoken || '', by: o.connectedby || '', at: o.connectedat || '' };
-}
 function parseUsers(rows) {
   const h = rows[0] || []; const ni = colIndex(h, ['name', 'ชื่อ', 'user']);
   if (ni < 0) return null;
@@ -235,11 +298,10 @@ const sameAsPlan = r => rawPlanHead && (r[0] || []).join('|') === rawPlanHead;
 async function load() {
   const t = trip(); $('#tripTitle').textContent = t.name;
   const keep = { me: data.me, meLabel: data.meLabel };
-  const next = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], shared: data.shared || {}, ...keep };
+  const next = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], ...keep };
   const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r); });
   await Promise.allSettled([planP]);
   const rest = [
-    async () => { try { next.shared = parseSettings(await fetchTab(t, { name: 'Settings' })); } catch { } },
     async () => { next.users = parseUsers(await fetchTab(t, { name: t.usersTab })) || []; },
     async () => { next.expenses = parseExpenses(await fetchTab(t, { name: t.expensesTab })) || []; },
     async () => { next.locs = parseLocations(await fetchTab(t, { name: t.locationsTab || 'Locations' })) || {}; },
@@ -338,8 +400,11 @@ function renderPlan() {
       onEnd: () => { const old = d.steps, order = $$('.step', $('#tl')).map(n => +n.dataset.i); d.steps = order.map(i => old[i]); renderPlan(); scheduleSave(); } });
   }
 }
-function toggleEdit() {
-  if (!ui.edit && !sheetApi.on()) return setupDialog('แก้ไขแผนและบันทึกลงชีตได้เมื่อเชื่อมต่อชีตแล้ว');
+async function toggleEdit() {
+  if (!ui.edit) {
+    if (!sheetApi.on()) return googleDialog('แก้ไขแผนได้เมื่อเข้าสู่ระบบด้วย Google — เจ้าของแอปต้องตั้งค่า Client ID ก่อน (ครั้งเดียว)');
+    if (!auth.valid()) { try { await signIn(); } catch (e) { toast(e.message, 4500); return; } }
+  }
   ui.edit = !ui.edit; renderPlan();
 }
 function renderSub() {
@@ -403,10 +468,7 @@ function coordsInText(t) {
 }
 async function coordsFromLink(url) {
   let c = coordsInText(url); if (c) return c;
-  if (/(goo\.gl|maps\.app)/i.test(url)) {
-    if (!sheetApi.on()) throw new Error('ลิงก์สั้นต้องเชื่อมต่อชีตก่อน หรือใช้ลิงก์เต็ม/พิกัด');
-    const r = await sheetApi.call('resolve', { url }); c = coordsInText(r.url); if (c) return c;
-  }
+  if (/(goo\.gl|maps\.app)/i.test(url)) throw new Error('ลิงก์สั้นอ่านพิกัดไม่ได้ — เปิดลิงก์แล้วคัดลอก “ลิงก์เต็ม” จากแถบ URL (หรือวางพิกัด เช่น 43.26, 76.95)');
   return null;
 }
 async function savePlace(name, c) {
@@ -548,7 +610,7 @@ function onPos(pos) {
   data.me = { lat, lng, acc, at: new Date() }; geo.state = 'ok';
   const moved = !geo.lastPt || distM(geo.lastPt, data.me) > 80;
   if (moved && Date.now() - geo.lastGeo > 8000) { geo.lastGeo = Date.now(); geo.lastPt = { lat, lng }; reverse(lat, lng); }
-  if (sheetApi.on() && me && Date.now() - geo.lastPush > 60000) { geo.lastPush = Date.now(); pushLoc(); }
+  if (sheetApi.ready() && me && Date.now() - geo.lastPush > 60000) { geo.lastPush = Date.now(); pushLoc(); }
   drawMap(!ui.centered); ui.centered = true; renderMapStatus();
 }
 async function pushLoc() {
@@ -611,8 +673,8 @@ function renderMapStatus() {
   const el = $('#mapStatus'); if (!el) return; renderNext();
   if (geo.state === 'ok' && data.me) {
     const m = data.me;
-    el.innerHTML = `<div class="status"><div class="ico">📍</div><div><b>${esc(me || 'คุณ')} อยู่ที่นี่</b><div>${esc(data.meLabel || 'กำลังระบุชื่อสถานที่…')}</div><small>แม่นยำ ±${Math.round(m.acc)} ม.${sheetApi.on() ? ' · แชร์ให้เพื่อนผ่านชีตอัตโนมัติ' : ''}</small></div></div>${sheetApi.on() ? '' : '<div class="btns"><button class="btn" id="bConn">เชื่อมต่อชีตเพื่อแชร์ตำแหน่งให้เพื่อน</button></div>'}`;
-    const b = $('#bConn'); if (b) b.onclick = () => setupDialog('เชื่อมต่อแล้วแอปจะอัปเดตตำแหน่งของคุณลงชีตให้เพื่อนเห็นอัตโนมัติ');
+    el.innerHTML = `<div class="status"><div class="ico">📍</div><div><b>${esc(me || 'คุณ')} อยู่ที่นี่</b><div>${esc(data.meLabel || 'กำลังระบุชื่อสถานที่…')}</div><small>แม่นยำ ±${Math.round(m.acc)} ม.${sheetApi.ready() ? ' · แชร์ให้เพื่อนผ่านชีตอัตโนมัติ' : ''}</small></div></div>${sheetApi.ready() ? '' : '<div class="btns"><button class="btn" id="bShare">เข้าสู่ระบบ Google เพื่อแชร์ตำแหน่งให้เพื่อน</button></div>'}`;
+    const b = $('#bShare'); if (b) b.onclick = async () => { if (!sheetApi.on()) return googleDialog('เจ้าของแอปต้องตั้งค่า Google Client ID ก่อน'); try { await signIn(); renderMapStatus(); } catch (e) { toast(e.message, 4500); } };
   } else {
     let [ico, t, s] = GEO_MSG[geo.state] || GEO_MSG.idle;
     if (geo.state === 'before') { const w = gate().w; s = w ? `ระบบจะขอสิทธิ์อัตโนมัติเมื่อบินถึง${w.where ? ' ' + w.where : ''} (${dtTh(w.start)}) และปิดเมื่อออกเดินทางกลับ (${dtTh(w.end)})` : ''; }
@@ -949,10 +1011,7 @@ async function detectLink(url) {
   url = String(url || '').trim(); if (!url) return null;
   const nm = u => { try { const m = decodeURIComponent(u).match(/\/place\/([^/@?]+)/); return m ? m[1].replace(/\+/g, ' ').trim() : ''; } catch { return ''; } };
   let c = coordsInText(url), name = nm(url);
-  if (!c && /(goo\.gl|maps\.app)/i.test(url)) {
-    if (!sheetApi.on()) throw new Error('ลิงก์สั้นต้องเชื่อมต่อชีตก่อน — หรือเปิดลิงก์แล้วคัดลอก “ลิงก์เต็ม” จากแถบ URL');
-    const r = await sheetApi.call('resolve', { url }); c = coordsInText(r.url); name = name || nm(r.url);
-  }
+  if (!c && /(goo\.gl|maps\.app)/i.test(url)) throw new Error('ลิงก์สั้นอ่านพิกัดไม่ได้ — เปิดลิงก์แล้วคัดลอก “ลิงก์เต็ม” จากแถบ URL (หรือวางพิกัด เช่น 43.26, 76.95)');
   return c ? { ...c, name } : null;
 }
 function spotDialog(init = {}) {
@@ -1001,8 +1060,8 @@ async function saveSpot(s, dayIdx) {
 function renderMenu() {
   const el = $('#tab-menu'), on = sheetApi.on();
   let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
-  const cc = conn(), off = trip().scriptOff;
-  h += `<div class="card"><div class="row2"><h2>การบันทึกลงชีต</h2><span class="chip ${on ? 'ok' : 'bad'}">${on ? 'เชื่อมต่อแล้ว' : off ? 'ปิดในเครื่องนี้' : 'ยังไม่เชื่อมต่อ'}</span></div><div class="mut">${on ? `แก้แผน เพิ่มค่าใช้จ่าย และแชร์ตำแหน่ง จะบันทึกลงชีตอัตโนมัติ${cc.by ? ` · เชื่อมต่อโดย ${esc(cc.by)}` : ''} (ใช้ร่วมกันทั้งกลุ่ม)` : 'ให้คนเดียวเชื่อมต่อครั้งเดียว คนอื่นจะใช้ได้อัตโนมัติ'}</div><div class="btns"><button class="btn ${on ? '' : 'pri'}" id="bConn">${on ? 'จัดการการเชื่อมต่อ' : 'เชื่อมต่อชีต'}</button></div></div>`;
+  const signed = auth.valid(), cid = clientId();
+  h += `<div class="card"><div class="row2"><h2>บัญชี Google</h2><span class="chip ${signed ? 'ok' : 'bad'}">${signed ? 'เข้าสู่ระบบแล้ว' : cid ? 'ยังไม่ได้เข้าสู่ระบบ' : 'ยังไม่ตั้งค่า'}</span></div><div class="mut">${signed ? `${esc(auth.email)} — ถ้าบัญชีนี้มีสิทธิ์แก้ไขชีต แก้แผน เพิ่มค่าใช้จ่าย และแชร์ตำแหน่งผ่านแอปได้เลย` : 'เข้าสู่ระบบด้วยบัญชี Google ที่มีสิทธิ์แก้ไขชีต แล้วแก้ได้ทันที ไม่ต้องตั้งค่าอะไรเพิ่ม'}</div><div class="btns">${signed ? '<button class="btn" id="bOut">ออกจากระบบ</button>' : `<button class="btn pri" id="bConn">${cid ? 'เข้าสู่ระบบด้วย Google' : 'ตั้งค่า Google'}</button>`}${window.TT_CONFIG && window.TT_CONFIG.googleClientId ? '' : '<button class="btn" id="bCid">ตั้งค่า Client ID</button>'}</div></div>`;
   h += notifCard();
   h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
   h += `<div class="card"><h2 style="margin-bottom:4px">ทริป</h2>${cfg.trips.map(t => `<button class="li ${t.id === cfg.active ? 'on' : ''}" data-trip="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b></div></button>`).join('')}<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div></div>`;
@@ -1010,7 +1069,8 @@ function renderMenu() {
   h += data.extra.map(x => tableCard(x.name, x.rows)).join('');
   h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด ${ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '—'} · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
   el.innerHTML = h;
-  $('#bSwitch').onclick = () => $('#btnMe').click(); $('#bConn').onclick = () => setupDialog();
+  $('#bSwitch').onclick = () => $('#btnMe').click(); const bc = $('#bConn'); if (bc) bc.onclick = async () => { if (!clientId()) return googleDialog(); try { await signIn(); toast('เข้าสู่ระบบแล้ว: ' + auth.email); renderAll(); } catch (e) { toast(e.message, 4500); } };
+  const bo = $('#bOut'); if (bo) bo.onclick = signOut; const bi = $('#bCid'); if (bi) bi.onclick = () => googleDialog();
   bindNotif(el);
   $('#bTheme').onclick = () => { cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark'; saveCfg(); applyTheme(); renderMenu(); }; $('#bNew').onclick = newTripDialog; $('#bSet').onclick = settingsDialog;
   $('#bReload').onclick = async () => { toast('กำลังโหลด…', 1000); await load(); toast('อัปเดตแล้ว', 1200); };
@@ -1019,55 +1079,22 @@ function renderMenu() {
 const dlg = $('#dlg');
 function openDlg(html) { dlg.innerHTML = html; dlg.showModal(); return dlg; }
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
-const SETTINGS_HDR = ['Key', 'Value'];
-async function disconnect() {
-  const t = trip();
-  try {
-    if (conn()) for (const k of ['ScriptUrl', 'ScriptToken', 'ConnectedBy', 'ConnectedAt']) await sheetApi.call('upsert', { tab: 'Settings', header: SETTINGS_HDR, key: k, keyCol: 0, values: [k, ''] });
-    data.shared = {}; t.scriptUrl = ''; t.scriptToken = ''; t.scriptOff = false; saveCfg(); toast('ยกเลิกการเชื่อมต่อแล้ว (ทุกเครื่อง)');
-  } catch (e) {
-    if (confirm('ล้างการเชื่อมต่อในชีตไม่สำเร็จ (' + e.message + ')\nปิดการเชื่อมต่อเฉพาะเครื่องนี้แทน?')) { t.scriptOff = true; saveCfg(); }
-  }
-  renderAll();
-}
-async function setupDialog(reason, force) {
-  const c0 = conn();
-  if (c0 && !force) {
-    const d = openDlg(`<form method="dialog"><h3>เชื่อมต่อชีตแล้ว ✓</h3>
-    <div class="mut">${c0.by ? `เชื่อมต่อโดย <b>${esc(c0.by)}</b>${c0.at ? ' · ' + esc(ago(c0.at)) : ''}<br>` : ''}ทุกคนที่เปิดชีตนี้ในแอปใช้การเชื่อมต่อนี้อัตโนมัติ ไม่ต้องตั้งค่าซ้ำ</div>
-    <small style="display:block;margin-top:8px">URL และรหัสเก็บไว้ในแท็บ “Settings” ของชีต — คนที่มีลิงก์ชีตเห็นได้ จึงควรแชร์ชีตเฉพาะคนในกลุ่ม</small>
-    <div class="btns"><button value="new" class="btn" formnovalidate>ตั้งค่าใหม่</button><button value="off" class="btn danger" formnovalidate>ยกเลิกการเชื่อมต่อ</button><button value="x" class="btn" formnovalidate>ปิด</button></div></form>`);
-    $('form', d).onsubmit = ev => { const v = ev.submitter ? ev.submitter.value : 'x'; if (v === 'new') setTimeout(() => setupDialog(reason, true), 0); else if (v === 'off' && confirm('ยกเลิกการเชื่อมต่อสำหรับทุกคน?')) disconnect(); };
-    return;
-  }
-  const t = trip();
-  if (!t.scriptToken && !t.scriptDraft) { t.scriptDraft = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, '0')).join(''); saveCfg(); }
-  const token = t.scriptToken || t.scriptDraft;
-  let code = '';
-  try { code = (await (await fetch('apps-script/Code.gs')).text()).replace('__TOKEN__', token); } catch { code = '// โหลดโค้ดไม่ได้ — เปิดไฟล์ apps-script/Code.gs ใน repo'; }
-  const d = openDlg(`<form method="dialog"><h3>เชื่อมต่อ Google Sheet</h3>${reason ? `<div class="mut">${esc(reason)}</div>` : ''}
-  <div class="mut" style="margin-top:6px">ทำครั้งเดียวโดยคนเดียว — คนอื่นในกลุ่มจะเชื่อมต่ออัตโนมัติ</div>
-  <ol class="steps"><li>เปิดชีตของทริป → <b>ส่วนขยาย → Apps Script</b></li><li>ลบโค้ดเดิม แล้ว<b>วางโค้ดด้านล่าง</b> กดบันทึก</li><li>กด <b>Deploy → New deployment</b> → เลือกประเภท <b>Web app</b> ตั้ง <i>Execute as: Me</i> และ <i>Who has access: Anyone</i> แล้วกด Deploy และอนุญาตสิทธิ์</li><li>คัดลอก <b>Web app URL ที่ลงท้ายด้วย /exec</b> (ไม่ใช่ลิงก์ “Test deployments” ที่ลงท้าย /dev) มาวางด้านล่าง</li></ol>
-  <textarea class="code" readonly id="codeBox">${esc(code)}</textarea>
-  <div class="btns" style="margin-top:6px"><button type="button" class="btn" id="bCopy">คัดลอกโค้ด</button></div>
-  <label>Web app URL (ต้องลงท้ายด้วย /exec — ไม่ใช่ /dev)</label><input name="url" value="${esc(t.scriptUrl || '')}" placeholder="https://script.google.com/macros/s/…/exec" inputmode="url">
-  <label>รหัสลับ (ต้องตรงกับค่า TOKEN ในสคริปต์ — โค้ดด้านบนใส่ให้แล้ว ถ้าคุณมีสคริปต์อยู่แล้ว ให้คัดลอกค่า TOKEN จากสคริปต์มาใส่ที่นี่)</label><input name="token" value="${esc(token)}" autocomplete="off" autocapitalize="off">
-  <div class="btns"><button value="ok" class="btn pri">ทดสอบและบันทึก</button><button value="x" class="btn" formnovalidate>ปิด</button></div></form>`);
-  $('#bCopy').onclick = () => copyText(code, 'คัดลอกโค้ดแล้ว');
-  $('form', d).onsubmit = async ev => {
-    const v = ev.submitter ? ev.submitter.value : 'ok', f = new FormData(ev.target); if (v === 'x') return;
-    const url = f.get('url').trim();
-    if (!/^https:\/\/script\.google\.com\//.test(url)) { ev.preventDefault(); toast('URL ไม่ถูกต้อง — ต้องขึ้นต้น https://script.google.com/'); return; }
-    if (/\/dev\/?(\?.*)?$/.test(url)) { ev.preventDefault(); toast('นี่คือ URL แบบทดสอบ (/dev) — ต้องใช้ URL ที่ลงท้าย /exec จาก Deploy → New deployment → Web app', 6000); return; }
-    if (!/\/exec\/?(\?.*)?$/.test(url)) { ev.preventDefault(); toast('URL ต้องลงท้ายด้วย /exec', 4000); return; }
-    const c = { url, token: f.get('token').trim() };
-    try {
-      const r = await sheetApi.call('ping', {}, c);
-      const at = new Date().toISOString();
-      for (const [k, val] of [['ScriptUrl', c.url], ['ScriptToken', c.token], ['ConnectedBy', me || ''], ['ConnectedAt', at]]) await sheetApi.call('upsert', { tab: 'Settings', header: SETTINGS_HDR, key: k, keyCol: 0, values: [k, val] }, c);
-      data.shared = { url: c.url, token: c.token, by: me || '', at }; t.scriptUrl = c.url; t.scriptToken = c.token; t.scriptOff = false; delete t.scriptDraft; saveCfg();
-      toast(`เชื่อมต่อสำเร็จ (${r.sheets.length} แท็บ) — ทุกคนใช้ร่วมกันอัตโนมัติ`, 3500); renderAll();
-    } catch (e) { toast('เชื่อมต่อไม่สำเร็จ: ' + e.message, 5000); }
+function googleDialog(reason) {
+  const cid = clientId(), signed = auth.valid();
+  const d = openDlg(`<form method="dialog"><h3>เข้าสู่ระบบด้วย Google</h3>${reason ? `<div class="mut">${esc(reason)}</div>` : ''}
+  <div class="mut" style="margin-top:6px">ใครมีสิทธิ์ “ผู้แก้ไข” ในชีตนี้อยู่แล้ว เข้าสู่ระบบแล้วแก้ผ่านแอปได้เลย ใครไม่มีสิทธิ์ Google จะไม่อนุญาตเอง</div>
+  ${cid ? `<div class="btns"><button type="button" class="btn pri" id="gIn">${signed ? 'เข้าสู่ระบบแล้ว — ' + esc(auth.email) : 'เข้าสู่ระบบด้วย Google'}</button></div>` : '<div class="chip bad" style="margin-top:10px">ยังไม่ได้ตั้งค่า Google Client ID</div>'}
+  <details ${cid ? '' : 'open'}><summary>สำหรับเจ้าของแอป: ตั้งค่า Client ID (ทำครั้งเดียว)</summary>
+  <ol class="steps"><li>เปิด <b>console.cloud.google.com</b> → สร้างโปรเจกต์</li><li><b>APIs &amp; Services → Library</b> → เปิดใช้ <b>Google Sheets API</b></li><li><b>OAuth consent screen</b> → External → ใส่ชื่อแอปและอีเมล → เพิ่มอีเมลเพื่อนๆ ที่จะใช้ใน <b>Test users</b></li><li><b>Credentials → Create credentials → OAuth client ID</b> → ชนิด <b>Web application</b> → ที่ <i>Authorized JavaScript origins</i> ใส่ <code>https://ninenpn.github.io</code> → Create</li><li>คัดลอก <b>Client ID</b> (ลงท้าย .apps.googleusercontent.com) มาวางด้านล่าง</li></ol>
+  <label>Google Client ID</label><input name="cid" value="${esc(cfg.googleClientId || '')}" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" autocapitalize="off">
+  <small style="display:block;margin-top:6px">บันทึกในเครื่องนี้ก่อนเพื่อทดสอบ — ถ้าอยากให้ทุกคนใช้ได้โดยไม่ต้องใส่ ให้ส่ง Client ID ให้ผู้ดูแลฝังไว้ในโค้ด</small></details>
+  <div class="btns"><button value="ok" class="btn">บันทึก Client ID</button><button value="x" class="btn" formnovalidate>ปิด</button></div></form>`);
+  const gi = $('#gIn'); if (gi) gi.onclick = async () => { try { await signIn(); toast('เข้าสู่ระบบแล้ว: ' + auth.email); dlg.close(); renderAll(); } catch (e) { toast(e.message, 4500); } };
+  $('form', d).onsubmit = ev => {
+    if (ev.submitter && ev.submitter.value !== 'ok') return;
+    const v = String(new FormData(ev.target).get('cid') || '').trim();
+    if (v && !/\.apps\.googleusercontent\.com$/.test(v)) { ev.preventDefault(); toast('Client ID ต้องลงท้าย .apps.googleusercontent.com', 4000); return; }
+    cfg.googleClientId = v; saveCfg(); renderAll(); toast(v ? 'บันทึก Client ID แล้ว' : 'ล้าง Client ID แล้ว');
   };
 }
 function tripFields(t) {
@@ -1086,7 +1113,7 @@ function tripFields(t) {
 function readTrip(f, old) {
   const url = f.get('url'), m = url.match(/\/d\/([\w-]+)/); if (!m) { toast('ลิงก์ไม่ถูกต้อง'); return null; }
   const g = url.match(/gid=(\d+)/), same = old && old.id === m[1];
-  return { id: m[1], name: f.get('name'), planGid: f.get('planGid') || (g ? g[1] : ''), usersTab: f.get('usersTab') || 'Users', expensesTab: f.get('expensesTab') || 'Expenses', locationsTab: f.get('locationsTab') || 'Locations', placesTab: f.get('placesTab') || 'Places', costTab: f.get('costTab') || '', extraTabs: f.get('extraTabs') || '', currency: (f.get('currency') || 'THB').toUpperCase(), scriptUrl: same ? old.scriptUrl : '', scriptToken: same ? old.scriptToken : '' };
+  return { id: m[1], name: f.get('name'), planGid: f.get('planGid') || (g ? g[1] : ''), usersTab: f.get('usersTab') || 'Users', expensesTab: f.get('expensesTab') || 'Expenses', locationsTab: f.get('locationsTab') || 'Locations', placesTab: f.get('placesTab') || 'Places', costTab: f.get('costTab') || '', extraTabs: f.get('extraTabs') || '', currency: (f.get('currency') || 'THB').toUpperCase() };
 }
 function settingsDialog() {
   const t = trip();
