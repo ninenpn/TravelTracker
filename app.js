@@ -99,7 +99,7 @@ async function signOut() {
 }
 async function saveClientIdToSheet() {
   const id = clientId(); if (!id || (data.settings && data.settings.googleClientId === id)) return;
-  try { await sheetApi.call('upsert', { tab: 'Settings', header: ['Key', 'Value'], key: 'GoogleClientId', keyCol: 0, values: ['GoogleClientId', id] }); data.settings = { ...(data.settings || {}), googleClientId: id }; toast('บันทึก Client ID ลงชีตแล้ว — คนอื่นกดเข้าสู่ระบบได้เลย', 4000); } catch { }
+  try { await setColumnForAllUsers('GoogleClientId', id); data.settings = { ...(data.settings || {}), googleClientId: id }; toast('บันทึก Client ID ลงแท็บ Users แล้ว — คนอื่นกดเข้าสู่ระบบได้เลย', 4000); } catch { }
 }
 const getToken = async () => auth.valid() ? auth.token : signIn();
 /* Google only hands out 1-hour tokens to browsers, so renew quietly in the background while the app is open */
@@ -222,18 +222,13 @@ function parseTable(rows) {
 }
 
 /* ---------- users, expenses, locations, places ---------- */
-function parseSettings(rows) {
-  const h = rows[0] || [], ki = colIndex(h, ['key', 'คีย์']), vi = colIndex(h, ['value', 'ค่า']); if (ki < 0 || vi < 0) return {};
-  const o = {}; rows.slice(1).forEach(r => { if (r[ki]) o[norm(r[ki])] = String(r[vi] || '').trim(); });
-  return { googleClientId: o.googleclientid || '' };
-}
 function parseUsers(rows) {
   const h = rows[0] || []; const ni = colIndex(h, ['name', 'ชื่อ', 'user']);
   if (ni < 0) return null;
   const main = trip().currency || 'THB';
   const bcols = h.map((x, i) => { const m = String(x).match(/^\s*(budget|งบประมาณ|งบ)\s*[\s_(\-]*([a-zA-Z]{3})?\)?\s*$/i); return m ? { i, cur: (m[2] || main).toUpperCase() } : null; }).filter(Boolean);
-  const pi = colIndex(h, ['pin', 'รหัส']);
-  return rows.slice(1).filter(r => r[ni]).map(r => { const budgets = {}; bcols.forEach(b => { const v = num(r[b.i])[0]; if (v) budgets[b.cur] = v; }); return { name: r[ni], budgets, pin: pi >= 0 ? String(r[pi] || '').trim() : '' }; });
+  const pi = colIndex(h, ['pin', 'รหัส']), gci = colIndex(h, ['googleclientid', 'clientid']);
+  return rows.slice(1).filter(r => r[ni]).map(r => { const budgets = {}; bcols.forEach(b => { const v = num(r[b.i])[0]; if (v) budgets[b.cur] = v; }); return { name: r[ni], budgets, pin: pi >= 0 ? String(r[pi] || '').trim() : '', cid: gci >= 0 ? String(r[gci] || '').trim() : '' }; });
 }
 function normType(s) {
   s = norm(s);
@@ -322,7 +317,6 @@ async function load() {
   const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r); });
   await Promise.allSettled([planP]);
   const rest = [
-    async () => { try { next.settings = parseSettings(await fetchTab(t, { name: 'Settings' })); } catch { } },
     async () => { next.users = parseUsers(await fetchTab(t, { name: t.usersTab })) || []; },
     async () => { next.expenses = parseExpenses(await fetchTab(t, { name: t.expensesTab })) || []; },
     async () => { next.locs = parseLocations(await fetchTab(t, { name: t.locationsTab || 'Locations' })) || {}; },
@@ -332,6 +326,7 @@ async function load() {
   ];
   await Promise.allSettled(rest.map(f => f()));
   if (!next.plan && data.plan) next.plan = data.plan;
+  { const cu = next.users.find(u => u.cid); if (cu) next.settings = { googleClientId: cu.cid }; }
   data = next;
   showErr(!data.plan ? 'โหลดแผนไม่ได้ — ตรวจว่าชีตแชร์เป็น "ทุกคนที่มีลิงก์ดูได้" แล้วลองโหลดใหม่' : '');
   ui.loaded = true; ui.updated = new Date();
@@ -372,6 +367,16 @@ async function setPinInSheet(name, hash) {
   if (idx < 0) throw new Error('ไม่พบชื่อนี้ในแท็บสมาชิกของชีต');
   if (ci < 0) { ci = hd.length; await shApi.req(`/values/${enc(qa(tab) + '!' + colLetter(ci) + '1')}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: [['PIN']] }) }); }
   await shApi.req(`/values/${enc(qa(tab) + '!' + colLetter(ci) + (idx + 1))}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: [[hash]] }) });
+}
+async function setColumnForAllUsers(colName, value) {
+  const tab = trip().usersTab, enc = r => encodeURIComponent(r);
+  const hd = (((await shApi.req(`/values/${enc(qa(tab) + '!1:1')}`)).values || [[]])[0]) || [];
+  let ci = hd.findIndex(h => norm(h) === norm(colName));
+  const col = (await shApi.req(`/values/${enc(qa(tab) + '!A:A')}`)).values || [];
+  if (col.length < 2) throw new Error('แท็บสมาชิกยังไม่มีรายชื่อ');
+  if (ci < 0) { ci = hd.length; await shApi.req(`/values/${enc(qa(tab) + '!' + colLetter(ci) + '1')}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: [[colName]] }) }); }
+  const vals = []; for (let r = 1; r < col.length; r++) vals.push([String((col[r] || [])[0] || '').trim() ? value : '']);
+  await shApi.req(`/values/${enc(qa(tab) + '!' + colLetter(ci) + '2:' + colLetter(ci) + col.length)}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: vals }) });
 }
 let syncingPins = false;
 async function syncPendingPins(interactive) {
