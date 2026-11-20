@@ -194,6 +194,7 @@ async function load() {
   if (me && users().length && !users().some(u => u.name === me)) { me = ''; sess.set('tt.me', null); }
   if (!me && !$('#login').hidden) renderLogin();
   renderAll();
+  if (me && geo.state === 'idle') startLocation();
 }
 
 /* ---------- login ---------- */
@@ -206,7 +207,7 @@ function renderLogin() {
 function enter(name) {
   me = name; sess.set('tt.me', name); if (name) { cfg.lastMe = name; saveCfg(); }
   $('#login').hidden = true; $('#app').hidden = false; renderAll();
-  if (name) startLocation(true);
+  if (name) startLocation();
 }
 $('#loginUsers').onclick = e => { const b = e.target.closest('[data-u]'); if (b) enter(b.dataset.u); };
 $('#loginGuest').onclick = () => enter('');
@@ -346,13 +347,48 @@ function expenseDialog() {
 
 /* ---------- location & map ---------- */
 const geo = { state: 'idle', watch: null, lastGeo: 0, lastPt: null };
-function startLocation(userGesture) {
+const tm = s => { const m = String(s || '').match(/(\d{1,2})[.:](\d{2})/); return m ? [+m[1], +m[2]] : null; };
+function planDates(p) {
+  const now = new Date(), first = p.days.find(d => d.date); if (!first) return false;
+  let y = now.getFullYear();
+  if (new Date(y, first.date.m, first.date.d) < new Date(y, now.getMonth(), now.getDate()) - 60 * 864e5) y++;
+  let prev = null;
+  p.days.forEach(d => { if (!d.date) return; if (prev !== null && d.date.m < prev) y++; prev = d.date.m; d.dt = new Date(y, d.date.m, d.date.d); });
+  return true;
+}
+const at = (date, t) => { const x = new Date(date); if (t) x.setHours(t[0], t[1], 0, 0); return x; };
+/* Location is only allowed from the moment the first flight lands until the last flight departs. */
+function tripWindow() {
+  const p = data.plan; if (!p || !p.days.length || !planDates(p)) return null;
+  const fl = []; p.days.forEach(d => d.steps.forEach(s => { if (d.dt && howIcon(s.how, false) === '✈️') fl.push({ d, s }); }));
+  const lastDay = [...p.days].reverse().find(d => d.dt); if (!lastDay) return null;
+  if (!fl.length) return { start: at(p.days.find(d => d.dt).dt), end: at(lastDay.dt, [23, 59]), where: '' };
+  const f = fl[0], dep = tm(f.s.time), arr = tm(f.s.toTime);
+  let start = at(f.d.dt, arr);
+  const pm = String(f.s.toTime || '').match(/\(([^)]+)\)/), pd = pm && parseDayLabel(pm[1]);
+  if (pd) { start = new Date(f.d.dt.getFullYear(), pd.m, pd.d, arr ? arr[0] : 0, arr ? arr[1] : 0); }
+  else if (dep && arr && (arr[0] * 60 + arr[1]) < (dep[0] * 60 + dep[1])) start.setDate(start.getDate() + 1);
+  let end = at(lastDay.dt, [23, 59]);
+  if (fl.length > 1) { const l = fl[fl.length - 1]; end = at(l.d.dt, tm(l.s.time) || [0, 0]); }
+  return { start, end, where: f.s.to || '' };
+}
+function gate() {
+  if (cfg.forceLoc) return { state: 'active' };
+  if (!data.plan) return { state: 'pending' };
+  const w = tripWindow(); if (!w) return { state: 'active' };
+  const n = Date.now();
+  return { state: n < w.start ? 'before' : n > w.end ? 'after' : 'active', w };
+}
+const dtTh = d => d.toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+function stopLocation() { if (geo.watch != null) { navigator.geolocation.clearWatch(geo.watch); geo.watch = null; } }
+function startLocation() {
   if (!navigator.geolocation) { geo.state = 'unsupported'; return renderMapStatus(); }
+  const g = gate();
+  if (g.state !== 'active') { stopLocation(); geo.state = g.state === 'pending' ? 'idle' : g.state; data.me = g.state === 'active' ? data.me : null; return renderMapStatus(); }
   if (geo.watch != null) return;
   geo.state = 'asking'; renderMapStatus();
   geo.watch = navigator.geolocation.watchPosition(onPos, err => {
-    geo.watch != null && navigator.geolocation.clearWatch(geo.watch); geo.watch = null;
-    geo.state = err.code === 1 ? 'denied' : 'error'; renderMapStatus();
+    stopLocation(); geo.state = err.code === 1 ? 'denied' : 'error'; renderMapStatus();
   }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 25000 });
 }
 function onPos(pos) {
@@ -400,19 +436,22 @@ const GEO_MSG = {
   asking: ['⏳', 'กำลังหาตำแหน่ง…', 'หากมีหน้าต่างขอสิทธิ์ ให้กด “อนุญาต”'],
   denied: ['🚫', 'ไม่ได้รับอนุญาตให้เข้าถึงตำแหน่ง', 'เปิดสิทธิ์ตำแหน่งให้เว็บนี้ในการตั้งค่าเบราว์เซอร์ (ไอคอนแม่กุญแจข้าง URL) แล้วกดลองอีกครั้ง'],
   error: ['⚠️', 'หาตำแหน่งไม่ได้', 'ตรวจว่าเปิด GPS/Location Services แล้วลองใหม่'],
-  unsupported: ['⚠️', 'อุปกรณ์ไม่รองรับระบุตำแหน่ง', '']
+  unsupported: ['⚠️', 'อุปกรณ์ไม่รองรับระบุตำแหน่ง', ''],
+  before: ['🛫', 'ยังไม่ถึงเวลาเปิดตำแหน่ง', ''],
+  after: ['🏠', 'ทริปจบแล้ว — ปิดการติดตามตำแหน่งแล้ว', 'ไม่มีการขอหรือเก็บตำแหน่งนอกช่วงทริป']
 };
 function renderMapStatus() {
-  const el = $('#mapStatus'); if (!el) return;
+  const el = $('#mapStatus'); if (!el) return; renderNext();
   if (geo.state === 'ok' && data.me) {
     const m = data.me;
     el.innerHTML = `<div class="status"><div class="ico">📍</div><div><b>${esc(me || 'คุณ')} อยู่ที่นี่</b><div>${esc(data.meLabel || 'กำลังระบุชื่อสถานที่…')}</div><small>${m.lat.toFixed(5)}, ${m.lng.toFixed(5)} · แม่นยำ ±${Math.round(m.acc)} ม.</small></div></div>
     <div class="btns"><button class="btn pri" id="bShare"><svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>ส่งตำแหน่ง</button><button class="btn" id="bRow">คัดลอกแถวลงชีต</button></div>`;
     $('#bShare').onclick = shareLoc; $('#bRow').onclick = () => copyText([me, m.lat.toFixed(6), m.lng.toFixed(6), data.meLabel || '', new Date().toLocaleString('th-TH')].join('\t'), 'คัดลอกแล้ว — วางในแท็บ ' + (trip().locationsTab || 'Locations'));
   } else {
-    const [ico, t, s] = GEO_MSG[geo.state] || GEO_MSG.idle;
-    el.innerHTML = `<div class="status"><div class="ico">${ico}</div><div><b>${t}</b><div class="mut">${s}</div></div></div>${geo.state === 'asking' || geo.state === 'unsupported' ? '' : '<div class="btns"><button class="btn pri" id="bAsk">เปิด/ลองหาตำแหน่งอีกครั้ง</button></div>'}`;
-    const b = $('#bAsk'); if (b) b.onclick = () => { geo.watch != null && navigator.geolocation.clearWatch(geo.watch); geo.watch = null; ui.centered = false; startLocation(true); };
+    let [ico, t, s] = GEO_MSG[geo.state] || GEO_MSG.idle;
+    if (geo.state === 'before') { const w = gate().w; s = w ? `ระบบจะขอสิทธิ์ตำแหน่งอัตโนมัติเมื่อบินถึง${w.where ? ' ' + w.where : ''} วันที่ ${dtTh(w.start)} (ตามแผนในชีต) และจะปิดเมื่อออกเดินทางกลับ ${dtTh(w.end)}` : ''; }
+    el.innerHTML = `<div class="status"><div class="ico">${ico}</div><div><b>${t}</b><div class="mut">${s}</div></div></div>${['asking', 'unsupported', 'before', 'after'].includes(geo.state) ? '' : '<div class="btns"><button class="btn pri" id="bAsk">เปิด/ลองหาตำแหน่งอีกครั้ง</button></div>'}`;
+    const b = $('#bAsk'); if (b) b.onclick = () => { stopLocation(); ui.centered = false; startLocation(); };
   }
 }
 async function shareLoc() {
@@ -420,21 +459,47 @@ async function shareLoc() {
   if (navigator.share) { try { await navigator.share({ title: 'ตำแหน่งของฉัน', text, url }); return; } catch (e) { if (e.name === 'AbortError') return; } }
   copyText(text + ' ' + url, 'คัดลอกลิงก์ตำแหน่งแล้ว');
 }
+function nextStop() {
+  const p = data.plan; if (!p) return null; planDates(p);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = p.days.find(x => x.dt && +x.dt === +today); if (!d) return null;
+  const nowM = new Date().getHours() * 60 + new Date().getMinutes();
+  return d.steps.find(st => st.to && (!tm(st.time) || tm(st.time)[0] * 60 + tm(st.time)[1] >= nowM - 30)) || null;
+}
+const gmDir = (to, mode) => `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(to)}${data.me ? `&origin=${data.me.lat},${data.me.lng}` : ''}${mode ? '&travelmode=' + mode : ''}`;
+function gmapSrc(pt) { const q = pt ? `${pt.lat},${pt.lng}` : 'Almaty'; return `https://maps.google.com/maps?q=${encodeURIComponent(q)}&z=${pt ? 16 : 11}&hl=th&output=embed`; }
+function applyMapMode() {
+  const g = ui.mapMode === 'google';
+  $('#map').hidden = g; $('#gmap').hidden = !g; $('#bLocate').hidden = g;
+  $$('#mapSeg button').forEach(b => b.classList.toggle('on', b.dataset.m === (g ? 'google' : 'app')));
+  if (g) { const pt = ui.gTarget || data.me; const src = gmapSrc(pt); if ($('#gmap').dataset.src !== src) { $('#gmap').dataset.src = src; $('#gmap').src = src; } }
+  else if (map) setTimeout(() => map.invalidateSize(), 50);
+}
+function renderNext() {
+  const el = $('#mapNext'); if (!el) return;
+  const n = geo.state === 'ok' ? nextStop() : null;
+  el.innerHTML = n ? `<div class="card"><small>จุดหมายถัดไปตามแผน</small><div class="route">${esc(n.from ? n.from + ' → ' : '')}${esc(n.to)}</div><div class="btns"><a class="btn pri" target="_blank" rel="noopener" href="${gmDir(n.to)}">นำทางด้วย Google Maps</a><a class="btn" target="_blank" rel="noopener" href="${gmDir(n.to, 'transit')}">ขนส่งสาธารณะ</a></div></div>` : '';
+}
 function renderMap() {
   const el = $('#tab-map');
   if (!el.dataset.init) {
     el.dataset.init = 1;
-    el.innerHTML = `<div class="card" id="mapStatus"></div><div class="mapwrap"><div id="map"></div><button class="locate" id="bLocate" aria-label="ไปที่ตำแหน่งฉัน"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button></div><div id="mapPeople"></div>`;
-    $('#bLocate').onclick = () => { if (data.me) map.setView([data.me.lat, data.me.lng], 17); else { ui.centered = false; startLocation(true); } };
+    el.innerHTML = `<div class="card" id="mapStatus"></div><div id="mapNext"></div>
+    <div class="seg" id="mapSeg"><button data-m="app" class="on">แผนที่ของแอป</button><button data-m="google">Google Maps</button></div>
+    <div class="mapwrap"><div id="map"></div><iframe id="gmap" title="Google Maps" hidden loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe><button class="locate" id="bLocate" aria-label="ไปที่ตำแหน่งฉัน"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button></div>
+    <div id="mapPeople"></div>
+    <div class="card"><h3>แชร์ตำแหน่งสดกับเพื่อนผ่าน Google Maps</h3><div class="note">แอปนี้อ่านตำแหน่งเพื่อนจาก Google Maps โดยตรงไม่ได้ (Google ไม่เปิด API ให้) แนะนำให้ใช้คู่กัน: เปิดแอป Google Maps → แตะรูปโปรไฟล์ → <b>การแชร์ตำแหน่ง</b> → เลือกเพื่อนและระยะเวลา แล้วดูกันในแอป Google Maps ได้เลย</div><div class="btns"><a class="btn" target="_blank" rel="noopener" href="https://www.google.com/maps">เปิด Google Maps</a></div></div>`;
+    $('#bLocate').onclick = () => { if (data.me) map.setView([data.me.lat, data.me.lng], 17); else { ui.centered = false; startLocation(); } };
+    $$('#mapSeg button').forEach(b => b.onclick = () => { ui.mapMode = b.dataset.m; applyMapMode(); });
   }
-  renderMapStatus(); renderMapPeople(); drawMap(true);
+  renderMapStatus(); renderNext(); renderMapPeople(); drawMap(true); applyMapMode();
 }
 function renderMapPeople() {
   const el = $('#mapPeople'); if (!el) return;
   const all = { ...data.locs }; if (data.me && me) all[me] = { ...data.me, label: data.meLabel || '' };
   const names = users().map(u => u.name); if (me && !names.includes(me)) names.push(me);
   el.innerHTML = `<h2 style="margin-top:14px">สมาชิก</h2><div class="people">${names.map(n => { const p = all[n]; return `<button class="pcard" data-n="${esc(n)}"><div class="prow">${avatar(n, 'sm')}<b>${esc(n)}</b></div><small>${p ? esc(p.label || `${(+p.lat).toFixed(3)}, ${(+p.lng).toFixed(3)}`) : 'ยังไม่มีตำแหน่ง'}</small>${p && p.at ? `<small>${p.at instanceof Date ? p.at.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : esc(p.at)}</small>` : ''}</button>`; }).join('')}</div>${Object.keys(data.locs).length ? '' : '<small>ตำแหน่งเพื่อนอ่านจากแท็บ “' + esc(trip().locationsTab || 'Locations') + '” ของชีต</small>'}`;
-  $$('.pcard', el).forEach(b => b.onclick = () => { const p = all[b.dataset.n]; if (p && map) map.setView([p.lat, p.lng], 16); else toast('ยังไม่มีตำแหน่งของ ' + b.dataset.n); });
+  $$('.pcard', el).forEach(b => b.onclick = () => { const p = all[b.dataset.n]; if (!p) return toast('ยังไม่มีตำแหน่งของ ' + b.dataset.n); ui.gTarget = p; if (ui.mapMode === 'google') applyMapMode(); else if (map) map.setView([p.lat, p.lng], 16); });
 }
 
 /* ---------- menu & settings ---------- */
@@ -471,13 +536,14 @@ function readTrip(f) {
 function settingsDialog() {
   const t = trip();
   const d = openDlg(`<form method="dialog"><h3>ตั้งค่าทริป</h3>${tripFields(t)}
+  <label class="chk"><input type="checkbox" name="force" ${cfg.forceLoc ? 'checked' : ''}> ข้ามเงื่อนไขเวลา — ขอตำแหน่งได้ทันที (สำหรับทดสอบ)</label>
   <div class="btns"><button value="ok" class="btn pri">บันทึก</button><button value="del" class="btn danger" formnovalidate>ลบทริปนี้</button><button value="x" class="btn" formnovalidate>ปิด</button></div></form>`);
   $('form', d).onsubmit = ev => {
     const v = ev.submitter?.value, f = new FormData(ev.target);
     if (v === 'del') { if (cfg.trips.length > 1 && confirm('ลบทริปนี้ออกจากรายการ (ไม่กระทบชีตจริง)?')) { cfg.trips = cfg.trips.filter(x => x.id !== t.id); cfg.active = cfg.trips[0].id; saveCfg(); load(); } return; }
     if (v !== 'ok') return;
     const nt = readTrip(f); if (!nt) return;
-    Object.assign(t, nt); cfg.active = nt.id;
+    Object.assign(t, nt); cfg.active = nt.id; cfg.forceLoc = f.get('force') === 'on'; stopLocation(); geo.state = 'idle';
     saveCfg(); load();
   };
 }
@@ -501,12 +567,13 @@ $('#tabs').onclick = e => {
   $$('#tabs button').forEach(x => x.classList.toggle('active', x === b));
   $$('main > section').forEach(s => s.hidden = s.id !== 'tab-' + ui.tab);
   scrollTo(0, 0);
-  if (ui.tab === 'map') { renderMap(); if (geo.state === 'idle' && me) startLocation(true); }
+  if (ui.tab === 'map') { renderMap(); if (geo.state === 'idle' && me) startLocation(); }
 };
 $('#btnReload').onclick = async () => { toast('กำลังโหลดใหม่…', 1200); await load(); toast('อัปเดตแล้ว', 1200); };
 setInterval(() => { if (!document.hidden && !dlg.open && $('#login').hidden) load(); }, 60000);
+setInterval(() => { if (!me || !data.plan) return; const g = gate().state; if (g === 'active' && geo.watch == null && !['denied', 'unsupported'].includes(geo.state)) startLocation(); else if (g !== 'active' && (geo.watch != null || geo.state === 'ok')) { stopLocation(); startLocation(); } else if (g === 'before' || g === 'after') { geo.state = g; if (ui.tab === 'map') renderMapStatus(); } }, 30000);
 (async function boot() {
   if (me) { $('#login').hidden = true; $('#app').hidden = false; renderAll(); }
   await load();
-  if (me) startLocation(false);
+  if (me) startLocation();
 })();
