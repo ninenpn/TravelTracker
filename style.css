@@ -150,3 +150,8 @@ dialog input,dialog select{width:100%;padding:11px 12px;border-radius:12px;borde
 
 .prow{display:flex;align-items:center;gap:6px;margin-bottom:4px}
 @media(prefers-color-scheme:dark){.leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.9)}}
+
+.preview{background:var(--bg);box-shadow:none;margin:12px 0}
+.preview .tx:first-of-type{border-top:1px solid var(--line)}
+details{margin-top:10px}summary{cursor:pointer;color:var(--pri);font-size:.88rem}
+.seg button:not(.on):active{background:var(--priSoft)}

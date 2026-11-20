@@ -22,7 +22,7 @@ const sess = {
   get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch { } }
 };
-let cfg = store.get('tt.cfg', null) || { trips: [DEFAULT_TRIP], active: DEFAULT_TRIP.id, lastMe: '', rates: { KZT: 0.07 } };
+let cfg = store.get('tt.cfg', null) || { trips: [DEFAULT_TRIP], active: DEFAULT_TRIP.id, lastMe: '' };
 const OLD = '1gtOWIff4TirHlJ8ZP3Ei84F9zb2cLPT-';
 if (cfg.v !== 4) {
   cfg.v = 4;
@@ -101,9 +101,11 @@ function parseTable(rows) {
 
 /* ---------- users, expenses, locations ---------- */
 function parseUsers(rows) {
-  const h = rows[0] || []; const ni = colIndex(h, ['name', 'ชื่อ', 'user']); const bi = colIndex(h, ['budget', 'งบ', 'งบประมาณ']);
+  const h = rows[0] || []; const ni = colIndex(h, ['name', 'ชื่อ', 'user']);
   if (ni < 0) return null;
-  return rows.slice(1).filter(r => r[ni]).map(r => ({ name: r[ni], budget: num(r[bi])[0] || 0 }));
+  const main = trip().currency || 'THB';
+  const bcols = h.map((x, i) => { const m = String(x).match(/^\s*(budget|งบประมาณ|งบ)\s*[\s_(\-]*([a-zA-Z]{3})?\)?\s*$/i); return m ? { i, cur: (m[2] || main).toUpperCase() } : null; }).filter(Boolean);
+  return rows.slice(1).filter(r => r[ni]).map(r => { const budgets = {}; bcols.forEach(b => { const v = num(r[b.i])[0]; if (v) budgets[b.cur] = v; }); return { name: r[ni], budgets }; });
 }
 function normType(s) {
   s = norm(s);
@@ -129,30 +131,43 @@ function parseLocations(rows) {
   for (const r of rows.slice(1)) { const la = num(r[ix.lat])[0], lo = num(r[ix.lng])[0]; if (r[ix.n] && la != null && lo != null) out[r[ix.n]] = { lat: la, lng: lo, label: r[ix.l] || '', at: r[ix.t] || '' }; }
   return out;
 }
-const rate = c => c === 'THB' ? 1 : (cfg.rates[c] || 1);
 const users = () => data.users;
 const colorOf = n => { const i = users().findIndex(u => u.name === n); return COLORS[(i < 0 ? n.length : i) % COLORS.length]; };
 const initial = n => (String(n).trim()[0] || '?').toUpperCase();
 const avatar = (n, cls = '') => `<span class="avatar ${cls}" style="--c:${colorOf(n)}">${esc(initial(n))}</span>`;
-function calc() {
-  const names = users().map(u => u.name);
-  const S = {}; users().forEach(u => S[u.name] = { ...u, paid: 0, share: 0, personal: 0, shared: 0, forMe: 0, forOthers: 0, net: 0 });
+const participants = (e, names) => { const ps = e.type === 'shared' ? (e.with.length ? e.with : names) : e.type === 'personal' ? [e.payer] : (e.with.length ? e.with : [e.payer]); return ps.length ? ps : [e.payer]; };
+function calcCur(cur, names) {
+  const S = {}; users().forEach(u => S[u.name] = { name: u.name, budget: (u.budgets || {})[cur] || 0, paid: 0, share: 0, personal: 0, shared: 0, forMe: 0, forOthers: 0, net: 0 });
   const ensure = n => S[n] || (S[n] = { name: n, budget: 0, paid: 0, share: 0, personal: 0, shared: 0, forMe: 0, forOthers: 0, net: 0 });
-  const cats = {};
-  for (const e of data.expenses) {
-    const amt = e.amount * rate(e.cur);
-    let ps = e.type === 'shared' ? (e.with.length ? e.with : names) : e.type === 'personal' ? [e.payer] : (e.with.length ? e.with : [e.payer]);
-    if (!ps.length) ps = [e.payer];
-    const each = amt / ps.length; ensure(e.payer).paid += amt;
-    for (const p of ps) { const u = ensure(p); u.share += each; if (e.type === 'shared') u.shared += each; else if (p === e.payer) u.personal += each; else { u.forMe += each; ensure(e.payer).forOthers += each; } }
-    const c = e.cat || 'อื่นๆ'; cats[c] = (cats[c] || 0) + amt;
+  const cats = {}, owe = {}; let count = 0;
+  for (const e of data.expenses.filter(x => x.cur === cur)) {
+    count++; const ps = participants(e, names), each = e.amount / ps.length; ensure(e.payer).paid += e.amount;
+    for (const p of ps) {
+      const u = ensure(p); u.share += each;
+      if (e.type === 'shared') u.shared += each; else if (p === e.payer) u.personal += each; else { u.forMe += each; ensure(e.payer).forOthers += each; }
+      if (p !== e.payer) { owe[p] = owe[p] || {}; owe[p][e.payer] = (owe[p][e.payer] || 0) + each; }
+    }
+    const c = e.cat || 'อื่นๆ'; cats[c] = (cats[c] || 0) + e.amount;
   }
   const list = Object.values(S); list.forEach(u => u.net = u.paid - u.share);
+  const pairs = [], ns = list.map(u => u.name);
+  for (let i = 0; i < ns.length; i++) for (let j = i + 1; j < ns.length; j++) {
+    const a = ns[i], b = ns[j], d = ((owe[a] || {})[b] || 0) - ((owe[b] || {})[a] || 0);
+    if (d > 0.005) pairs.push({ from: a, to: b, v: d }); else if (d < -0.005) pairs.push({ from: b, to: a, v: -d });
+  }
+  pairs.sort((x, y) => y.v - x.v);
   const cr = list.filter(u => u.net > 0.005).map(u => ({ n: u.name, v: u.net })).sort((a, b) => b.v - a.v);
   const db = list.filter(u => u.net < -0.005).map(u => ({ n: u.name, v: -u.net })).sort((a, b) => b.v - a.v);
   const tx = []; let i = 0, j = 0;
   while (i < cr.length && j < db.length) { const v = Math.min(cr[i].v, db[j].v); tx.push({ from: db[j].n, to: cr[i].n, v }); cr[i].v -= v; db[j].v -= v; if (cr[i].v < 0.005) i++; if (db[j].v < 0.005) j++; }
-  return { list, tx, cats, total: list.reduce((a, u) => a + u.paid, 0) };
+  return { cur, list, pairs, tx, cats, count, total: list.reduce((a, u) => a + u.paid, 0), hasBudget: list.some(u => u.budget > 0) };
+}
+function calcAll() {
+  const names = users().map(u => u.name), main = trip().currency || 'THB', set = new Set([main]);
+  data.expenses.forEach(e => set.add(e.cur)); users().forEach(u => Object.keys(u.budgets || {}).forEach(c => set.add(c)));
+  const order = [main, ...[...set].filter(c => c !== main).sort()], out = {};
+  order.forEach(c => out[c] = calcCur(c, names));
+  return { out, order };
 }
 
 /* ---------- load ---------- */
@@ -250,27 +265,38 @@ function tableCard(title, rows) {
   return `<div class="card"><h3>${esc(title)}</h3><div class="tbl"><table>${rows.map((r, i) => `<tr>${r.map(c => i === 0 ? `<th>${link(c)}</th>` : `<td>${link(c)}</td>`).join('')}</tr>`).join('')}</table></div></div>`;
 }
 function renderBudget() {
-  const el = $('#tab-budget'), c = calc(), cur = trip().currency || 'THB';
+  const el = $('#tab-budget');
   if (!users().length) { el.innerHTML = '<div class="card empty">ยังไม่มีสมาชิก<br><small>สร้างแท็บ “' + esc(trip().usersTab) + '” ในชีต (คอลัมน์ Name, Budget)</small></div>' + tableCard('ประมาณการ: ' + trip().costTab, data.costs); return; }
-  const mine = c.list.find(u => u.name === me) || c.list[0];
+  const { out, order } = calcAll(); if (!ui.cur || !out[ui.cur]) ui.cur = order[0];
+  const c = out[ui.cur], cur = ui.cur, who = me || users()[0].name, mine = c.list.find(u => u.name === who) || c.list[0];
+  let h = '';
+  if (order.length > 1) h += `<div class="seg">${order.map(k => `<button data-cur="${esc(k)}" class="${k === cur ? 'on' : ''}">${esc(k)}</button>`).join('')}</div>`;
+  const active = order.filter(k => out[k].count || out[k].hasBudget);
+  if (active.length > 1) {
+    const mm = k => out[k].list.find(u => u.name === who) || { net: 0 };
+    h += `<div class="card"><h3>สรุปของ ${esc(who)} (แยกตามสกุลเงิน)</h3>${active.map(k => { const n = mm(k).net; return `<div class="urow"><div><b>${esc(k)}</b></div><div class="amt ${n >= 0 ? 'pos' : 'neg'}">${n >= 0 ? 'ได้คืน ' : 'ต้องจ่ายคืน '}${fmt(Math.abs(n))}</div></div>`; }).join('')}</div>`;
+  }
   const rem = mine.budget - mine.share, pct = mine.budget ? mine.share / mine.budget * 100 : 0;
-  let h = `<div class="card hero">${donut(pct, rem < 0)}<div><small>งบคงเหลือของ ${esc(mine.name)}</small><div class="big">${fmt(rem)} <small>${cur}</small></div><small>ใช้ไป ${fmt(mine.share)} / งบ ${fmt(mine.budget)}</small></div></div>`;
+  h += c.hasBudget
+    ? `<div class="card hero">${donut(pct, rem < 0)}<div><small>งบคงเหลือของ ${esc(mine.name)}</small><div class="big">${fmt(rem)} <small>${esc(cur)}</small></div><small>ใช้ไป ${fmt(mine.share)} / งบ ${fmt(mine.budget)}</small></div></div>`
+    : `<div class="card hero"><div><small>ใช้ไปของ ${esc(mine.name)}</small><div class="big">${fmt(mine.share)} <small>${esc(cur)}</small></div><small>ยังไม่ได้ตั้งงบ ${esc(cur)} — เพิ่มคอลัมน์ “Budget ${esc(cur)}” ในแท็บ ${esc(trip().usersTab)}</small></div></div>`;
   h += `<div class="stats">
+    <div class="stat"><small>จ่ายให้ตัวเอง (ส่วนตัว)</small><b>${fmt(mine.personal)}</b></div>
     <div class="stat"><small>ส่วนกลาง (หารเท่า)</small><b>${fmt(mine.shared)}</b></div>
-    <div class="stat"><small>ส่วนตัว</small><b>${fmt(mine.personal)}</b></div>
     <div class="stat"><small>คนอื่นออกให้ฉัน</small><b>${fmt(mine.forMe)}</b></div>
     <div class="stat"><small>ฉันออกให้คนอื่น</small><b>${fmt(mine.forOthers)}</b></div></div>`;
-  h += `<div class="card"><small>${mine.net >= 0 ? 'ฉันควรได้รับคืน' : 'ฉันต้องจ่ายคืน'}</small><div class="big ${mine.net >= 0 ? 'pos' : 'neg'}" style="font-size:1.4rem;font-weight:700">${fmt(Math.abs(mine.net))} ${cur}</div><small>จ่ายออกไปจริง ${fmt(mine.paid)}</small></div>`;
-  h += `<div class="card"><h2>ทุกคน</h2>${c.list.map(u => { const r = u.budget - u.share, p = u.budget ? Math.min(100, u.share / u.budget * 100) : 0; return `<div class="urow">${avatar(u.name)}<div><b>${esc(u.name)}${u.name === me ? ' <span class="chip">ฉัน</span>' : ''}</b><div class="bar-track ${r < 0 ? 'over' : ''}"><i style="width:${p}%"></i></div><small>ใช้ ${fmt(u.share)} · เหลือ <span class="${r < 0 ? 'neg' : ''}">${fmt(r)}</span></small></div><div class="amt ${u.net >= 0 ? 'pos' : 'neg'}">${u.net >= 0 ? '+' : '−'}${fmt(Math.abs(u.net))}</div></div>`; }).join('')}<small>ตัวเลขขวา = สุทธิที่ต้องได้รับ (+) / จ่าย (−)</small></div>`;
-  h += `<div class="card"><h2>🔁 โอนเคลียร์กัน</h2>${c.tx.length ? c.tx.map(t => `<div class="tx">${avatar(t.from, 'sm')}<b>${esc(t.from)}</b><span class="arr">→</span>${avatar(t.to, 'sm')}<b>${esc(t.to)}</b><b class="v">${fmt(t.v)}</b></div>`).join('') : '<span class="mut">เคลียร์กันครบแล้ว / ยังไม่มีรายการ</span>'}</div>`;
-  const cats = Object.entries(c.cats).sort((a, b) => b[1] - a[1]), mx = cats[0]?.[1] || 1;
-  if (cats.length) h += `<div class="card"><h2>📊 แยกตามหมวด</h2>${cats.map(([k, v]) => `<div class="catrow"><div><span>${esc(k)}</span><b>${fmt(v)}</b></div><div class="bar-track"><i style="width:${v / mx * 100}%"></i></div></div>`).join('')}</div>`;
+  h += `<div class="card"><h2>🤝 ใครติดใคร (${esc(cur)})</h2>${c.pairs.length ? c.pairs.map(p => `<div class="tx">${avatar(p.from, 'sm')}<b>${esc(p.from)}</b><span class="arr">ติด</span>${avatar(p.to, 'sm')}<b>${esc(p.to)}</b><b class="v ${p.from === mine.name ? 'neg' : p.to === mine.name ? 'pos' : ''}">${fmt(p.v)}</b></div>`).join('') : '<span class="mut">ไม่มีใครติดกัน / ยังไม่มีรายการ</span>'}
+    ${c.tx.length ? `<details><summary>วิธีโอนให้จำนวนครั้งน้อยที่สุด</summary>${c.tx.map(t => `<div class="tx">${avatar(t.from, 'sm')}<b>${esc(t.from)}</b><span class="arr">โอนให้</span>${avatar(t.to, 'sm')}<b>${esc(t.to)}</b><b class="v">${fmt(t.v)}</b></div>`).join('')}</details>` : ''}</div>`;
+  h += `<div class="card"><h2>ทุกคน (${esc(cur)})</h2>${c.list.map(u => { const r = u.budget - u.share, p = u.budget ? Math.min(100, u.share / u.budget * 100) : 0; return `<div class="urow">${avatar(u.name)}<div><b>${esc(u.name)}${u.name === me ? ' <span class="chip">ฉัน</span>' : ''}</b>${u.budget ? `<div class="bar-track ${r < 0 ? 'over' : ''}"><i style="width:${p}%"></i></div>` : ''}<small>ส่วนตัว ${fmt(u.personal)} · กลาง ${fmt(u.shared)} · ออกให้ ${fmt(u.forOthers)}${u.budget ? ` · เหลือ <span class="${r < 0 ? 'neg' : ''}">${fmt(r)}</span>` : ''}</small></div><div class="amt ${u.net >= 0 ? 'pos' : 'neg'}">${u.net >= 0 ? '+' : '−'}${fmt(Math.abs(u.net))}</div></div>`; }).join('')}<small>ตัวเลขขวา = สุทธิที่ต้องได้รับ (+) / ต้องจ่าย (−) · ไม่แปลงค่าเงิน คำนวณแยกแต่ละสกุล</small></div>`;
+  const cats = Object.entries(c.cats).sort((a, b) => b[1] - a[1]), mx = cats[0] ? cats[0][1] : 1;
+  if (cats.length) h += `<div class="card"><h2>📊 แยกตามหมวด (${esc(cur)})</h2>${cats.map(([k, v]) => `<div class="catrow"><div><span>${esc(k)}</span><b>${fmt(v)}</b></div><div class="bar-track"><i style="width:${v / mx * 100}%"></i></div></div>`).join('')}</div>`;
   if (data.costs && data.costs.length) h += tableCard('ประมาณการ: ' + trip().costTab, data.costs);
   el.innerHTML = h;
+  $$('[data-cur]', el).forEach(b => b.onclick = () => { ui.cur = b.dataset.cur; renderBudget(); });
 }
 
 /* ---------- expenses ---------- */
-const TYPE_TH = { shared: 'ส่วนกลาง', personal: 'ส่วนตัว', split: 'ออกให้' };
+const TYPE_TH = { shared: 'ส่วนกลาง', personal: 'ส่วนตัว (จ่ายให้ตัวเอง)', split: 'ออกให้/หาร' };
 function renderExpenses() {
   const el = $('#tab-expenses');
   let ex = data.expenses; if (ui.exFilter === 'mine' && me) ex = ex.filter(e => e.payer === me || e.with.includes(me) || (e.type === 'shared' && !e.with.length));
@@ -282,18 +308,39 @@ function renderExpenses() {
   $('#addExp').onclick = expenseDialog;
 }
 async function copyText(t, okMsg) { try { await navigator.clipboard.writeText(t); toast(okMsg); } catch { prompt('คัดลอกข้อความนี้:', t); } }
+function expensePreview(f) {
+  const amt = +f.amount || 0, cur = (f.cur || '').toUpperCase() || (trip().currency || 'THB');
+  const names = users().map(u => u.name), ps = participants({ type: f.type, payer: f.payer, with: f.with }, names), each = amt / ps.length;
+  if (!amt) return '<small>กรอกจำนวนเงินเพื่อดูว่าใครติดใคร</small>';
+  let h = `<b>${esc(f.payer)} จ่าย ${fmt(amt)} ${esc(cur)}</b> <span class="chip">${TYPE_TH[f.type]}</span>`;
+  if (f.type === 'personal') return h + '<div class="mut">จ่ายให้ตัวเอง — ไม่มีใครติดใคร</div>';
+  h += `<div class="mut">${f.type === 'shared' ? 'ส่วนกลาง หารเท่ากัน' : 'หารเฉพาะคนที่เลือก'} ${ps.length} คน · คนละ ${fmt(each)} ${esc(cur)}</div>`;
+  h += ps.map(p => p === f.payer ? `<div class="tx">${avatar(p, 'sm')}<b>${esc(p)}</b><span class="arr">ส่วนของตัวเอง</span><b class="v">${fmt(each)}</b></div>` : `<div class="tx">${avatar(p, 'sm')}<b>${esc(p)}</b><span class="arr">ติด</span>${avatar(f.payer, 'sm')}<b>${esc(f.payer)}</b><b class="v neg">${fmt(each)}</b></div>`).join('');
+  if (!ps.includes(f.payer)) h += `<div class="mut">${esc(f.payer)} ออกให้ทั้งหมด ไม่มีส่วนของตัวเอง</div>`;
+  return h;
+}
 function expenseDialog() {
   const us = users().map(u => u.name); if (!us.length) return toast('ยังไม่มีสมาชิกในชีต');
-  const d = openDlg(`<form method="dialog"><h3>เพิ่มค่าใช้จ่าย</h3><small>แอปอ่านข้อมูลจากชีตอย่างเดียว กด “คัดลอกแถว” แล้ววางต่อท้ายแท็บ ${esc(trip().expensesTab)}</small>
-  <label>รายการ</label><input name="item" required><label>จำนวนเงิน</label><input name="amount" type="number" step="any" inputmode="decimal" required>
-  <label>สกุลเงิน</label><input name="cur" value="${esc(trip().currency || 'THB')}"><label>หมวด</label><input name="cat" placeholder="อาหาร / เดินทาง / ที่พัก">
+  const main = trip().currency || 'THB', curs = [...new Set([main, 'KZT', 'USD', ...data.expenses.map(e => e.cur)])];
+  const d = openDlg(`<form method="dialog"><h3>เพิ่มค่าใช้จ่าย</h3>
+  <label>รายการ</label><input name="item" required placeholder="เช่น ข้าวเย็น, Yandex Go">
+  <label>จำนวนเงิน</label><input name="amount" type="number" step="any" inputmode="decimal" required>
+  <label>สกุลเงิน (คำนวณแยกแต่ละสกุล ไม่แปลงค่าเงิน)</label><div class="seg" id="curSeg">${curs.map(c => `<button type="button" data-c="${esc(c)}" class="${c === main ? 'on' : ''}">${esc(c)}</button>`).join('')}</div><input type="hidden" name="cur" value="${esc(main)}">
   <label>ใครจ่าย</label><select name="payer">${us.map(n => `<option ${n === me ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
-  <label>ประเภท</label><select name="type"><option value="shared">ส่วนกลาง — หารเท่ากันทุกคน</option><option value="personal">ส่วนตัว — เฉพาะผู้จ่าย</option><option value="split">ออกให้ — หารเฉพาะคนที่เลือก</option></select>
-  <label>หารกับใคร (ใช้กับ “ออกให้”)</label><div class="checks">${us.map(n => `<label><input type="checkbox" name="w" value="${esc(n)}">${esc(n)}</label>`).join('')}</div>
+  <label>ประเภท</label><select name="type"><option value="shared">ส่วนกลาง — หารเท่ากันทุกคน</option><option value="personal">ส่วนตัว — จ่ายให้ตัวเอง</option><option value="split">ออกให้ — หารเฉพาะคนที่เลือก</option></select>
+  <div id="whoBox"><label>หารกับใคร (ว่าง = ทุกคนสำหรับส่วนกลาง / ตัวเองสำหรับออกให้)</label><div class="checks">${us.map(n => `<label><input type="checkbox" name="w" value="${esc(n)}">${esc(n)}</label>`).join('')}</div></div>
+  <label>หมวด</label><input name="cat" placeholder="อาหาร / เดินทาง / ที่พัก">
+  <div class="card preview" id="preview"></div>
+  <small>แอปอ่านชีตอย่างเดียว กด “คัดลอกแถว” แล้ววางต่อท้ายแท็บ ${esc(trip().expensesTab)} จากนั้นกด ⟳</small>
   <div class="btns"><button value="ok" class="btn pri">คัดลอกแถว</button><button value="x" class="btn" formnovalidate>ยกเลิก</button></div></form>`);
-  $('form', d).onsubmit = ev => {
-    if (ev.submitter?.value !== 'ok') return; const f = new FormData(ev.target);
-    copyText([new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }), f.get('item'), f.get('cat'), f.get('amount'), (f.get('cur') || 'THB').toUpperCase(), f.get('payer'), f.get('type'), f.getAll('w').join(', ')].join('\t'), 'คัดลอกแถวแล้ว — วางในชีตแล้วกด ⟳');
+  const form = $('form', d);
+  const vals = () => { const f = new FormData(form); return { amount: f.get('amount'), cur: f.get('cur'), payer: f.get('payer'), type: f.get('type'), with: f.getAll('w') }; };
+  const upd = () => { const v = vals(); $('#whoBox').hidden = v.type === 'personal'; $('#preview').innerHTML = expensePreview(v); };
+  $$('#curSeg button', d).forEach(b => b.onclick = () => { form.elements.cur.value = b.dataset.c; $$('#curSeg button', d).forEach(x => x.classList.toggle('on', x === b)); upd(); });
+  form.addEventListener('input', upd); form.addEventListener('change', upd); upd();
+  form.onsubmit = ev => {
+    if (ev.submitter && ev.submitter.value !== 'ok') return; const f = new FormData(ev.target);
+    copyText([new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }), f.get('item'), f.get('cat'), f.get('amount'), f.get('cur'), f.get('payer'), f.get('type'), f.getAll('w').join(', ')].join('\t'), 'คัดลอกแถวแล้ว — วางในชีตแล้วกด ⟳');
   };
 }
 
@@ -395,7 +442,7 @@ function renderMenu() {
   const el = $('#tab-menu');
   let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
   h += `<div class="card"><h2>ทริป</h2>${cfg.trips.map(t => `<button class="list-item ${t.id === cfg.active ? 'on' : ''}" data-trip="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b></div></button>`).join('')}<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป/ชีตอื่น</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div></div>`;
-  h += `<div class="card"><h2>สมาชิก (${users().length})</h2>${users().map(u => `<div class="urow">${avatar(u.name)}<div><b>${esc(u.name)}</b></div><div class="amt">${fmt(u.budget)}</div></div>`).join('') || '<span class="mut">ยังไม่มี</span>'}<small>จัดการสมาชิกและงบในแท็บ ${esc(trip().usersTab)} ของชีต</small></div>`;
+  h += `<div class="card"><h2>สมาชิก (${users().length})</h2>${users().map(u => `<div class="urow">${avatar(u.name)}<div><b>${esc(u.name)}</b></div><div class="amt">${Object.entries(u.budgets || {}).map(([k, v]) => fmt(v) + ' ' + k).join(' · ') || '—'}</div></div>`).join('') || '<span class="mut">ยังไม่มี</span>'}<small>จัดการสมาชิกและงบในแท็บ ${esc(trip().usersTab)} ของชีต</small></div>`;
   h += data.extra.map(x => tableCard(x.name, x.rows)).join('');
   h += `<div class="card"><small>อัปเดตล่าสุด ${ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '—'} · ข้อมูลจาก Google Sheet</small></div>`;
   el.innerHTML = h;
@@ -424,7 +471,6 @@ function readTrip(f) {
 function settingsDialog() {
   const t = trip();
   const d = openDlg(`<form method="dialog"><h3>ตั้งค่าทริป</h3>${tripFields(t)}
-  <label>อัตราแปลงเป็น ${esc(t.currency)} (เช่น KZT=0.07, USD=35)</label><input name="rates" value="${esc(Object.entries(cfg.rates).map(([k, v]) => k + '=' + v).join(', '))}">
   <div class="btns"><button value="ok" class="btn pri">บันทึก</button><button value="del" class="btn danger" formnovalidate>ลบทริปนี้</button><button value="x" class="btn" formnovalidate>ปิด</button></div></form>`);
   $('form', d).onsubmit = ev => {
     const v = ev.submitter?.value, f = new FormData(ev.target);
@@ -432,7 +478,6 @@ function settingsDialog() {
     if (v !== 'ok') return;
     const nt = readTrip(f); if (!nt) return;
     Object.assign(t, nt); cfg.active = nt.id;
-    cfg.rates = Object.fromEntries(String(f.get('rates')).split(',').map(x => x.split('=').map(s => s.trim())).filter(p => p[0] && +p[1]).map(p => [p[0].toUpperCase(), +p[1]]));
     saveCfg(); load();
   };
 }
