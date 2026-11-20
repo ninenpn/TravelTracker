@@ -354,7 +354,7 @@ function enter(name) {
 /* PIN: stored as a salted SHA-256 hash in the sheet's Users tab (column "PIN") so it works on every device; remembered per device after the first success.
    A 4-digit PIN only keeps friends from picking each other's name — anyone who can read the sheet could brute-force it. */
 const PIN_LEN = 4;
-cfg.trusted = cfg.trusted || {}; cfg.pendingPin = cfg.pendingPin || {};
+cfg.pendingPin = cfg.pendingPin || {}; delete cfg.trusted;
 async function hashPin(name, pin) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${String(name).trim().toLowerCase()}|${pin}|traveltracker`));
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -394,11 +394,8 @@ async function syncPendingPins(interactive) {
   } catch (e) { if (interactive) toast('PIN ใช้ได้เฉพาะเครื่องนี้ก่อน (' + e.message + ')', 4500); }
   finally { syncingPins = false; }
 }
-function pickUser(name) {
-  const u = users().find(x => x.name === name), trusted = cfg.trusted[name];
-  if (trusted && ((u && u.pin && trusted === u.pin) || (u && !u.pin))) return enter(name);   // this device already knows the PIN
-  pinPad(name, u && u.pin ? 'verify' : 'create');
-}
+const storedPin = name => { const u = users().find(x => x.name === name); return (u && u.pin) || cfg.pendingPin[name] || ''; };
+function pickUser(name) { pinPad(name, storedPin(name) ? 'verify' : 'create'); }   // PIN is asked every time; only a name without a PIN gets to create one
 function pinPad(name, mode) {
   const box = $('#loginPin'); let digits = '', first = '';
   $('#loginUsers').hidden = true; $('#loginGuest').hidden = true; $('#loginSub').hidden = true; box.hidden = false;
@@ -418,13 +415,13 @@ function pinPad(name, mode) {
     if (digits.length < PIN_LEN) return;
     const pin = digits; digits = '';
     if (mode === 'verify') {
-      const u = users().find(x => x.name === name), h = await hashPin(name, pin);
-      if (u && u.pin === h) { cfg.trusted[name] = h; saveCfg(); box.hidden = true; box.innerHTML = ''; return enter(name); }
+      const h = await hashPin(name, pin);
+      if (storedPin(name) === h) { box.hidden = true; box.innerHTML = ''; return enter(name); }
       return draw('PIN ไม่ถูกต้อง ลองอีกครั้ง', true);
     }
     if (!first) { first = pin; return draw(); }
     if (first !== pin) { first = ''; return draw('PIN ไม่ตรงกัน ตั้งใหม่อีกครั้ง', true); }
-    const h = await hashPin(name, pin); cfg.trusted[name] = h; cfg.pendingPin[name] = h; saveCfg();
+    const h = await hashPin(name, pin); cfg.pendingPin[name] = h; saveCfg();
     box.hidden = true; box.innerHTML = ''; enter(name);
     syncPendingPins(true);                                   // still inside the tap, so Google sign-in may open if needed
   };
@@ -433,7 +430,7 @@ function pinPad(name, mode) {
 async function resetPin(name) {
   if (!sheetApi.on()) return toast('รีเซ็ตในแอปต้องตั้งค่า Google ก่อน — หรือให้ผู้มีสิทธิ์แก้ไขชีตลบค่าในคอลัมน์ PIN ของแท็บ Users', 6000);
   if (!confirm(`ล้าง PIN ของ ${name}? (ต้องเข้าสู่ระบบ Google ด้วยบัญชีที่มีสิทธิ์แก้ไขชีต)`)) return;
-  try { await signIn(); await setPinInSheet(name, ''); delete cfg.trusted[name]; delete cfg.pendingPin[name]; saveCfg(); const u = users().find(x => x.name === name); if (u) u.pin = ''; toast('ล้าง PIN แล้ว — ตั้ง PIN ใหม่ได้เลย'); pinPad(name, 'create'); }
+  try { await signIn(); await setPinInSheet(name, ''); delete cfg.pendingPin[name]; saveCfg(); const u = users().find(x => x.name === name); if (u) u.pin = ''; toast('ล้าง PIN แล้ว — ตั้ง PIN ใหม่ได้เลย'); pinPad(name, 'create'); }
   catch (e) { toast(e.message, 5000); }
 }
 $('#loginUsers').onclick = e => { const b = e.target.closest('[data-u]'); if (b) pickUser(b.dataset.u); };
