@@ -1,13 +1,15 @@
 :root{
-  --bg:#f6f7fb;--card:#fff;--ink:#14152a;--mut:#767a96;--line:#eceef6;--soft:#f0f1fa;
-  --pri:#5b4bf0;--pri2:#8b5cf6;--priSoft:#eeebff;--ok:#10a36a;--bad:#e5484d;--warn:#f5a524;
-  --r:20px;--sh:0 1px 0 #1a1b3a08,0 8px 24px -12px #1a1b3a26;
+  --bg:#f3f8ff;--card:#fff;--ink:#0e1b3d;--mut:#667799;--line:#e4ecf9;--soft:#edf4ff;
+  --pri:#2f7bff;--pri2:#10c6d8;--priSoft:#e3efff;--ok:#0fb77a;--bad:#ff5a5f;--warn:#ffb020;
+  --r:22px;--sh:0 1px 0 #2f7bff0d,0 10px 28px -14px #2f7bff40;
 }
-@media(prefers-color-scheme:dark){:root{
-  --bg:#0b0c16;--card:#151625;--ink:#eceefb;--mut:#8e92b3;--line:#23253b;--soft:#1c1e32;
-  --pri:#8f84ff;--pri2:#b197fc;--priSoft:#25234a;--sh:0 1px 0 #0004,0 10px 28px -12px #000a}}
+:root[data-theme=dark]{
+  --bg:#0b1220;--card:#141d33;--ink:#eaf1ff;--mut:#8fa0c4;--line:#233253;--soft:#1a2542;
+  --pri:#5b9bff;--pri2:#2dd4e6;--priSoft:#1b2c55;--sh:0 1px 0 #0005,0 12px 28px -14px #000a;
+}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html{background:#0a0a14;-webkit-text-size-adjust:100%}
+html{background:#e6eefb;-webkit-text-size-adjust:100%}
+html[data-theme=dark]{background:#05080f}
 body{margin:0 auto;max-width:430px;min-height:100dvh;background:var(--bg);color:var(--ink);
   font:15px/1.5 "Noto Sans Thai",system-ui,-apple-system,sans-serif;overflow-x:hidden}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -22,7 +24,7 @@ section>*+*{margin-top:12px}
 
 /* top */
 .top{position:sticky;top:0;z-index:600;display:flex;align-items:center;gap:12px;padding:calc(12px + env(safe-area-inset-top)) 18px 10px;
-  background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:blur(16px)}
+  background:linear-gradient(180deg,color-mix(in srgb,var(--pri) 14%,var(--bg)),color-mix(in srgb,var(--bg) 82%,transparent));backdrop-filter:blur(16px)}
 .top-t{flex:1;min-width:0}.top h1{font-size:1.35rem;font-weight:700;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .top small{display:block;font-size:.8rem}
 .me-btn{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--pri),var(--pri2));color:#fff;font-weight:700;display:grid;place-items:center}
@@ -30,7 +32,7 @@ main{padding:6px 16px calc(104px + env(safe-area-inset-bottom))}
 
 /* floating nav */
 nav{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(12px + env(safe-area-inset-bottom));width:calc(100% - 28px);max-width:402px;z-index:700;display:flex;gap:2px;padding:6px;
-  background:color-mix(in srgb,var(--card) 88%,transparent);backdrop-filter:blur(18px);border:1px solid var(--line);border-radius:26px;box-shadow:0 12px 32px -10px #1a1b3a40}
+  background:color-mix(in srgb,var(--card) 88%,transparent);backdrop-filter:blur(18px);border:1px solid var(--line);border-radius:26px;box-shadow:0 14px 34px -12px #2f7bff55}
 nav button{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;padding:7px 0 6px;color:var(--mut);font-size:.66rem;border-radius:20px;transition:.18s}
 nav button.on{color:#fff;background:linear-gradient(135deg,var(--pri),var(--pri2));box-shadow:0 6px 16px -6px var(--pri)}
 
@@ -55,7 +57,7 @@ nav button.on{color:#fff;background:linear-gradient(135deg,var(--pri),var(--pri2
 
 /* login */
 .login{position:fixed;inset:0;z-index:2000;display:grid;place-items:center;padding:24px;overflow:auto;color:#fff;
-  background:radial-gradient(900px 500px at 0% 0%,#6d5bff 0,transparent 60%),radial-gradient(800px 500px at 100% 20%,#18c3a5 0,transparent 55%),#14123a}
+  background:radial-gradient(700px 420px at 100% 0%,#7ef0c8 0,transparent 60%),linear-gradient(160deg,#3d86ff 0%,#10c6d8 65%,#6ee7c8 100%)}
 .login-in{width:100%;max-width:380px;text-align:center}
 .logo{font-size:2.8rem}.login h1{font-size:1.7rem;margin:2px 0}.login p{color:#ffffffb8;margin:2px 0 22px}
 .login-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
@@ -93,7 +95,7 @@ nav button.on{color:#fff;background:linear-gradient(135deg,var(--pri),var(--pri2
 .ideas{margin:6px 0 0;padding-left:18px}.ideas li{margin:3px 0}
 
 /* budget */
-.hero{background:linear-gradient(135deg,#3b2fc9,#7c4dff);color:#fff;border:0;display:flex;gap:16px;align-items:center}
+.hero{background:linear-gradient(135deg,var(--pri),var(--pri2));color:#fff;border:0;box-shadow:0 18px 36px -16px var(--pri);display:flex;gap:16px;align-items:center}
 .hero small{color:#ffffffbb}.hero .big{font-size:1.9rem;font-weight:700;line-height:1.1;letter-spacing:-.02em}
 .donut{width:96px;height:96px;flex:none;position:relative}
 .donut svg{width:96px;height:96px;transform:rotate(-90deg);stroke-width:9}
@@ -128,7 +130,7 @@ nav button.on{color:#fff;background:linear-gradient(135deg,var(--pri),var(--pri2
 .pin{width:34px;height:34px;border-radius:50% 50% 50% 4px;transform:rotate(-45deg);background:var(--c);display:grid;place-items:center;border:3px solid #fff;box-shadow:0 4px 10px #0005}
 .pin span{transform:rotate(45deg);color:#fff;font-weight:700;font-size:.8rem}
 .pin.me{animation:pulse 2s infinite}
-@keyframes pulse{0%{box-shadow:0 0 0 0 #5b4bf099}70%{box-shadow:0 0 0 14px #5b4bf000}100%{box-shadow:0 0 0 0 #5b4bf000}}
+@keyframes pulse{0%{box-shadow:0 0 0 0 #2f7bff99}70%{box-shadow:0 0 0 14px #2f7bff00}100%{box-shadow:0 0 0 0 #2f7bff00}}
 .plc{width:28px;height:28px;border-radius:50%;background:var(--c);color:#fff;font-weight:700;font-size:.8rem;display:grid;place-items:center;border:2px solid #fff;box-shadow:0 2px 8px #0006}
 .plc.sm{width:24px;height:24px;font-size:.72rem;flex:none;box-shadow:none;border:0}
 .status{display:flex;gap:12px;align-items:flex-start}.status .ico{font-size:1.5rem;line-height:1.2}
@@ -166,7 +168,7 @@ ol.steps{padding-left:18px;margin:8px 0;color:var(--ink);font-size:.88rem}ol.ste
 .toast{position:fixed;left:50%;bottom:calc(96px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#1d1e36;color:#fff;padding:10px 16px;border-radius:16px;z-index:3000;font-size:.88rem;max-width:90vw;box-shadow:0 10px 28px #0007}
 .skeleton{height:84px;border-radius:var(--r);background:linear-gradient(90deg,var(--soft),var(--card),var(--soft));background-size:200% 100%;animation:sk 1.2s infinite}
 @keyframes sk{to{background-position:-200% 0}}
-@media(prefers-color-scheme:dark){.leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.9)}}
+html[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.9)}
 
 .row .amt{white-space:normal;max-width:52%;font-size:.85rem}
 
@@ -198,3 +200,10 @@ ol.steps{padding-left:18px;margin:8px 0;color:var(--ink);font-size:.88rem}ol.ste
 .sg-a .tag,.win .btns .tag{background:var(--soft);border:0;color:var(--ink)}
 
 .seglbl{position:absolute;transform:translate(-50%,-50%);background:#fff;color:var(--c);border:1.5px solid var(--c);border-radius:99px;padding:1px 8px;font:600 11px/1.55 "Noto Sans Thai",sans-serif;box-shadow:0 2px 6px #0003;white-space:nowrap}
+
+.switch{width:52px;height:30px;border-radius:99px;background:var(--line);position:relative;flex:none;transition:.2s}
+.switch i{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 2px 6px #0003;transition:.2s}
+.switch.on{background:linear-gradient(135deg,var(--pri),var(--pri2))}.switch.on i{left:25px}
+.card{border-color:color-mix(in srgb,var(--pri) 8%,var(--line))}
+
+#moneyBody>*+*{margin-top:12px}#moneyBody{margin-top:12px}

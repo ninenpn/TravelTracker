@@ -3,7 +3,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const COLORS = ['#6366f1', '#ef4444', '#14b8a6', '#f59e0b', '#8b5cf6', '#ec4899', '#22c55e', '#0ea5e9'];
+const COLORS = ['#2f7bff', '#ff6b6b', '#12b886', '#ffb020', '#9b6bff', '#ff6bb5', '#22c55e', '#10c6d8'];
 const fmt = n => (Math.round(n * 100) / 100).toLocaleString('th-TH', { maximumFractionDigits: 2 });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const DEFAULT_TRIP = { id: '1PW6xAogCla1lhb4wMwhOQeo2d8g_OXmaRONo1OMSlOw', name: 'Almaty Trip', planGid: '101963523', usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', placesTab: 'Places', costTab: 'ค่าใช้จ่าย', extraTabs: '', currency: 'THB', scriptUrl: '', scriptToken: '' };
@@ -28,9 +28,11 @@ if (cfg.v !== 5) {
   delete cfg.rates;
 }
 const saveCfg = () => store.set('tt.cfg', cfg);
+function applyTheme() { const d = cfg.theme === 'dark'; document.documentElement.dataset.theme = d ? 'dark' : 'light'; const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = d ? '#0b1220' : '#f3f8ff'; }
+applyTheme();
 const trip = () => cfg.trips.find(t => t.id === cfg.active) || cfg.trips[0];
 let me = sess.get('tt.me') || '';
-let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], me: null, meLabel: '' };
+let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], shared: {}, me: null, meLabel: '' };
 const ui = { tab: 'plan', day: null, exFilter: 'all', cur: null, edit: false, dirty: false, saving: false, loaded: false };
 
 /* ---------- CSV / Sheets ---------- */
@@ -58,11 +60,17 @@ function colIndex(header, names) { const h = header.map(norm); for (const n of n
 const num = s => { const m = String(s ?? '').replace(/,/g, '').match(/-?\d+(\.\d+)?/g); return m ? m.map(Number) : []; };
 
 /* ---------- write-back (Apps Script) ---------- */
+/* One person connects once; the URL + token live in the sheet's "Settings" tab so every device picks it up. */
+function conn() {
+  const t = trip(); if (t.scriptOff) return null;
+  const sh = data.shared || {}, url = sh.url || t.scriptUrl, token = sh.token || t.scriptToken;
+  return url && token ? { url, token, by: sh.by || '', at: sh.at || '', shared: !!sh.url } : null;
+}
 const sheetApi = {
-  on: () => !!(trip().scriptUrl && trip().scriptToken),
-  async call(action, payload) {
-    const t = trip();
-    let r; try { r = await fetch(t.scriptUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ token: t.scriptToken, action, ...payload }) }); }
+  on: () => !!conn(),
+  async call(action, payload, override) {
+    const c = override || conn(); if (!c) throw new Error('ยังไม่ได้เชื่อมต่อชีต');
+    let r; try { r = await fetch(c.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ token: c.token, action, ...payload }) }); }
     catch { throw new Error('เรียกสคริปต์ไม่ได้ — ตรวจว่า Deploy เป็น Web app, “Who has access” = Anyone และใช้ URL ที่ลงท้าย /exec'); }
     const j = await r.json().catch(() => null);
     if (j && !j.ok && /รหัสลับ/.test(j.error || '')) throw new Error('รหัสลับไม่ตรงกับในสคริปต์ — ใส่ค่า TOKEN ในสคริปต์ลงช่อง “รหัสลับ” หรือคัดลอกโค้ดใหม่จากหน้านี้ไปวางแล้ว Deploy เวอร์ชันใหม่');
@@ -132,6 +140,11 @@ function parseTable(rows) {
 }
 
 /* ---------- users, expenses, locations, places ---------- */
+function parseSettings(rows) {
+  const h = rows[0] || [], ki = colIndex(h, ['key', 'คีย์']), vi = colIndex(h, ['value', 'ค่า']); if (ki < 0 || vi < 0) return {};
+  const o = {}; rows.slice(1).forEach(r => { if (r[ki]) o[norm(r[ki])] = r[vi] || ''; });
+  return { url: o.scripturl || '', token: o.scripttoken || '', by: o.connectedby || '', at: o.connectedat || '' };
+}
 function parseUsers(rows) {
   const h = rows[0] || []; const ni = colIndex(h, ['name', 'ชื่อ', 'user']);
   if (ni < 0) return null;
@@ -222,10 +235,11 @@ const sameAsPlan = r => rawPlanHead && (r[0] || []).join('|') === rawPlanHead;
 async function load() {
   const t = trip(); $('#tripTitle').textContent = t.name;
   const keep = { me: data.me, meLabel: data.meLabel };
-  const next = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], ...keep };
+  const next = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], shared: data.shared || {}, ...keep };
   const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r); });
   await Promise.allSettled([planP]);
   const rest = [
+    async () => { try { next.shared = parseSettings(await fetchTab(t, { name: 'Settings' })); } catch { } },
     async () => { next.users = parseUsers(await fetchTab(t, { name: t.usersTab })) || []; },
     async () => { next.expenses = parseExpenses(await fetchTab(t, { name: t.expensesTab })) || []; },
     async () => { next.locs = parseLocations(await fetchTab(t, { name: t.locationsTab || 'Locations' })) || {}; },
@@ -411,7 +425,7 @@ function placeDialog(name) {
 /* ---------- budget ---------- */
 function donut(pct, over) {
   const C = 2 * Math.PI * 38, v = Math.min(100, pct) / 100 * C;
-  return `<div class="donut"><svg viewBox="0 0 96 96"><circle cx="48" cy="48" r="38" stroke="#ffffff30"/><circle cx="48" cy="48" r="38" stroke="${over ? '#fda4af' : '#99f6e4'}" stroke-dasharray="${v} ${C}" stroke-linecap="round"/></svg><div class="t">${Math.round(pct)}%</div></div>`;
+  return `<div class="donut"><svg viewBox="0 0 96 96"><circle cx="48" cy="48" r="38" stroke="#ffffff40"/><circle cx="48" cy="48" r="38" stroke="${over ? '#ffd1d1' : '#ffffff'}" stroke-dasharray="${v} ${C}" stroke-linecap="round"/></svg><div class="t">${Math.round(pct)}%</div></div>`;
 }
 function tableCard(title, rows) {
   if (!rows || !rows.length) return '';
@@ -575,7 +589,7 @@ function drawMap(fit) {
   for (const [n, p] of Object.entries(all)) {
     if (n !== me && !ui.f.friends) continue;
     pts.push([p.lat, p.lng]);
-    if (n === me && p.acc) L.circle([p.lat, p.lng], { radius: p.acc, color: '#5b4bf0', weight: 1, fillOpacity: .08 }).addTo(layer);
+    if (n === me && p.acc) L.circle([p.lat, p.lng], { radius: p.acc, color: '#2f7bff', weight: 1, fillOpacity: .08 }).addTo(layer);
     L.marker([p.lat, p.lng], { icon: pinIcon(n, n === me), zIndexOffset: 1000 }).addTo(layer).bindPopup(`<b>${esc(n)}</b><br>${esc(p.label || '')}`);
   }
   const route = drawPlaces(), spots = drawSpots();
@@ -985,43 +999,71 @@ async function saveSpot(s, dayIdx) {
 function renderMenu() {
   const el = $('#tab-menu'), on = sheetApi.on();
   let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
-  h += `<div class="card"><div class="row2"><h2>การบันทึกลงชีต</h2><span class="chip ${on ? 'ok' : 'bad'}">${on ? 'เชื่อมต่อแล้ว' : 'ยังไม่เชื่อมต่อ'}</span></div><div class="mut">${on ? 'แก้แผน เพิ่มค่าใช้จ่าย และแชร์ตำแหน่ง จะบันทึกลง Google Sheet อัตโนมัติ' : 'เชื่อมต่อเพื่อให้แอปบันทึกการแก้ไขลงชีตอัตโนมัติ'}</div><div class="btns"><button class="btn ${on ? '' : 'pri'}" id="bConn">${on ? 'ตั้งค่าการเชื่อมต่อ' : 'เชื่อมต่อชีต'}</button></div></div>`;
+  const cc = conn(), off = trip().scriptOff;
+  h += `<div class="card"><div class="row2"><h2>การบันทึกลงชีต</h2><span class="chip ${on ? 'ok' : 'bad'}">${on ? 'เชื่อมต่อแล้ว' : off ? 'ปิดในเครื่องนี้' : 'ยังไม่เชื่อมต่อ'}</span></div><div class="mut">${on ? `แก้แผน เพิ่มค่าใช้จ่าย และแชร์ตำแหน่ง จะบันทึกลงชีตอัตโนมัติ${cc.by ? ` · เชื่อมต่อโดย ${esc(cc.by)}` : ''} (ใช้ร่วมกันทั้งกลุ่ม)` : 'ให้คนเดียวเชื่อมต่อครั้งเดียว คนอื่นจะใช้ได้อัตโนมัติ'}</div><div class="btns"><button class="btn ${on ? '' : 'pri'}" id="bConn">${on ? 'จัดการการเชื่อมต่อ' : 'เชื่อมต่อชีต'}</button></div></div>`;
+  h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
   h += `<div class="card"><h2 style="margin-bottom:4px">ทริป</h2>${cfg.trips.map(t => `<button class="li ${t.id === cfg.active ? 'on' : ''}" data-trip="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b></div></button>`).join('')}<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div></div>`;
   h += `<div class="card"><h2 style="margin-bottom:4px">สมาชิก</h2>${users().map(u => `<div class="row">${avatar(u.name, 'sm')}<div><b>${esc(u.name)}</b></div><div class="amt mut">${Object.entries(u.budgets || {}).map(([k, v]) => fmt(v) + ' ' + k).join(' · ') || '—'}</div></div>`).join('') || '<span class="mut">ยังไม่มี — เพิ่มในแท็บ ' + esc(trip().usersTab) + '</span>'}</div>`;
   h += data.extra.map(x => tableCard(x.name, x.rows)).join('');
   h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด ${ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '—'} · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
   el.innerHTML = h;
-  $('#bSwitch').onclick = () => $('#btnMe').click(); $('#bConn').onclick = () => setupDialog(); $('#bNew').onclick = newTripDialog; $('#bSet').onclick = settingsDialog;
+  $('#bSwitch').onclick = () => $('#btnMe').click(); $('#bConn').onclick = () => setupDialog();
+  $('#bTheme').onclick = () => { cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark'; saveCfg(); applyTheme(); renderMenu(); }; $('#bNew').onclick = newTripDialog; $('#bSet').onclick = settingsDialog;
   $('#bReload').onclick = async () => { toast('กำลังโหลด…', 1000); await load(); toast('อัปเดตแล้ว', 1200); };
   $$('[data-trip]', el).forEach(b => b.onclick = () => { cfg.active = b.dataset.trip; saveCfg(); ui.day = null; ui.edit = false; load(); });
 }
 const dlg = $('#dlg');
 function openDlg(html) { dlg.innerHTML = html; dlg.showModal(); return dlg; }
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
-async function setupDialog(reason) {
+const SETTINGS_HDR = ['Key', 'Value'];
+async function disconnect() {
+  const t = trip();
+  try {
+    if (conn()) for (const k of ['ScriptUrl', 'ScriptToken', 'ConnectedBy', 'ConnectedAt']) await sheetApi.call('upsert', { tab: 'Settings', header: SETTINGS_HDR, key: k, keyCol: 0, values: [k, ''] });
+    data.shared = {}; t.scriptUrl = ''; t.scriptToken = ''; t.scriptOff = false; saveCfg(); toast('ยกเลิกการเชื่อมต่อแล้ว (ทุกเครื่อง)');
+  } catch (e) {
+    if (confirm('ล้างการเชื่อมต่อในชีตไม่สำเร็จ (' + e.message + ')\nปิดการเชื่อมต่อเฉพาะเครื่องนี้แทน?')) { t.scriptOff = true; saveCfg(); }
+  }
+  renderAll();
+}
+async function setupDialog(reason, force) {
+  const c0 = conn();
+  if (c0 && !force) {
+    const d = openDlg(`<form method="dialog"><h3>เชื่อมต่อชีตแล้ว ✓</h3>
+    <div class="mut">${c0.by ? `เชื่อมต่อโดย <b>${esc(c0.by)}</b>${c0.at ? ' · ' + esc(ago(c0.at)) : ''}<br>` : ''}ทุกคนที่เปิดชีตนี้ในแอปใช้การเชื่อมต่อนี้อัตโนมัติ ไม่ต้องตั้งค่าซ้ำ</div>
+    <small style="display:block;margin-top:8px">URL และรหัสเก็บไว้ในแท็บ “Settings” ของชีต — คนที่มีลิงก์ชีตเห็นได้ จึงควรแชร์ชีตเฉพาะคนในกลุ่ม</small>
+    <div class="btns"><button value="new" class="btn" formnovalidate>ตั้งค่าใหม่</button><button value="off" class="btn danger" formnovalidate>ยกเลิกการเชื่อมต่อ</button><button value="x" class="btn" formnovalidate>ปิด</button></div></form>`);
+    $('form', d).onsubmit = ev => { const v = ev.submitter ? ev.submitter.value : 'x'; if (v === 'new') setTimeout(() => setupDialog(reason, true), 0); else if (v === 'off' && confirm('ยกเลิกการเชื่อมต่อสำหรับทุกคน?')) disconnect(); };
+    return;
+  }
   const t = trip();
   if (!t.scriptToken && !t.scriptDraft) { t.scriptDraft = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, '0')).join(''); saveCfg(); }
   const token = t.scriptToken || t.scriptDraft;
   let code = '';
   try { code = (await (await fetch('apps-script/Code.gs')).text()).replace('__TOKEN__', token); } catch { code = '// โหลดโค้ดไม่ได้ — เปิดไฟล์ apps-script/Code.gs ใน repo'; }
   const d = openDlg(`<form method="dialog"><h3>เชื่อมต่อ Google Sheet</h3>${reason ? `<div class="mut">${esc(reason)}</div>` : ''}
+  <div class="mut" style="margin-top:6px">ทำครั้งเดียวโดยคนเดียว — คนอื่นในกลุ่มจะเชื่อมต่ออัตโนมัติ</div>
   <ol class="steps"><li>เปิดชีตของทริป → <b>ส่วนขยาย → Apps Script</b></li><li>ลบโค้ดเดิม แล้ว<b>วางโค้ดด้านล่าง</b> กดบันทึก</li><li>กด <b>Deploy → New deployment</b> → เลือกประเภท <b>Web app</b> ตั้ง <i>Execute as: Me</i> และ <i>Who has access: Anyone</i> แล้วกด Deploy และอนุญาตสิทธิ์</li><li>คัดลอก <b>Web app URL ที่ลงท้ายด้วย /exec</b> (ไม่ใช่ลิงก์ “Test deployments” ที่ลงท้าย /dev) มาวางด้านล่าง</li></ol>
   <textarea class="code" readonly id="codeBox">${esc(code)}</textarea>
   <div class="btns" style="margin-top:6px"><button type="button" class="btn" id="bCopy">คัดลอกโค้ด</button></div>
   <label>Web app URL (ต้องลงท้ายด้วย /exec — ไม่ใช่ /dev)</label><input name="url" value="${esc(t.scriptUrl || '')}" placeholder="https://script.google.com/macros/s/…/exec" inputmode="url">
   <label>รหัสลับ (ต้องตรงกับค่า TOKEN ในสคริปต์ — โค้ดด้านบนใส่ให้แล้ว ถ้าคุณมีสคริปต์อยู่แล้ว ให้คัดลอกค่า TOKEN จากสคริปต์มาใส่ที่นี่)</label><input name="token" value="${esc(token)}" autocomplete="off" autocapitalize="off">
-  <div class="btns"><button value="ok" class="btn pri">ทดสอบและบันทึก</button>${t.scriptUrl ? '<button value="off" class="btn danger" formnovalidate>ยกเลิกการเชื่อมต่อ</button>' : ''}<button value="x" class="btn" formnovalidate>ปิด</button></div></form>`);
+  <div class="btns"><button value="ok" class="btn pri">ทดสอบและบันทึก</button><button value="x" class="btn" formnovalidate>ปิด</button></div></form>`);
   $('#bCopy').onclick = () => copyText(code, 'คัดลอกโค้ดแล้ว');
   $('form', d).onsubmit = async ev => {
     const v = ev.submitter ? ev.submitter.value : 'ok', f = new FormData(ev.target); if (v === 'x') return;
-    if (v === 'off') { t.scriptUrl = ''; t.scriptToken = ''; saveCfg(); renderAll(); return; }
     const url = f.get('url').trim();
     if (!/^https:\/\/script\.google\.com\//.test(url)) { ev.preventDefault(); toast('URL ไม่ถูกต้อง — ต้องขึ้นต้น https://script.google.com/'); return; }
     if (/\/dev\/?(\?.*)?$/.test(url)) { ev.preventDefault(); toast('นี่คือ URL แบบทดสอบ (/dev) — ต้องใช้ URL ที่ลงท้าย /exec จาก Deploy → New deployment → Web app', 6000); return; }
     if (!/\/exec\/?(\?.*)?$/.test(url)) { ev.preventDefault(); toast('URL ต้องลงท้ายด้วย /exec', 4000); return; }
-    const prev = { u: t.scriptUrl, k: t.scriptToken }; t.scriptUrl = url; t.scriptToken = f.get('token').trim();
-    try { const r = await sheetApi.call('ping', {}); delete t.scriptDraft; saveCfg(); toast(`เชื่อมต่อสำเร็จ (${r.sheets.length} แท็บ)`); renderAll(); }
-    catch (e) { t.scriptUrl = prev.u; t.scriptToken = prev.k; toast('เชื่อมต่อไม่สำเร็จ: ' + e.message); }
+    const c = { url, token: f.get('token').trim() };
+    try {
+      const r = await sheetApi.call('ping', {}, c);
+      const at = new Date().toISOString();
+      for (const [k, val] of [['ScriptUrl', c.url], ['ScriptToken', c.token], ['ConnectedBy', me || ''], ['ConnectedAt', at]]) await sheetApi.call('upsert', { tab: 'Settings', header: SETTINGS_HDR, key: k, keyCol: 0, values: [k, val] }, c);
+      data.shared = { url: c.url, token: c.token, by: me || '', at }; t.scriptUrl = c.url; t.scriptToken = c.token; t.scriptOff = false; delete t.scriptDraft; saveCfg();
+      toast(`เชื่อมต่อสำเร็จ (${r.sheets.length} แท็บ) — ทุกคนใช้ร่วมกันอัตโนมัติ`, 3500); renderAll();
+    } catch (e) { toast('เชื่อมต่อไม่สำเร็จ: ' + e.message, 5000); }
   };
 }
 function tripFields(t) {
