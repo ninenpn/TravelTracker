@@ -20,6 +20,15 @@
   </header>
   <div id="error" class="error" hidden></div>
   <main>
+    <div id="homeDock" class="dock m">
+      <div class="dock-map" id="homeMapHolder">
+        <div class="dock-ctl dock-tr"><button id="dockSize" class="dock-btn" aria-label="ขยาย/ย่อแผนที่"></button><button id="dockHide" class="dock-btn" aria-label="ซ่อนแผนที่"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button></div>
+        <div class="dock-ctl dock-br"><button id="dockLoc" class="dock-btn" aria-label="ตำแหน่งฉัน"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button></div>
+        <div class="dock-ctl dock-bl"><button id="dockFull" class="dock-chip">เปิดแผนที่เต็ม</button></div>
+      </div>
+      <button id="dockShow" class="dock-show" hidden>🗺 แสดงแผนที่</button>
+      <div class="days" id="homeDays"></div>
+    </div>
     <section id="tab-plan"></section>
     <section id="tab-money" hidden></section>
     <section id="tab-spots" hidden></section>

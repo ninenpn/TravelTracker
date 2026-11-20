@@ -481,6 +481,41 @@ function pill(d, i) {
   const past = isPast(d), top = past || !d.dt ? (i + 1) : d.dt.getDate(), sub = past ? 'Day' : d.dt ? TH_M[d.dt.getMonth()] : '';
   return `<button class="pill ${i === ui.day ? 'sel' : ''} ${isToday(d) ? 'now' : ''}" data-day="${i}"><b>${top}</b><small>${sub}</small></button>`;
 }
+/* ---------- home: sticky map dock (the same Leaflet map is moved between the home tab and the full map tab) ---------- */
+const wpMark = {};
+ui.dockSize = store.get('tt.dock', 'm');
+function mountMap(holder) {
+  let el = $('#map'); if (!el) { el = document.createElement('div'); el.id = 'map'; }
+  if (el.parentNode !== holder) holder.insertBefore(el, holder.firstChild);
+  if (ensureMap()) setTimeout(() => map.invalidateSize(), 80);
+}
+function updateDock() {
+  const dock = $('#homeDock'), show = ui.tab === 'plan'; dock.hidden = !show; if (!show) { document.documentElement.style.setProperty('--dockH', '0px'); return; }
+  dock.className = 'dock ' + (ui.dockSize || 'm') + (ui.edit ? ' edit' : '');
+  $('#dockShow').hidden = ui.dockSize !== 's';
+  $('#dockSize').innerHTML = ui.dockSize === 'l' ? '<svg viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
+  document.documentElement.style.setProperty('--topH', $('.top').offsetHeight + 'px');
+  if (ui.dockSize !== 's') mountMap($('#homeMapHolder'));
+  const setH = () => document.documentElement.style.setProperty('--dockH', dock.offsetHeight + 'px'); setH(); setTimeout(setH, 300);   // keeps scrolled-to items from hiding under the sticky map
+}
+function drawHome(fit) {
+  if (ui.tab !== 'plan') return; updateDock();
+  if (ui.dockSize !== 's') { drawMap(fit); runGeocode(); }
+}
+function setDock(v) { ui.dockSize = v; store.set('tt.dock', v); updateDock(); if (v !== 's' && map) setTimeout(() => { map.invalidateSize(); drawMap(true); }, 100); }
+function focusStep(k) {
+  const d = data.plan && data.plan.days[ui.day], s = d && d.steps[k]; if (!s) return;
+  ui.activeStep = k; $$('#tab-plan .step').forEach(n => n.classList.toggle('active', +n.dataset.i === k));
+  const m = wpMark[ui.day + '|' + qName(s.to || s.from || '')];
+  if (m && map && ui.dockSize !== 's') { map.setView(m.getLatLng(), Math.max(map.getZoom(), 15)); m.openPopup(); }
+  else if (ui.dockSize === 's') toast('แผนที่ถูกซ่อนอยู่ — กด “แสดงแผนที่”');
+  else toast('ยังไม่มีพิกัดของจุดนี้ — ตั้งพิกัดในแท็บแผนที่หรือวางลิงก์ Google Maps');
+}
+$('#dockSize').onclick = () => setDock(ui.dockSize === 'l' ? 'm' : 'l');
+$('#dockHide').onclick = () => setDock('s');
+$('#dockShow').onclick = () => setDock('m');
+$('#dockLoc').onclick = () => { if (data.me && map) map.setView([data.me.lat, data.me.lng], 16); else { ui.centered = false; startLocation(); } };
+$('#dockFull').onclick = () => $('[data-tab=map]').click();
 function stayCard() {
   const st = data.stay; if (!st || (!st.name && !st.address)) return '';
   const nav = st.lat != null ? `https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(st.address)}`;
@@ -492,14 +527,14 @@ function stayCard() {
   ${rules.length ? `<details><summary>กฎของที่พัก (${rules.length})</summary><ul class="ideas">${rules.map(r => `<li>${esc(r)}</li>`).join('')}</ul></details>` : ''}</div>`;
 }
 function renderPlan() {
-  const el = $('#tab-plan'), p = data.plan;
-  if (!p) { el.innerHTML = ui.loaded ? '<div class="empty">ไม่มีข้อมูลแผน</div>' : '<div class="skeleton"></div><div class="skeleton"></div>'; return; }
+  const el = $('#tab-plan'), p = data.plan, dayBar = $('#homeDays');
+  if (!p) { dayBar.innerHTML = ''; el.innerHTML = ui.loaded ? '<div class="empty">ไม่มีข้อมูลแผน</div>' : '<div class="skeleton"></div><div class="skeleton"></div>'; return; }
   planDates(p);
   evMapCur = {}; planEvents().forEach(e => evMapCur[e.di + '|' + e.si] = e);
-  if (!p.days.length) { el.innerHTML = '<div class="empty">ยังไม่มีแผนในชีต</div>'; return; }
+  if (!p.days.length) { dayBar.innerHTML = ''; el.innerHTML = '<div class="empty">ยังไม่มีแผนในชีต</div>'; return; }
   if (ui.day == null || ui.day >= p.days.length) { const t = p.days.findIndex(isToday); ui.day = t >= 0 ? t : Math.max(0, p.days.findIndex(d => !isPast(d))); }
   const d = p.days[ui.day], wd = d.dt && !isPast(d) ? d.dt.toLocaleDateString('th-TH', { weekday: 'long' }) : '';
-  let h = (ui.edit ? '' : cdCard() + stayCard()) + `<div class="days">${p.days.map(pill).join('')}${ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : ''}</div>`;
+  let h = (ui.edit ? '' : cdCard() + stayCard());
   h += `<div class="dayh"><div><h2>${esc(dayTitle(d, ui.day))}</h2><small>${[wd, d.city].filter(Boolean).map(esc).join(' · ')}${isToday(d) ? ' <span class="chip">วันนี้</span>' : ''}</small></div><button class="edit-btn ${ui.edit ? 'on' : ''}" id="editBtn">${ui.edit ? 'เสร็จ' : '<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>แก้ไข'}</button></div>`;
   if (isToday(d) && !ui.edit) { const sl = slotOf(), nm = { morning: 'อาหารเช้า', lunch: 'อาหารกลางวัน', afternoon: 'คาเฟ่/ของว่าง', dinner: 'อาหารเย็น', late: 'ของกินยามดึก' }[sl]; h += `<button class="nudge" id="nudge"><span>🍽</span><div><b>ถึงเวลา${nm}แล้ว</b><small>ดูร้านแนะนำใกล้ๆ ที่แวะได้</small></div></button>`; }
   h += `<div class="tl ${ui.edit ? 'editing' : ''}" id="tl">` + d.steps.map((s, k) => `<div class="step" data-i="${k}"><div class="step-t">${esc(s.time || '')}${s.toTime ? `<small>→ ${esc(s.toTime)}</small>` : ''}</div><div class="step-c"><div class="step-i">${howIcon(s.how, !!s.text)}</div><div class="step-b">
@@ -511,8 +546,9 @@ function renderPlan() {
   if (ui.edit) h += '<button class="addstep" id="addStep">+ เพิ่มรายการ</button>';
   if (!ui.edit) for (const g of p.ideas) h += `<div class="card flat"><h3>💡 ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map(i => `<li>${mapLink(i)}</li>`).join('')}</ul></div>`;
   el.innerHTML = h;
-  const sel = $('.pill.sel', el); sel && sel.scrollIntoView({ inline: 'center', block: 'nearest' });
-  $$('.pill[data-day]', el).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; renderPlan(); });
+  dayBar.innerHTML = p.days.map(pill).join('') + (ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : '');
+  const sel = $('.pill.sel', dayBar); if (sel) dayBar.scrollLeft = sel.offsetLeft - dayBar.clientWidth / 2 + sel.clientWidth / 2;
+  $$('.pill[data-day]', dayBar).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; ui.refit = true; ui.activeStep = null; renderPlan(); });
   $('#editBtn').onclick = toggleEdit;
   bindBells(el);
   const sc = $('#stCopy'); if (sc) sc.onclick = () => copyText(data.stay.address, 'คัดลอกที่อยู่แล้ว');
@@ -523,7 +559,11 @@ function renderPlan() {
     $$('.step', el).forEach(n => n.onclick = e => { if (e.target.closest('.grip')) return; stepDialog(+n.dataset.i); });
     if (window.Sortable) Sortable.create($('#tl'), { handle: '.grip', animation: 160, forceFallback: true, fallbackTolerance: 3, ghostClass: 'sortable-ghost', chosenClass: 'sortable-chosen',
       onEnd: () => { const old = d.steps, order = $$('.step', $('#tl')).map(n => +n.dataset.i); d.steps = order.map(i => old[i]); renderPlan(); scheduleSave(); } });
+  } else {
+    $$('.step', el).forEach(n => n.onclick = e => { if (e.target.closest('a,button')) return; focusStep(+n.dataset.i); });
+    if (ui.activeStep != null) { const a = $(`.step[data-i="${ui.activeStep}"]`, el); if (a) a.classList.add('active'); }
   }
+  drawHome(ui.refit);
 }
 async function toggleEdit() {
   if (!ui.edit) {
@@ -772,7 +812,7 @@ function ensureMap() {
   return true;
 }
 function drawMap(fit) {
-  if (ui.tab !== 'map' || !ensureMap()) return;
+  if ((ui.tab !== 'map' && ui.tab !== 'plan') || !ensureMap()) return;
   layer.clearLayers(); const pts = [];
   const all = { ...data.locs }; if (data.me && me) all[me] = { ...data.me, label: data.meLabel || '' };
   for (const [n, p] of Object.entries(all)) {
@@ -837,10 +877,10 @@ function renderMap() {
   const el = $('#tab-map');
   if (!el.dataset.init) {
     el.dataset.init = 1;
-    el.innerHTML = `<div class="card" id="mapStatus"></div><div id="mapNext"></div><div class="chips" id="mapFilters"></div><div class="mapwrap"><div id="map"></div><button class="locate" id="bLocate" aria-label="ไปที่ตำแหน่งฉัน"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button></div><div id="placesBox"></div><div id="mapPeople"></div>`;
+    el.innerHTML = `<div class="card" id="mapStatus"></div><div id="mapNext"></div><div class="chips" id="mapFilters"></div><div class="mapwrap" id="mapHolder"><button class="locate" id="bLocate" aria-label="ไปที่ตำแหน่งฉัน"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button></div><div id="placesBox"></div><div id="mapPeople"></div>`;
     $('#bLocate').onclick = () => { if (data.me) map.setView([data.me.lat, data.me.lng], 17); else { ui.centered = false; startLocation(); } };
   }
-  ui.refit = true; renderMapStatus(); renderFilters(); renderPlaces(); renderMapPeople(); drawMap(true); runGeocode();
+  mountMap($('#mapHolder')); ui.refit = true; renderMapStatus(); renderFilters(); renderPlaces(); renderMapPeople(); drawMap(true); runGeocode();
 }
 function renderMapPeople() {
   const el = $('#mapPeople'); if (!el) return;
@@ -872,7 +912,9 @@ function dayWaypoints(di) {
   return out;
 }
 function scopeDays() {
-  const p = data.plan; if (!p || ui.placeDay === 'none') return [];
+  const p = data.plan; if (!p) return [];
+  if (ui.tab === 'plan') return p.days[ui.day] ? [ui.day] : [];
+  if (ui.placeDay === 'none') return [];
   const di = ui.placeDay === 'all' ? 'all' : (ui.placeDay != null ? ui.placeDay : (ui.day || 0));
   return di === 'all' ? p.days.map((_, i) => i) : (p.days[di] ? [di] : []);
 }
@@ -922,7 +964,7 @@ const fmtDur = m => { m = Math.max(1, Math.round(m)); return m < 60 ? `${m} น�
 const fmtKm = m => m < 1000 ? `${Math.max(10, Math.round(m / 10) * 10)} ม.` : `${(m / 1000).toLocaleString('th-TH', { maximumFractionDigits: 1 })} กม.`;
 const planMin = w => { const a = tm(w.ts), b = tm(w.te); if (!a || !b) return null; let m = b[0] * 60 + b[1] - (a[0] * 60 + a[1]); if (m <= 0) m += 1440; return m; };
 const legKey = (a, b, mode) => { const f = x => x.toFixed(4); return `${f(a.lat)},${f(a.lng)}|${f(b.lat)},${f(b.lng)}|${mode}`; };
-function legsChanged() { clearTimeout(trv.t); trv.t = setTimeout(() => { if (ui.tab === 'map') { drawMap(false); renderPlaces(); } }, 150); }
+function legsChanged() { clearTimeout(trv.t); trv.t = setTimeout(() => { if (ui.tab === 'map' || ui.tab === 'plan') { drawMap(false); if (ui.tab === 'map') renderPlaces(); } }, 150); }
 function legInfo(a, b, how) {
   const d = distM(a, b), mode = legMode(how, d);
   if (mode === 'air') return { mode, air: true, m: d };
@@ -961,9 +1003,9 @@ const bearing = (a, b) => Math.atan2(-(b.lat - a.lat), (b.lng - a.lng) * Math.co
 const legIcon = (how, color, timeTxt, warn, mode) => L.divIcon({ className: '', iconSize: [0, 0], iconAnchor: [0, 0], html: `<div class="seglbl ${warn ? 'warn' : ''}" style="--c:${color}">${how ? howIcon(how, false) + ' ' + esc(String(how).length > 14 ? String(how).slice(0, 14) + '…' : how) : (MODE_ICON[mode] || '')}${timeTxt ? ` · ${esc(timeTxt)}` : ''}${warn ? ' ⚠' : ''}</div>` });
 const arrowIcon = (deg, color) => L.divIcon({ className: '', iconSize: [20, 20], iconAnchor: [10, 10], html: `<svg viewBox="0 0 24 24" width="20" height="20" style="transform:rotate(${deg}deg);display:block"><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>` });
 function drawPlaces() {
-  if (!map || !plLayer) return []; plLayer.clearLayers();
+  if (!map || !plLayer) return []; plLayer.clearLayers(); Object.keys(wpMark).forEach(k => delete wpMark[k]);
   if (!ui.f.route) return [];
-  const all = []; let counter = 0; const continuous = ui.placeDay === 'all';
+  const all = []; let counter = 0; const continuous = ui.tab === 'map' && ui.placeDay === 'all';
   for (const di of scopeDays()) {
     const color = COLORS[di % 8], seq = dayWaypoints(di).map(w => ({ ...w, c: coordOf(w.q) })).filter(w => w.c), ll = seq.map(w => [w.c.lat, w.c.lng]);
     all.push(...ll);
@@ -979,7 +1021,7 @@ function drawPlaces() {
         if (showLbl) L.marker(at(.36), { icon: legIcon(how, color, tt, wn, info.mode), interactive: false, zIndexOffset: 300 }).addTo(plLayer);
       }
     }
-    seq.forEach((w, k) => { const num = continuous ? ++counter : k + 1, lt = k ? legText(legInfo(seq[k - 1].c, w.c, w.how), w) : ''; L.marker([w.c.lat, w.c.lng], { icon: placeIcon(num, di), zIndexOffset: 500 }).addTo(plLayer).bindPopup(`<b>${num}. ${esc(w.name)}</b><br>${esc(w.day)} ${esc(w.time)}${w.how ? `<br>มาโดย ${howIcon(w.how, false)} ${esc(w.how)}` : ''}${lt ? `<br>เดินทางจากจุดก่อนหน้า: ${esc(lt)}` : ''}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${w.c.lat},${w.c.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`); });
+    seq.forEach((w, k) => { const num = continuous ? ++counter : k + 1, lt = k ? legText(legInfo(seq[k - 1].c, w.c, w.how), w) : ''; wpMark[`${di}|${w.q}`] = L.marker([w.c.lat, w.c.lng], { icon: placeIcon(num, di), zIndexOffset: 500 }).addTo(plLayer).bindPopup(`<b>${num}. ${esc(w.name)}</b><br>${esc(w.day)} ${esc(w.time)}${w.how ? `<br>มาโดย ${howIcon(w.how, false)} ${esc(w.how)}` : ''}${lt ? `<br>เดินทางจากจุดก่อนหน้า: ${esc(lt)}` : ''}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${w.c.lat},${w.c.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`); });
   }
   return all;
 }
@@ -1453,7 +1495,8 @@ $('#tabs').onclick = e => {
   const b = e.target.closest('button'); if (!b) return; ui.tab = b.dataset.tab;
   $$('#tabs button').forEach(x => x.classList.toggle('on', x === b));
   $$('main > section').forEach(s => s.hidden = s.id !== 'tab-' + ui.tab);
-  scrollTo(0, 0);
+  scrollTo(0, 0); updateDock();
+  if (ui.tab === 'plan') { ui.refit = true; renderPlan(); }
   if (ui.tab === 'map') { renderMap(); if (geo.state === 'idle' && me) startLocation(); }
   if (ui.tab === 'spots') renderSpots();
 };
@@ -1471,6 +1514,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { tr
 setTimeout(silentRenew, 2000);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
 (async function boot() {
+  ui.refit = true;
   if (me) { $('#login').hidden = true; $('#app').hidden = false; renderAll(); }
   await load();
   if (me) startLocation();

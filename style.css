@@ -125,7 +125,8 @@ nav button.on{color:#fff;background:linear-gradient(135deg,var(--pri),var(--pri2
 
 /* map */
 .mapwrap{position:relative;border-radius:var(--r);overflow:hidden;border:1px solid var(--line)}
-#map{height:46dvh;min-height:300px;z-index:1;background:#e4e7f0}
+.mapwrap #map{height:46dvh;min-height:300px;z-index:1;background:#e4e7f0}
+#map{background:#e4e7f0}
 .locate{position:absolute;right:10px;bottom:10px;z-index:500;width:44px;height:44px;border-radius:14px;background:var(--card);color:var(--pri);display:grid;place-items:center;box-shadow:0 6px 16px #0003}
 .pin{width:34px;height:34px;border-radius:50% 50% 50% 4px;transform:rotate(-45deg);background:var(--c);display:grid;place-items:center;border:3px solid #fff;box-shadow:0 4px 10px #0005}
 .pin span{transform:rotate(45deg);color:#fff;font-weight:700;font-size:.8rem}
@@ -237,3 +238,26 @@ html[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) bri
 
 .stay{margin-top:12px}
 .stay-ci{margin-top:8px;background:var(--priSoft);color:var(--ink);border-radius:12px;padding:8px 12px;font-size:.84rem;line-height:1.45}
+
+/* home: sticky map dock */
+.dock{position:sticky;top:var(--topH,64px);z-index:560;margin:0 -16px 8px;padding:2px 16px 4px;background:linear-gradient(var(--bg) 90%,transparent)}
+.dock-map{position:relative;height:clamp(150px,29dvh,320px);border-radius:24px;overflow:hidden;border:1px solid var(--line);box-shadow:0 14px 30px -16px #2f7bff55;transition:height .25s}
+.dock.l .dock-map{height:clamp(300px,58dvh,560px)}.dock.s .dock-map{display:none}
+.dock-map #map{position:absolute;inset:0;height:100%;z-index:1}
+.dock-ctl{position:absolute;z-index:800;display:flex;gap:6px}
+.dock-tr{top:10px;right:10px}.dock-br{bottom:10px;right:10px}.dock-bl{bottom:10px;left:10px}
+.dock-btn{width:38px;height:38px;border-radius:13px;background:color-mix(in srgb,var(--card) 92%,transparent);color:var(--pri);display:grid;place-items:center;box-shadow:0 6px 16px #0003;backdrop-filter:blur(8px)}
+.dock-btn svg{width:19px;height:19px}
+.dock-chip{padding:7px 12px;border-radius:99px;background:color-mix(in srgb,var(--card) 92%,transparent);font-size:.78rem;font-weight:600;color:var(--ink);box-shadow:0 6px 16px #0003}
+.dock-show{width:100%;padding:11px;border-radius:16px;background:var(--card);border:1px solid var(--line);font-weight:600;color:var(--pri);box-shadow:var(--sh)}
+.dock .days{margin:8px 0 0;padding:2px 0 4px}
+.step.active .step-c{border-color:var(--pri);box-shadow:0 0 0 3px var(--priSoft)}
+#tab-plan{padding-top:4px}
+
+html{scroll-padding-top:calc(var(--topH,64px) + var(--dockH,0px) + 10px);scroll-padding-bottom:112px}
+
+.dock.m.edit .dock-map{height:clamp(150px,24dvh,240px)}
+
+.dock,.dock *{-webkit-user-select:none;user-select:none}.tl.editing,.tl.editing *{-webkit-user-select:none;user-select:none}
+
+.row>div>small{display:block}.row>div>b{display:inline-block;margin-right:6px}
