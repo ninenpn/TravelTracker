@@ -800,7 +800,7 @@ const pinIcon = (n, isMe) => L.divIcon({ className: '', iconSize: [34, 34], icon
 const SPOT = { food: ['🍽', '#f97316', 'ร้านอาหาร'], sight: ['🏛', '#0ea5e9', 'ที่เที่ยว'], other: ['📌', '#8b5cf6', 'อื่นๆ'] };
 const spotIcon = (type, soft, hot) => L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -14], html: `<div class="spin ${soft ? 'soft' : ''} ${hot ? 'hot' : ''}" style="--c:${SPOT[type][1]}">${SPOT[type][0]}</div>` });
 const sugIcon = kind => L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -12], html: `<div class="spin sug">${kind === 'sight' ? '🏛' : kind === 'cafe' ? '☕' : '🍽'}</div>` });
-const placeIcon = (n, di) => L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -12], html: `<div class="plc" style="--c:${COLORS[di % 8]}">${n}</div>` });
+const placeIcon = (n, di) => { const w = Math.max(28, 12 + 8 * String(n).length); return L.divIcon({ className: '', iconSize: [w, 28], iconAnchor: [w / 2, 14], popupAnchor: [0, -12], html: `<div class="plc" style="--c:${COLORS[di % 8]};${w > 28 ? 'width:' + w + 'px;border-radius:14px;' : ''}">${n}</div>` }); };
 function ensureMap() {
   const el = $('#map'); if (!el) return false;
   if (map && map._container !== el) { map.remove(); map = null; }
@@ -1016,21 +1016,33 @@ function drawPlaces() {
   if (!ui.f.route) return [];
   const all = []; let counter = 0; const continuous = ui.tab === 'map' && ui.placeDay === 'all';
   for (const di of scopeDays()) {
-    const color = COLORS[di % 8], seq = stillAhead(di, dayWaypoints(di).map(w => ({ ...w, c: coordOf(w.q) })).filter(w => w.c)), ll = seq.map(w => [w.c.lat, w.c.lng]);
-    all.push(...ll);
-    if (ll.length > 1) {
-      L.polyline(ll, { color: '#fff', weight: 9, opacity: .95, lineCap: 'round' }).addTo(plLayer);
-      L.polyline(ll, { color, weight: 4, opacity: 1, dashArray: '10 9', lineCap: 'round' }).addTo(plLayer);
-      for (let i = 0; i < seq.length - 1; i++) {
-        const a = seq[i].c, b = seq[i + 1].c, d = distM(a, b), how = seq[i + 1].how; if (d < 80) continue;
-        const at = f => [a.lat + (b.lat - a.lat) * f, a.lng + (b.lng - a.lng) * f];
-        const info = legInfo(a, b, how), tt = info.air ? fmtKm(info.m) : (info.loading || info.skip ? '' : `${info.est ? '~' : ''}${fmtDur(info.min)}`), wn = tight(info, seq[i + 1]) != null;
-        const showLbl = d >= 150 && (how || tt);
-        L.marker(at(showLbl ? .66 : .5), { icon: arrowIcon(bearing(a, b), color), interactive: false }).addTo(plLayer);
-        if (showLbl) L.marker(at(.36), { icon: legIcon(how, color, tt, wn, info.mode), interactive: false, zIndexOffset: 300 }).addTo(plLayer);
-      }
+    const color = COLORS[di % 8], seq = stillAhead(di, dayWaypoints(di).map(w => ({ ...w, c: coordOf(w.q) })).filter(w => w.c));
+    const groups = [];                                            // visits to the same place (<40 m) share ONE pin
+    seq.forEach((w, k) => { w.num = continuous ? ++counter : k + 1; let g = groups.find(x => distM(x.c, w.c) < 40); if (!g) groups.push(g = { c: w.c, v: [] }); w.g = g; g.v.push(w); });
+    all.push(...groups.map(g => [g.c.lat, g.c.lng]));
+    const pairN = {}, dirN = {}, pk = (A, B) => [groups.indexOf(A), groups.indexOf(B)].sort().join('-');
+    for (let i = 0; i < seq.length - 1; i++) if (seq[i].g !== seq[i + 1].g) pairN[pk(seq[i].g, seq[i + 1].g)] = (pairN[pk(seq[i].g, seq[i + 1].g)] || 0) + 1;
+    for (let i = 0; i < seq.length - 1; i++) {
+      const A = seq[i].g, B = seq[i + 1].g; if (A === B) continue;
+      const a = A.c, b = B.c, d = distM(a, b), how = seq[i + 1].how, key = groups.indexOf(A) + '>' + groups.indexOf(B);
+      const f = pairN[pk(A, B)] > 1 ? 0.16 * (1 + 0.9 * (dirN[key] = (dirN[key] ?? -1) + 1)) : 0;   // roads used twice are drawn as separate arcs
+      const cl = Math.cos(a.lat * Math.PI / 180), dx = (b.lng - a.lng) * cl, dy = b.lat - a.lat;
+      const ctl = { x: (a.lng + b.lng) / 2 * cl - dy * 2 * f, y: (a.lat + b.lat) / 2 + dx * 2 * f };
+      const pt = t => { const u = 1 - t; return f ? { lat: u * u * a.lat + 2 * u * t * ctl.y + t * t * b.lat, lng: (u * u * a.lng * cl + 2 * u * t * ctl.x + t * t * b.lng * cl) / cl } : { lat: a.lat + dy * t, lng: a.lng + (b.lng - a.lng) * t }; };
+      const path = f ? Array.from({ length: 21 }, (_, n) => pt(n / 20)).map(q => [q.lat, q.lng]) : [[a.lat, a.lng], [b.lat, b.lng]];
+      L.polyline(path, { color: '#fff', weight: 9, opacity: .95, lineCap: 'round' }).addTo(plLayer);
+      L.polyline(path, { color, weight: 4, opacity: 1, dashArray: '10 9', lineCap: 'round' }).addTo(plLayer);
+      if (d < 80) continue;
+      const info = legInfo(a, b, how), tt = info.air ? fmtKm(info.m) : (info.loading || info.skip ? '' : `${info.est ? '~' : ''}${fmtDur(info.min)}`), wn = tight(info, seq[i + 1]) != null;
+      const showLbl = d >= 150 && (how || tt), ta = showLbl ? .66 : .5, tb = showLbl ? .36 : .5, p1 = pt(ta - .04), p2 = pt(ta + .04), pa = pt(ta), pl = pt(tb);
+      L.marker([pa.lat, pa.lng], { icon: arrowIcon(bearing(p1, p2), color), interactive: false }).addTo(plLayer);
+      if (showLbl) L.marker([pl.lat, pl.lng], { icon: legIcon(how, color, tt, wn, info.mode), interactive: false, zIndexOffset: 300 }).addTo(plLayer);
     }
-    seq.forEach((w, k) => { const num = continuous ? ++counter : k + 1, lt = k ? legText(legInfo(seq[k - 1].c, w.c, w.how), w) : ''; wpMark[`${di}|${w.q}`] = L.marker([w.c.lat, w.c.lng], { icon: placeIcon(num, di), zIndexOffset: 500 }).addTo(plLayer).bindPopup(`<b>${num}. ${esc(w.name)}</b><br>${esc(w.day)} ${esc(w.time)}${w.how ? `<br>มาโดย ${howIcon(w.how, false)} ${esc(w.how)}` : ''}${lt ? `<br>เดินทางจากจุดก่อนหน้า: ${esc(lt)}` : ''}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${w.c.lat},${w.c.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`); });
+    groups.forEach(g => {
+      const lbl = g.v.map(w => w.num).join('·'), body = g.v.map(w => { const k = seq.indexOf(w), lt = k ? legText(legInfo(seq[k - 1].c, w.c, w.how), w) : ''; return `<b>${w.num}. ${esc(w.name)}</b><br>${esc(w.day)} ${esc(w.time)}${w.how ? `<br>มาโดย ${howIcon(w.how, false)} ${esc(w.how)}` : ''}${lt && seq[k - 1].g !== g ? `<br>เดินทางจากจุดก่อนหน้า: ${esc(lt)}` : ''}`; }).join('<hr style="border:0;border-top:1px solid #0002;margin:6px 0">');
+      const m = L.marker([g.c.lat, g.c.lng], { icon: placeIcon(lbl, di), zIndexOffset: 500 }).addTo(plLayer).bindPopup(`${body}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${g.c.lat},${g.c.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`);
+      g.v.forEach(w => { wpMark[`${di}|${w.q}`] = m; });
+    });
   }
   return all;
 }
