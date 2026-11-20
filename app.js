@@ -5,7 +5,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const COLORS = ['#0f766e', '#dc2626', '#2563eb', '#d97706', '#7c3aed', '#db2777', '#059669', '#475569'];
 const fmt = n => (Math.round(n * 100) / 100).toLocaleString('th-TH', { maximumFractionDigits: 2 });
 const DEFAULT_TRIP = {
-  id: '1gtOWIff4TirHlJ8ZP3Ei84F9zb2cLPT-', name: 'Almaty Trip', planGid: '101963523',
+  id: '1PW6xAogCla1lhb4wMwhOQeo2d8g_OXmaRONo1OMSlOw', name: 'Almaty Trip', planGid: '101963523',
   usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', costTab: 'ค่าใช้จ่าย', currency: 'THB'
 };
 
@@ -22,7 +22,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { } }
 };
 let cfg = store.get('tt.cfg', null) || { trips: [DEFAULT_TRIP], active: DEFAULT_TRIP.id, me: '', rates: { KZT: 0.07 } };
-if (cfg.v !== 2) { cfg.v = 2; PRESETS.forEach(p => { if (!cfg.trips.some(t => t.id === p.id)) cfg.trips.push(p); }); }
+if (cfg.v !== 3) { cfg.v = 3; cfg.trips.forEach(t => { if (t.id === '1gtOWIff4TirHlJ8ZP3Ei84F9zb2cLPT-') { t.id = DEFAULT_TRIP.id; if (cfg.active === '1gtOWIff4TirHlJ8ZP3Ei84F9zb2cLPT-') cfg.active = t.id; } }); PRESETS.forEach(p => { if (!cfg.trips.some(t => t.id === p.id)) cfg.trips.push(p); }); }
 const saveCfg = () => store.set('tt.cfg', cfg);
 const trip = () => cfg.trips.find(t => t.id === cfg.active) || cfg.trips[0];
 let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, me: null };
