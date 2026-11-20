@@ -32,7 +32,7 @@ function applyTheme() { const d = cfg.theme === 'dark'; document.documentElement
 applyTheme();
 const trip = () => cfg.trips.find(t => t.id === cfg.active) || cfg.trips[0];
 let me = sess.get('tt.me') || '';
-let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: {}, me: null, meLabel: '' };
+let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: {}, stay: {}, me: null, meLabel: '' };
 const ui = { tab: 'plan', day: null, exFilter: 'all', cur: null, edit: false, dirty: false, saving: false, loaded: false };
 
 /* ---------- CSV / Sheets ---------- */
@@ -51,7 +51,7 @@ function parseCSV(text) {
 }
 async function fetchTab(t, { gid, name }) {
   const q = gid ? `gid=${encodeURIComponent(gid)}` : `sheet=${encodeURIComponent(name)}`;
-  const r = await fetch(`https://docs.google.com/spreadsheets/d/${t.id}/gviz/tq?tqx=out:csv&${q}&_=${Date.now()}`);
+  const r = await fetch(`https://docs.google.com/spreadsheets/d/${t.id}/gviz/tq?tqx=out:csv&headers=1&${q}&_=${Date.now()}`);
   if (!r.ok) throw new Error(`โหลดชีตไม่ได้ (HTTP ${r.status}) — ตรวจว่าแชร์เป็น "ทุกคนที่มีลิงก์ดูได้"`);
   return parseCSV(await r.text());
 }
@@ -227,6 +227,13 @@ function parseTable(rows) {
 }
 
 /* ---------- users, expenses, locations, places ---------- */
+function parseStay(rows) {
+  const h = rows[0] || [], ki = colIndex(h, ['key', 'คีย์']), vi = colIndex(h, ['value', 'ค่า']); if (ki < 0 || vi < 0) return {};
+  const o = {}; rows.slice(1).forEach(r => { if (r[ki]) o[norm(r[ki])] = String(r[vi] || '').trim(); });
+  if (!o.name && !o.address) return {};
+  const la = num(o.lat)[0], lo = num(o.lng)[0];
+  return { name: o.name || '', platform: o.platform || '', address: o.address || '', lat: la != null ? la : null, lng: lo != null ? lo : null, checkin: o.checkin || '', rules: o.rules || '', note: o.note || '' };
+}
 function parseUsers(rows) {
   const h = rows[0] || []; const ni = colIndex(h, ['name', 'ชื่อ', 'user']);
   if (ni < 0) return null;
@@ -318,10 +325,11 @@ const sameAsPlan = r => rawPlanHead && (r[0] || []).join('|') === rawPlanHead;
 async function load() {
   const t = trip(); $('#tripTitle').textContent = t.name;
   const keep = { me: data.me, meLabel: data.meLabel };
-  const next = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: data.settings || {}, ...keep };
+  const next = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: data.settings || {}, stay: data.stay || {}, ...keep };
   const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r); });
   await Promise.allSettled([planP]);
   const rest = [
+    async () => { try { next.stay = parseStay(await fetchTab(t, { name: 'Stay' })); } catch { } },
     async () => { next.users = parseUsers(await fetchTab(t, { name: t.usersTab })) || []; },
     async () => { next.expenses = parseExpenses(await fetchTab(t, { name: t.expensesTab })) || []; },
     async () => { next.locs = parseLocations(await fetchTab(t, { name: t.locationsTab || 'Locations' })) || {}; },
@@ -473,6 +481,16 @@ function pill(d, i) {
   const past = isPast(d), top = past || !d.dt ? (i + 1) : d.dt.getDate(), sub = past ? 'Day' : d.dt ? TH_M[d.dt.getMonth()] : '';
   return `<button class="pill ${i === ui.day ? 'sel' : ''} ${isToday(d) ? 'now' : ''}" data-day="${i}"><b>${top}</b><small>${sub}</small></button>`;
 }
+function stayCard() {
+  const st = data.stay; if (!st || (!st.name && !st.address)) return '';
+  const nav = st.lat != null ? `https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(st.address)}`;
+  const rules = String(st.rules || '').split('\n').map(x => x.trim()).filter(Boolean);
+  return `<div class="card stay"><div class="row2" style="align-items:flex-start;margin:0"><div><small>🏠 ที่พัก${st.platform ? ' · ' + esc(st.platform) : ''}</small><h3>${esc(st.name || 'ที่พัก')}</h3></div><a class="btn pri" target="_blank" rel="noopener" href="${nav}">นำทาง</a></div>
+  ${st.address ? `<div class="note" style="margin-top:6px">${esc(st.address)}</div>` : ''}
+  ${st.checkin ? `<div class="stay-ci">📩 ${esc(st.checkin)}</div>` : ''}
+  <div class="btns" style="margin-top:8px">${st.address ? '<button class="btn" id="stCopy">คัดลอกที่อยู่</button>' : ''}</div>
+  ${rules.length ? `<details><summary>กฎของที่พัก (${rules.length})</summary><ul class="ideas">${rules.map(r => `<li>${esc(r)}</li>`).join('')}</ul></details>` : ''}</div>`;
+}
 function renderPlan() {
   const el = $('#tab-plan'), p = data.plan;
   if (!p) { el.innerHTML = ui.loaded ? '<div class="empty">ไม่มีข้อมูลแผน</div>' : '<div class="skeleton"></div><div class="skeleton"></div>'; return; }
@@ -481,7 +499,7 @@ function renderPlan() {
   if (!p.days.length) { el.innerHTML = '<div class="empty">ยังไม่มีแผนในชีต</div>'; return; }
   if (ui.day == null || ui.day >= p.days.length) { const t = p.days.findIndex(isToday); ui.day = t >= 0 ? t : Math.max(0, p.days.findIndex(d => !isPast(d))); }
   const d = p.days[ui.day], wd = d.dt && !isPast(d) ? d.dt.toLocaleDateString('th-TH', { weekday: 'long' }) : '';
-  let h = (ui.edit ? '' : cdCard()) + `<div class="days">${p.days.map(pill).join('')}${ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : ''}</div>`;
+  let h = (ui.edit ? '' : cdCard() + stayCard()) + `<div class="days">${p.days.map(pill).join('')}${ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : ''}</div>`;
   h += `<div class="dayh"><div><h2>${esc(dayTitle(d, ui.day))}</h2><small>${[wd, d.city].filter(Boolean).map(esc).join(' · ')}${isToday(d) ? ' <span class="chip">วันนี้</span>' : ''}</small></div><button class="edit-btn ${ui.edit ? 'on' : ''}" id="editBtn">${ui.edit ? 'เสร็จ' : '<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>แก้ไข'}</button></div>`;
   if (isToday(d) && !ui.edit) { const sl = slotOf(), nm = { morning: 'อาหารเช้า', lunch: 'อาหารกลางวัน', afternoon: 'คาเฟ่/ของว่าง', dinner: 'อาหารเย็น', late: 'ของกินยามดึก' }[sl]; h += `<button class="nudge" id="nudge"><span>🍽</span><div><b>ถึงเวลา${nm}แล้ว</b><small>ดูร้านแนะนำใกล้ๆ ที่แวะได้</small></div></button>`; }
   h += `<div class="tl ${ui.edit ? 'editing' : ''}" id="tl">` + d.steps.map((s, k) => `<div class="step" data-i="${k}"><div class="step-t">${esc(s.time || '')}${s.toTime ? `<small>→ ${esc(s.toTime)}</small>` : ''}</div><div class="step-c"><div class="step-i">${howIcon(s.how, !!s.text)}</div><div class="step-b">
@@ -497,6 +515,7 @@ function renderPlan() {
   $$('.pill[data-day]', el).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; renderPlan(); });
   $('#editBtn').onclick = toggleEdit;
   bindBells(el);
+  const sc = $('#stCopy'); if (sc) sc.onclick = () => copyText(data.stay.address, 'คัดลอกที่อยู่แล้ว');
   const nd = $('#nudge'); if (nd) nd.onclick = () => { ui.spotView = 'near'; ui.sugDay = null; ui.winOpen = null; $('[data-tab=spots]').click(); };
   if (ui.edit) {
     $('#addStep').onclick = () => stepDialog(null);
@@ -837,7 +856,8 @@ const gc = { cache: store.get('tt.gc2', {}), running: false, center: null };
 const GENERIC = /^(ที่พัก|home|hotel|accommodation|พัก|สนามบิน|airport)$/i;
 const qName = n => String(n || '').replace(/\([^)]*\)/g, '').split(/\s\/\s|\s\+\s/)[0].trim();
 const gKey = q => trip().id + '|' + q;
-const ovr = q => (data.places || {})[norm(q)];
+const stayCoord = q => { const st = data.stay; return st && st.lat != null && st.lng != null && norm(q) === 'ที่พัก' ? { lat: st.lat, lng: st.lng } : undefined; };
+const ovr = q => (data.places || {})[norm(q)] || stayCoord(q);
 const coordOf = q => ovr(q) || gc.cache[gKey(q)];
 const knownQ = q => !!ovr(q) || (gKey(q) in gc.cache);
 function dayWaypoints(di) {
@@ -846,7 +866,7 @@ function dayWaypoints(di) {
     if (!n) return; const q = qName(n); if (!q) return;
     if (GENERIC.test(n.trim()) && !ovr(q)) return;
     if (out.length && out[out.length - 1].q === q) { if (how && !out[out.length - 1].how) out[out.length - 1].how = how; return; }
-    out.push({ name: n.trim(), q, time: t || '', di, day: dayTitle(d, di), how: how || '', ts: ts || '', te: te || '' });
+    out.push({ name: norm(q) === 'ที่พัก' && data.stay && data.stay.name ? `${n.trim()} · ${data.stay.name}` : n.trim(), q, time: t || '', di, day: dayTitle(d, di), how: how || '', ts: ts || '', te: te || '' });
   };
   d.steps.forEach((st, k) => { if (k === 0) add(st.from, st.time, ''); add(st.to, st.toTime || st.time, st.how, st.time, st.toTime); });
   return out;

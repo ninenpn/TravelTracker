@@ -234,3 +234,6 @@ html[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) bri
 .seglbl.warn{border-color:#ff5a5f;color:#e5484d}
 .trvsum{font-size:.88rem;font-weight:600;color:var(--ink);background:var(--soft);border-radius:12px;padding:8px 12px;margin:2px 0 6px}
 .pl small.leg{color:var(--pri);font-weight:500}
+
+.stay{margin-top:12px}
+.stay-ci{margin-top:8px;background:var(--priSoft);color:var(--ink);border-radius:12px;padding:8px 12px;font-size:.84rem;line-height:1.45}

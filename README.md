@@ -11,6 +11,7 @@ https://ninenpn.github.io/TravelTracker/
 | Users | `Name, Budget` (หลายสกุล: `Budget KZT`, `Budget USD`) |
 | Expenses | `Date, Item, Category, Amount, Currency, PaidBy, Type, SplitWith` — Type: `shared` / `personal` / `split` |
 | Locations | `Name, Lat, Lng, Label, Updated` |
+| Stay | `Key, Value` — `Name, Platform, Address, Lat, Lng, CheckIn, Rules (หลายบรรทัด), Note` = ที่พักที่จองแล้ว (แสดงเป็นการ์ดในแท็บแผน และใช้เป็นพิกัดของ “ที่พัก” ในเส้นทาง) |
 | Places | `Name, Lat, Lng, Note, Type, Meal, Cuisine` — `Type` ว่าง = ใช้เป็นพิกัดของสถานที่ในแผนเท่านั้น; `Type` = `food` / `sight` / `other` = แสดงในแท็บสถานที่และฟิลเตอร์บนแผนที่ (`Meal`: เช้า/กลางวัน/เย็น/คาเฟ่/ของหวาน/ดึก) |
 
 ## แก้ไขและบันทึกลงชีต (เข้าสู่ระบบด้วย Google)
