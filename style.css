@@ -160,3 +160,10 @@ details{margin-top:10px}summary{cursor:pointer;color:var(--pri);font-size:.88rem
 .chk{display:flex;gap:8px;align-items:flex-start;color:var(--mut);font-size:.8rem}
 dialog .chk input{width:auto;margin-top:3px}
 a.btn{text-decoration:none}
+
+.plc{width:28px;height:28px;border-radius:50%;background:var(--c);color:#fff;font-weight:700;font-size:.8rem;display:grid;place-items:center;border:2px solid #fff;box-shadow:0 2px 8px #0006}
+.plc.sm{width:24px;height:24px;font-size:.72rem;flex:none;box-shadow:none}
+.row2{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+.row2 h3{margin:0}.row2 select{padding:6px 10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-size:.85rem;max-width:150px}
+.pl-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:8px 0;border-top:1px solid var(--line)}
+.pl-item>div{flex:1;min-width:0}.pl-item b{display:block;font-size:.9rem;font-weight:600}.pl-item small{display:block}

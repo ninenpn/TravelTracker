@@ -170,6 +170,13 @@ function calcAll() {
   return { out, order };
 }
 
+function parsePlaces(rows) {
+  const h = rows[0] || [], ni = colIndex(h, ['name', 'place', 'ชื่อ', 'สถานที่']), la = colIndex(h, ['lat', 'latitude']), lo = colIndex(h, ['lng', 'lon', 'long', 'longitude']);
+  if (ni < 0 || la < 0 || lo < 0) return null;
+  const out = {};
+  rows.slice(1).forEach(r => { const a = num(r[la])[0], b = num(r[lo])[0]; if (r[ni] && a != null && b != null) out[norm(r[ni])] = { lat: a, lng: b }; });
+  return out;
+}
 /* ---------- load ---------- */
 const toast = (m, ms = 2600) => { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, ms); };
 function showErr(m) { const e = $('#error'); e.hidden = !m; e.textContent = m || ''; }
@@ -177,13 +184,14 @@ let rawPlanHead = '';
 const sameAsPlan = r => rawPlanHead && (r[0] || []).join('|') === rawPlanHead;
 async function load() {
   const t = trip(); $('#tripTitle').textContent = t.name;
-  data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, me: data.me, meLabel: data.meLabel };
+  data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, me: data.me, meLabel: data.meLabel };
   const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); data.plan = parsePlan(r); });
   await Promise.allSettled([planP]);
   const rest = [
     async () => { data.users = parseUsers(await fetchTab(t, { name: t.usersTab })) || []; },
     async () => { data.expenses = parseExpenses(await fetchTab(t, { name: t.expensesTab })) || []; },
     async () => { data.locs = parseLocations(await fetchTab(t, { name: t.locationsTab || 'Locations' })) || {}; },
+    async () => { data.places = parsePlaces(await fetchTab(t, { name: t.placesTab || 'Places' })) || {}; },
     async () => { if (t.costTab) { const r = await fetchTab(t, { name: t.costTab }); data.costs = sameAsPlan(r) ? null : parseTable(r); } },
     async () => { for (const n of String(t.extraTabs || '').split(',').map(x => x.trim()).filter(Boolean)) { try { const r = await fetchTab(t, { name: n }); if (!sameAsPlan(r)) data.extra.push({ name: n, rows: parseTable(r) }); } catch { } } }
   ];
@@ -416,7 +424,7 @@ function ensureMap() {
   if (!map) {
     map = L.map(el, { zoomControl: false, attributionControl: true }).setView([43.25, 76.95], 11);
     tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(map);
-    layer = L.layerGroup().addTo(map);
+    layer = L.layerGroup().addTo(map); plLayer = L.layerGroup().addTo(map);
   }
   return true;
 }
@@ -429,6 +437,7 @@ function drawMap(fit) {
     if (n === me && p.acc) L.circle([p.lat, p.lng], { radius: p.acc, color: '#4f46e5', weight: 1, fillOpacity: .08 }).addTo(layer);
     L.marker([p.lat, p.lng], { icon: pinIcon(n, n === me) }).addTo(layer).bindPopup(`<b>${esc(n)}</b><br>${esc(p.label || '')}`);
   }
+  const pp = placePts(); pts.push(...pp); drawPlaces();
   setTimeout(() => { map.invalidateSize(); if (fit && pts.length) pts.length === 1 ? map.setView(pts[0], 16) : map.fitBounds(pts, { maxZoom: 16, padding: [40, 40] }); }, 60);
 }
 const GEO_MSG = {
@@ -459,6 +468,87 @@ async function shareLoc() {
   if (navigator.share) { try { await navigator.share({ title: 'ตำแหน่งของฉัน', text, url }); return; } catch (e) { if (e.name === 'AbortError') return; } }
   copyText(text + ' ' + url, 'คัดลอกลิงก์ตำแหน่งแล้ว');
 }
+/* ---------- planned places on the map ---------- */
+const gc = { cache: store.get('tt.gc2', {}), running: false, center: null };
+const GENERIC = /^(ที่พัก|home|hotel|accommodation|พัก|สนามบิน|airport)$/i;
+const qName = n => String(n || '').replace(/\([^)]*\)/g, '').split(/\s\/\s|\s\+\s/)[0].trim();
+const gKey = q => trip().id + '|' + q;
+const ovr = q => (data.places || {})[norm(q)];
+const coordOf = q => ovr(q) || gc.cache[gKey(q)];
+const knownQ = q => !!ovr(q) || (gKey(q) in gc.cache);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function scopeStops() {
+  const p = data.plan; if (!p || ui.placeDay === 'none') return [];
+  const di = ui.placeDay === 'all' ? 'all' : (ui.placeDay != null ? ui.placeDay : (ui.day || 0));
+  const days = di === 'all' ? p.days.map((d, i) => [d, i]) : [[p.days[di], di]].filter(x => x[0]);
+  const out = [], seen = new Set();
+  for (const [d, i] of days) {
+    let last = '';
+    const add = (n, t) => {
+      if (!n || GENERIC.test(n.trim())) return; const q = qName(n); if (!q) return;
+      if (di !== 'all' && q === last) return; last = q;
+      if (di === 'all') { if (seen.has(q)) return; seen.add(q); }
+      out.push({ name: n.trim(), q, day: d.label.replace('-', ' '), di: i, time: t || '' });
+    };
+    d.steps.forEach((st, k) => { if (k === 0) add(st.from, st.time); add(st.to, st.toTime || st.time); });
+  }
+  if (di === 'all') p.ideas.forEach(g => g.items.forEach(it => { const q = qName(it); if (q && !GENERIC.test(q) && !seen.has(q)) { seen.add(q); out.push({ name: it, q, day: 'ไอเดีย', di: -1, time: '' }); } }));
+  return out;
+}
+const cityHint = () => { const w = tripWindow(); return w && w.where ? String(w.where).replace(/\b(international|airport|station)\b/ig, '').replace(/(สนามบิน|ท่าอากาศยาน).*/, '').replace(/\s+/g, ' ').trim() : ''; };
+async function nominatim(q, isCenter) {
+  let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=en,th&q=${encodeURIComponent(q)}`;
+  if (gc.center && !isCenter) url += `&viewbox=${gc.center.lng - 1.5},${gc.center.lat + 1.5},${gc.center.lng + 1.5},${gc.center.lat - 1.5}`;
+  const r = await fetch(url); if (!r.ok) throw new Error('geocode ' + r.status);
+  const x = (await r.json())[0]; if (!x) return null;
+  const c = { lat: +x.lat, lng: +x.lon };
+  return (gc.center && !isCenter && distM(gc.center, c) > 600e3) ? null : c;
+}
+async function geocode(q, isCenter) {
+  if (knownQ(q)) return coordOf(q);
+  const hint = isCenter ? '' : cityHint(), first = q.split(/\s&\s/)[0].trim();
+  const tries = [...new Set([q, hint && !q.toLowerCase().includes(hint.toLowerCase()) ? `${q}, ${hint}` : '', first !== q ? first : '', hint && first !== q ? `${first}, ${hint}` : ''].filter(Boolean))];
+  let c = null;
+  for (let k = 0; k < tries.length && !c; k++) { if (k) await sleep(1100); c = await nominatim(tries[k], isCenter); }
+  gc.cache[gKey(q)] = c; store.set('tt.gc2', gc.cache);
+  return c;
+}
+async function runGeocode() {
+  if (gc.running) return; gc.running = true;
+  try {
+    gc.center = gc.cache[gKey('__center')] || null;
+    if (!gc.center) { const w = tripWindow(), name = w && qName(w.where); if (name) { const c = await geocode(name, true); if (c) { gc.center = c; gc.cache[gKey('__center')] = c; store.set('tt.gc2', gc.cache); } } }
+    for (; ;) {
+      const need = scopeStops().find(x => !knownQ(x.q)); if (!need) break;
+      await geocode(need.q); drawPlaces(); renderPlaces(); await sleep(1100);
+    }
+  } catch { } finally { gc.running = false; drawPlaces(true); renderPlaces(); }
+}
+const placeIcon = (n, di) => L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -12], html: `<div class="plc" style="--c:${COLORS[(di < 0 ? 7 : di) % 8]}">${n}</div>` });
+function placePts() { return scopeStops().map(x => coordOf(x.q)).filter(Boolean).map(c => [c.lat, c.lng]); }
+let plLayer;
+function drawPlaces(fit) {
+  if (!map || !plLayer) return; plLayer.clearLayers();
+  const stops = scopeStops(), pts = [];
+  stops.forEach((x, k) => {
+    const c = coordOf(x.q); if (!c) return; pts.push([c.lat, c.lng]);
+    L.marker([c.lat, c.lng], { icon: placeIcon(k + 1, x.di) }).addTo(plLayer).bindPopup(`<b>${k + 1}. ${esc(x.name)}</b><br>${esc(x.day)} ${esc(x.time)}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`);
+  });
+  if (ui.placeDay !== 'all' && pts.length > 1) L.polyline(pts, { color: '#4f46e5', weight: 3, opacity: .6, dashArray: '6 8' }).addTo(plLayer);
+  if (fit && pts.length) { const all = data.me ? [...pts, [data.me.lat, data.me.lng]] : pts; all.length === 1 ? map.setView(all[0], 15) : map.fitBounds(all, { maxZoom: 16, padding: [40, 40] }); }
+}
+function renderPlaces() {
+  const el = $('#placesBox'); if (!el) return;
+  const p = data.plan; if (!p || !p.days.length) { el.innerHTML = ''; return; }
+  const cur = ui.placeDay != null ? ui.placeDay : (ui.day || 0), stops = scopeStops();
+  const done = stops.filter(x => knownQ(x.q)).length;
+  el.innerHTML = `<div class="card"><div class="row2"><h3>📍 สถานที่ในแผน</h3><select id="placeSel"><option value="none" ${cur === 'none' ? 'selected' : ''}>ซ่อน</option><option value="all" ${cur === 'all' ? 'selected' : ''}>ทั้งทริป</option>${p.days.map((d, i) => `<option value="${i}" ${cur === i ? 'selected' : ''}>${esc(d.label.replace('-', ' '))}</option>`).join('')}</select></div>
+  ${stops.length ? `<small>${done < stops.length ? `กำลังค้นหาพิกัด ${done}/${stops.length}…` : `พบพิกัด ${stops.filter(x => coordOf(x.q)).length}/${stops.length} แห่ง`}</small>` : ''}
+  ${stops.map((x, k) => { const c = coordOf(x.q), st = !knownQ(x.q) ? '⏳' : c ? '📍' : '❓'; return `<button class="pl-item" data-k="${k}"><span class="plc sm" style="--c:${COLORS[(x.di < 0 ? 7 : x.di) % 8]}">${k + 1}</span><div><b>${esc(x.name)}</b><small>${esc(x.day)}${x.time ? ' · ' + esc(x.time) : ''}${c === null ? ' · ไม่พบพิกัดในพื้นที่ทริป' : ''}</small></div><span>${st}</span></button>`; }).join('')}
+  ${stops.length ? `<small>พิกัดมาจากแท็บ “${esc(trip().placesTab || 'Places')}” (Name, Lat, Lng) ถ้ามี ไม่งั้นค้นจากชื่อด้วย OpenStreetMap ซึ่งอาจคลาดเคลื่อน — เช็กด้วยปุ่มนำทาง “ที่พัก” ไม่แสดงเพราะไม่มีชื่อโรงแรมในแผน</small>` : ''}</div>`;
+  $('#placeSel').onchange = e => { ui.placeDay = e.target.value === 'all' || e.target.value === 'none' ? e.target.value : +e.target.value; drawPlaces(true); renderPlaces(); runGeocode(); };
+  $$('.pl-item', el).forEach(b => b.onclick = () => { const x = stops[+b.dataset.k], c = coordOf(x.q); if (!c) return toast(x.name + ' — ยังไม่พบพิกัด'); ui.gTarget = c; if (ui.mapMode === 'google') applyMapMode(); else if (map) { scrollTo({ top: 0, behavior: 'smooth' }); map.setView([c.lat, c.lng], 16); } });
+}
 function nextStop() {
   const p = data.plan; if (!p) return null; planDates(p);
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -487,12 +577,12 @@ function renderMap() {
     el.innerHTML = `<div class="card" id="mapStatus"></div><div id="mapNext"></div>
     <div class="seg" id="mapSeg"><button data-m="app" class="on">แผนที่ของแอป</button><button data-m="google">Google Maps</button></div>
     <div class="mapwrap"><div id="map"></div><iframe id="gmap" title="Google Maps" hidden loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe><button class="locate" id="bLocate" aria-label="ไปที่ตำแหน่งฉัน"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button></div>
-    <div id="mapPeople"></div>
+    <div id="placesBox"></div><div id="mapPeople"></div>
     <div class="card"><h3>แชร์ตำแหน่งสดกับเพื่อนผ่าน Google Maps</h3><div class="note">แอปนี้อ่านตำแหน่งเพื่อนจาก Google Maps โดยตรงไม่ได้ (Google ไม่เปิด API ให้) แนะนำให้ใช้คู่กัน: เปิดแอป Google Maps → แตะรูปโปรไฟล์ → <b>การแชร์ตำแหน่ง</b> → เลือกเพื่อนและระยะเวลา แล้วดูกันในแอป Google Maps ได้เลย</div><div class="btns"><a class="btn" target="_blank" rel="noopener" href="https://www.google.com/maps">เปิด Google Maps</a></div></div>`;
     $('#bLocate').onclick = () => { if (data.me) map.setView([data.me.lat, data.me.lng], 17); else { ui.centered = false; startLocation(); } };
     $$('#mapSeg button').forEach(b => b.onclick = () => { ui.mapMode = b.dataset.m; applyMapMode(); });
   }
-  renderMapStatus(); renderNext(); renderMapPeople(); drawMap(true); applyMapMode();
+  renderMapStatus(); renderNext(); renderPlaces(); renderMapPeople(); drawMap(true); applyMapMode(); runGeocode();
 }
 function renderMapPeople() {
   const el = $('#mapPeople'); if (!el) return;
