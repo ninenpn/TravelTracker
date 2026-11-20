@@ -157,6 +157,7 @@ const sheetApi = {
           reqs.push({ duplicateSheet: { sourceSheetId: target.sheetId, newSheetId: newId, newSheetName: '_plan_backup' } }, { updateSheetProperties: { properties: { sheetId: newId, hidden: true }, fields: 'hidden' } });
           await shApi.req(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: reqs }) }); try { sessionStorage.setItem('tt.bak', String(Date.now())); } catch { }
         }
+        await shApi.req(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: [{ unmergeCells: { range: { sheetId: target.sheetId, startRowIndex: 0, endRowIndex: Math.max(p.rows.length + 60, 300), startColumnIndex: 0, endColumnIndex: 26 } } }] }) });   // merged cells swallow values the app writes into them
         await shApi.req(`/values/${encodeURIComponent(qa(target.title) + '!A:ZZ')}:clear`, { method: 'POST', body: '{}' });
         await shApi.req(`/values/${encodeURIComponent(qa(target.title) + '!A1')}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: p.rows }) });
         return { ok: true, rows: p.rows.length };
