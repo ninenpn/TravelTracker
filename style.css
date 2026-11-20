@@ -207,3 +207,13 @@ html[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) bri
 .card{border-color:color-mix(in srgb,var(--pri) 8%,var(--line))}
 
 #moneyBody>*+*{margin-top:12px}#moneyBody{margin-top:12px}
+
+/* countdown + bells */
+.cd{display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:linear-gradient(135deg,var(--pri),var(--pri2));color:#fff;border-radius:var(--r);padding:14px 16px;box-shadow:0 18px 34px -16px var(--pri);margin-bottom:6px}
+.cd-t{font-size:1.9rem;font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums;line-height:1.1;flex:1 1 100%}
+.cd-b{flex:1;min-width:0}.cd-b small{display:block;color:#ffffffcc}.cd-b b{display:block;line-height:1.3}
+.cd .chip{background:#ffffff30;color:#fff;margin-top:4px}
+.bellbtn{width:42px;height:42px;border-radius:14px;background:#ffffff30;font-size:1.15rem;display:grid;place-items:center;flex:none}
+.bellbtn.sm{width:32px;height:32px;border-radius:11px;font-size:.95rem;background:var(--soft);align-self:flex-start}
+.bellbtn.sm.on{background:var(--priSoft)}
+.editing .bellbtn{display:none}

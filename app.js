@@ -309,17 +309,18 @@ function renderPlan() {
   const el = $('#tab-plan'), p = data.plan;
   if (!p) { el.innerHTML = ui.loaded ? '<div class="empty">ไม่มีข้อมูลแผน</div>' : '<div class="skeleton"></div><div class="skeleton"></div>'; return; }
   planDates(p);
+  evMapCur = {}; planEvents().forEach(e => evMapCur[e.di + '|' + e.si] = e);
   if (!p.days.length) { el.innerHTML = '<div class="empty">ยังไม่มีแผนในชีต</div>'; return; }
   if (ui.day == null || ui.day >= p.days.length) { const t = p.days.findIndex(isToday); ui.day = t >= 0 ? t : Math.max(0, p.days.findIndex(d => !isPast(d))); }
   const d = p.days[ui.day], wd = d.dt && !isPast(d) ? d.dt.toLocaleDateString('th-TH', { weekday: 'long' }) : '';
-  let h = `<div class="days">${p.days.map(pill).join('')}${ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : ''}</div>`;
+  let h = (ui.edit ? '' : cdCard()) + `<div class="days">${p.days.map(pill).join('')}${ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : ''}</div>`;
   h += `<div class="dayh"><div><h2>${esc(dayTitle(d, ui.day))}</h2><small>${[wd, d.city].filter(Boolean).map(esc).join(' · ')}${isToday(d) ? ' <span class="chip">วันนี้</span>' : ''}</small></div><button class="edit-btn ${ui.edit ? 'on' : ''}" id="editBtn">${ui.edit ? 'เสร็จ' : '<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>แก้ไข'}</button></div>`;
   if (isToday(d) && !ui.edit) { const sl = slotOf(), nm = { morning: 'อาหารเช้า', lunch: 'อาหารกลางวัน', afternoon: 'คาเฟ่/ของว่าง', dinner: 'อาหารเย็น', late: 'ของกินยามดึก' }[sl]; h += `<button class="nudge" id="nudge"><span>🍽</span><div><b>ถึงเวลา${nm}แล้ว</b><small>ดูร้านแนะนำใกล้ๆ ที่แวะได้</small></div></button>`; }
   h += `<div class="tl ${ui.edit ? 'editing' : ''}" id="tl">` + d.steps.map((s, k) => `<div class="step" data-i="${k}"><div class="step-t">${esc(s.time || '')}${s.toTime ? `<small>→ ${esc(s.toTime)}</small>` : ''}</div><div class="step-c"><div class="step-i">${howIcon(s.how, !!s.text)}</div><div class="step-b">
     ${s.text ? `<div>${link(s.text)}</div>` : ''}${(s.from || s.to) ? `<div class="route">${ui.edit ? esc(s.from) : mapLink(s.from)}${s.to ? ' <span class="arrow">→</span> ' + (ui.edit ? esc(s.to) : mapLink(s.to)) : ''}</div>` : ''}
     ${s.city ? `<span class="chip">${esc(s.city)}</span>` : ''}${s.how ? `<span class="chip">${esc(s.how)}</span>` : ''}${s.tickets ? `<span class="chip">🎫 ${esc(s.tickets)}</span>` : ''}
     ${s.note ? `<div class="note">${link(s.note)}</div>` : ''}${s.notice ? `<div class="note">⚠️ ${link(s.notice)}</div>` : ''}</div>
-    <div class="grip" aria-label="ลากเพื่อจัดลำดับ"><svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></div></div></div>`).join('') + '</div>';
+    ${ui.edit ? '' : bell(ui.day, k)}<div class="grip" aria-label="ลากเพื่อจัดลำดับ"><svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></div></div></div>`).join('') + '</div>';
   if (!d.steps.length && !ui.edit) h += '<div class="card empty flat">ยังไม่มีแผนสำหรับวันนี้<br><small>กด “แก้ไข” เพื่อเพิ่มรายการ</small></div>';
   if (ui.edit) h += '<button class="addstep" id="addStep">+ เพิ่มรายการ</button>';
   if (!ui.edit) for (const g of p.ideas) h += `<div class="card flat"><h3>💡 ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map(i => `<li>${mapLink(i)}</li>`).join('')}</ul></div>`;
@@ -327,6 +328,7 @@ function renderPlan() {
   const sel = $('.pill.sel', el); sel && sel.scrollIntoView({ inline: 'center', block: 'nearest' });
   $$('.pill[data-day]', el).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; renderPlan(); });
   $('#editBtn').onclick = toggleEdit;
+  bindBells(el);
   const nd = $('#nudge'); if (nd) nd.onclick = () => { ui.spotView = 'near'; ui.sugDay = null; ui.winOpen = null; $('[data-tab=spots]').click(); };
   if (ui.edit) {
     $('#addStep').onclick = () => stepDialog(null);
@@ -1001,6 +1003,7 @@ function renderMenu() {
   let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
   const cc = conn(), off = trip().scriptOff;
   h += `<div class="card"><div class="row2"><h2>การบันทึกลงชีต</h2><span class="chip ${on ? 'ok' : 'bad'}">${on ? 'เชื่อมต่อแล้ว' : off ? 'ปิดในเครื่องนี้' : 'ยังไม่เชื่อมต่อ'}</span></div><div class="mut">${on ? `แก้แผน เพิ่มค่าใช้จ่าย และแชร์ตำแหน่ง จะบันทึกลงชีตอัตโนมัติ${cc.by ? ` · เชื่อมต่อโดย ${esc(cc.by)}` : ''} (ใช้ร่วมกันทั้งกลุ่ม)` : 'ให้คนเดียวเชื่อมต่อครั้งเดียว คนอื่นจะใช้ได้อัตโนมัติ'}</div><div class="btns"><button class="btn ${on ? '' : 'pri'}" id="bConn">${on ? 'จัดการการเชื่อมต่อ' : 'เชื่อมต่อชีต'}</button></div></div>`;
+  h += notifCard();
   h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
   h += `<div class="card"><h2 style="margin-bottom:4px">ทริป</h2>${cfg.trips.map(t => `<button class="li ${t.id === cfg.active ? 'on' : ''}" data-trip="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b></div></button>`).join('')}<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div></div>`;
   h += `<div class="card"><h2 style="margin-bottom:4px">สมาชิก</h2>${users().map(u => `<div class="row">${avatar(u.name, 'sm')}<div><b>${esc(u.name)}</b></div><div class="amt mut">${Object.entries(u.budgets || {}).map(([k, v]) => fmt(v) + ' ' + k).join(' · ') || '—'}</div></div>`).join('') || '<span class="mut">ยังไม่มี — เพิ่มในแท็บ ' + esc(trip().usersTab) + '</span>'}</div>`;
@@ -1008,6 +1011,7 @@ function renderMenu() {
   h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด ${ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '—'} · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
   el.innerHTML = h;
   $('#bSwitch').onclick = () => $('#btnMe').click(); $('#bConn').onclick = () => setupDialog();
+  bindNotif(el);
   $('#bTheme').onclick = () => { cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark'; saveCfg(); applyTheme(); renderMenu(); }; $('#bNew').onclick = newTripDialog; $('#bSet').onclick = settingsDialog;
   $('#bReload').onclick = async () => { toast('กำลังโหลด…', 1000); await load(); toast('อัปเดตแล้ว', 1200); };
   $$('[data-trip]', el).forEach(b => b.onclick = () => { cfg.active = b.dataset.trip; saveCfg(); ui.day = null; ui.edit = false; load(); });
@@ -1105,6 +1109,121 @@ function newTripDialog() {
   };
 }
 
+/* ---------- countdown + reminders + calendar export ---------- */
+cfg.notif = cfg.notif || { on: false, lead: 15, per: {}, fired: {} };
+let evMapCur = {};
+function planEvents() {
+  const p = data.plan; if (!p) return []; planDates(p); const out = [];
+  p.days.forEach((d, di) => {
+    if (!d.dt) return;
+    d.steps.forEach((st, si) => {
+      let t = st.time ? tm(st.time) : null;
+      if (!t && st.text) { const m = String(st.text).match(/^\s*(\d{1,2}[.:]\d{2})/); if (m) t = tm(m[1]); }
+      if (!t) return;
+      const dt = at(d.dt, t), e2 = tm(st.toTime), end = e2 ? at(d.dt, e2) : null; if (end && end <= dt) end.setDate(end.getDate() + 1);
+      out.push({ key: [trip().id, d.label, st.time || '', st.from || '', st.to || '', String(st.text || '').slice(0, 30)].join('|'), dt, end, di, si, title: st.text || [st.from, st.to].filter(Boolean).join(' → '), how: st.how || '', to: st.to || '', note: st.note || '' });
+    });
+  });
+  return out.sort((a, b) => a.dt - b.dt);
+}
+const remOn = ev => { const v = cfg.notif.per[ev.key]; return v !== undefined ? v : cfg.notif.on; };
+const pad2 = n => String(n).padStart(2, '0');
+function fmtCd(ms) {
+  ms = Math.max(0, ms); const t = Math.floor(ms / 1000), d = Math.floor(t / 86400), h = Math.floor(t % 86400 / 3600), m = Math.floor(t % 3600 / 60), sc = t % 60;
+  return (d ? `${d} วัน ` : '') + `${pad2(h)}:${pad2(m)}:${pad2(sc)}`;
+}
+const nextEvent = () => planEvents().find(e => e.dt.getTime() > Date.now()) || null;
+function cdCard() {
+  const e = nextEvent(); if (!e) return ''; const on = remOn(e);
+  return `<div class="cd" id="cd" data-key="${esc(e.key)}"><div class="cd-t" id="cdTime">${fmtCd(e.dt - Date.now())}</div><div class="cd-b"><small>ถัดไป · ${esc(e.dt.toLocaleString('th-TH', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}</small><b>${esc(e.title)}</b>${e.how ? `<span class="chip">${howIcon(e.how, false)} ${esc(e.how)}</span>` : ''}</div><button class="bellbtn ${on ? 'on' : ''}" data-bell="${esc(e.key)}" aria-label="เตือน">${on ? '🔔' : '🔕'}</button></div>`;
+}
+const bell = (di, k) => { const e = evMapCur[di + '|' + k]; if (!e || e.dt < Date.now() - 36e5) return ''; return `<button class="bellbtn sm ${remOn(e) ? 'on' : ''}" data-bell="${esc(e.key)}" aria-label="เตือน">${remOn(e) ? '🔔' : '🔕'}</button>`; };
+function bindBells(el) {
+  $$('[data-bell]', el).forEach(b => b.onclick = async ev => {
+    ev.stopPropagation(); const key = b.dataset.bell, e = planEvents().find(x => x.key === key); if (!e) return;
+    const next = !remOn(e); cfg.notif.per[key] = next; saveCfg();
+    if (next) { const ok = await ensurePermission(); toast(ok ? `จะเตือน ${cfg.notif.lead} นาทีก่อนถึงเวลา` : 'ตั้งเตือนในแอปแล้ว (ยังไม่ได้อนุญาตการแจ้งเตือนของเบราว์เซอร์ — เปิดได้ในแท็บเมนู)', 3500); } else toast('ยกเลิกการเตือนรายการนี้');
+    renderPlan();
+  });
+}
+async function ensurePermission() {
+  if (!('Notification' in window)) return false;
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission === 'denied') return false;
+  try { return (await Notification.requestPermission()) === 'granted'; } catch { return false; }
+}
+async function notify(title, body, tag) {
+  toast(`🔔 ${title} — ${body}`, 9000);
+  try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch { }
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const opt = { body, tag, icon: 'icon-192.png', badge: 'icon-192.png', data: { url: location.href } };
+  try { const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration(); if (reg) { await reg.showNotification(title, { ...opt, vibrate: [200, 100, 200] }); return; } } catch { }
+  try { new Notification(title, opt); } catch { }
+}
+function checkReminders() {
+  const now = Date.now(), lead = cfg.notif.lead * 60000; let changed = false;
+  for (const e of planEvents()) {
+    if (!remOn(e)) continue; const id = e.key + '|' + cfg.notif.lead, fireAt = e.dt.getTime() - lead;
+    if (now >= fireAt && now < e.dt.getTime() && !cfg.notif.fired[id]) {
+      cfg.notif.fired[id] = now; changed = true;
+      const mins = Math.max(1, Math.round((e.dt.getTime() - now) / 60000));
+      notify(`อีก ${mins} นาที · ${pad2(e.dt.getHours())}:${pad2(e.dt.getMinutes())}`, e.title + (e.how ? ` (${e.how})` : ''), id);
+    }
+  }
+  for (const k of Object.keys(cfg.notif.fired)) if (now - cfg.notif.fired[k] > 7 * 864e5) { delete cfg.notif.fired[k]; changed = true; }
+  if (changed) saveCfg();
+}
+function tickCountdown() {
+  const el = $('#cdTime'); if (!el) return;
+  const e = nextEvent(), box = $('#cd');
+  if (!e || (box && box.dataset.key !== e.key)) { renderPlan(); return; }
+  el.textContent = fmtCd(e.dt - Date.now());
+}
+/* calendar export: the phone's calendar app does the reminding, even when this app is closed */
+const icsEsc = t => String(t || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+function icsFold(line) {
+  const enc = new TextEncoder(); let out = '', cur = '', len = 0;
+  for (const ch of line) { const b = enc.encode(ch).length; if (len + b > 74) { out += cur + '\r\n '; cur = ''; len = 1; } cur += ch; len += b; }
+  return out + cur;
+}
+const icsDt = d => `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}T${pad2(d.getHours())}${pad2(d.getMinutes())}00`;
+function hashStr(str) { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0; return h.toString(16); }
+function buildIcs() {
+  const lead = cfg.notif.lead, stamp = new Date().toISOString().replace(/[-:]|\.\d+/g, '');
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Travel Tracker//TH', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:' + icsEsc(trip().name)];
+  planEvents().forEach(e => {
+    const end = e.end || new Date(e.dt.getTime() + 45 * 60000), title = e.title + (e.how ? ` (${e.how})` : '');
+    L.push('BEGIN:VEVENT', `UID:${hashStr(e.key)}-${e.dt.getTime()}@traveltracker`, 'DTSTAMP:' + stamp, 'DTSTART:' + icsDt(e.dt), 'DTEND:' + icsDt(end), 'SUMMARY:' + icsEsc(title));
+    if (e.to) L.push('LOCATION:' + icsEsc(e.to));
+    if (e.note) L.push('DESCRIPTION:' + icsEsc(e.note));
+    L.push('BEGIN:VALARM', `TRIGGER:-PT${lead}M`, 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc(title), 'END:VALARM', 'END:VEVENT');
+  });
+  L.push('END:VCALENDAR'); return L.map(icsFold).join('\r\n') + '\r\n';
+}
+function downloadIcs() {
+  if (!planEvents().length) return toast('ยังไม่มีรายการที่ระบุเวลาในแผน — ใส่เวลาในคอลัมน์ Start time ก่อน');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([buildIcs()], { type: 'text/calendar;charset=utf-8' })); a.download = (trip().name || 'trip').replace(/[^\w\-]+/g, '_') + '.ics';
+  document.body.appendChild(a); a.click(); a.remove(); toast(`ส่งออก ${planEvents().length} รายการ — เปิดไฟล์เพื่อเพิ่มลงปฏิทิน (เตือน ${lead0()} นาทีก่อน)`, 4500);
+}
+const lead0 = () => cfg.notif.lead;
+function notifCard() {
+  const perm = !('Notification' in window) ? 'unsupported' : Notification.permission, n = planEvents().length;
+  const chip = perm === 'granted' ? '<span class="chip ok">อนุญาตแล้ว</span>' : perm === 'denied' ? '<span class="chip bad">ถูกบล็อก</span>' : perm === 'unsupported' ? '<span class="chip bad">ไม่รองรับ</span>' : '<span class="chip">ยังไม่อนุญาต</span>';
+  return `<div class="card"><div class="row2"><h2>การแจ้งเตือน</h2>${chip}</div>
+  <div class="row2" style="margin:8px 0"><div>เตือนทุกรายการที่มีเวลา<small style="display:block">${n} รายการในแผน · เปิดปิดรายตัวได้ด้วยไอคอนกระดิ่ง</small></div><button class="switch ${cfg.notif.on ? 'on' : ''}" id="nOn" aria-label="เตือนทุกรายการ"><i></i></button></div>
+  <div class="row2" style="margin:8px 0"><span>เตือนล่วงหน้า</span><select class="dropdown" id="nLead">${[5, 10, 15, 30, 60, 120].map(m => `<option value="${m}" ${cfg.notif.lead === m ? 'selected' : ''}>${m < 60 ? m + ' นาที' : m / 60 + ' ชั่วโมง'}</option>`).join('')}</select></div>
+  <div class="btns" style="margin-top:6px">${perm === 'default' ? '<button class="btn pri" id="nAllow">อนุญาตการแจ้งเตือน</button>' : ''}<button class="btn" id="nTest">ทดสอบเตือน</button><button class="btn" id="nIcs">เพิ่มลงปฏิทิน (.ics)</button></div>
+  <small style="display:block;margin-top:8px">แจ้งเตือนในแอปทำงานตอนเปิดแอปค้างไว้ (หรือติดตั้งเป็นแอป) — <b>ถ้าปิดแอปแล้วจะไม่เตือน</b> ให้ใช้ “เพิ่มลงปฏิทิน” เพื่อให้ปฏิทินในเครื่องเตือนแทน · iPhone: ต้องกดแชร์ → “เพิ่มลงหน้าจอหลัก” ก่อนจึงจะรับแจ้งเตือนได้</small></div>`;
+}
+function bindNotif(el) {
+  const on = $('#nOn'); if (!on) return;
+  on.onclick = async () => { cfg.notif.on = !cfg.notif.on; saveCfg(); if (cfg.notif.on) await ensurePermission(); renderMenu(); renderPlan(); };
+  $('#nLead').onchange = e => { cfg.notif.lead = +e.target.value; saveCfg(); };
+  const al = $('#nAllow'); if (al) al.onclick = async () => { await ensurePermission(); renderMenu(); };
+  $('#nTest').onclick = async () => { await ensurePermission(); notify('ทดสอบการแจ้งเตือน', 'ถ้าเห็นข้อความนี้ แปลว่าแจ้งเตือนทำงานปกติ', 'test'); };
+  $('#nIcs').onclick = downloadIcs;
+}
+
 /* ---------- boot ---------- */
 function renderAll() {
   $('#btnMe').textContent = me ? initial(me) : '?';
@@ -1126,6 +1245,10 @@ setInterval(() => {
   else if (g !== 'active' && (geo.watch != null || geo.state === 'ok')) { stopLocation(); startLocation(); }
   else if (g === 'before' || g === 'after') { geo.state = g; if (ui.tab === 'map') renderMapStatus(); }
 }, 30000);
+setInterval(tickCountdown, 1000);
+setInterval(() => { try { checkReminders(); } catch { } }, 15000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { try { checkReminders(); } catch { } tickCountdown(); } });
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
 (async function boot() {
   if (me) { $('#login').hidden = true; $('#app').hidden = false; renderAll(); }
   await load();
