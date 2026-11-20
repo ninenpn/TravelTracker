@@ -261,3 +261,10 @@ html{scroll-padding-top:calc(var(--topH,64px) + var(--dockH,0px) + 10px);scroll-
 .dock,.dock *{-webkit-user-select:none;user-select:none}.tl.editing,.tl.editing *{-webkit-user-select:none;user-select:none}
 
 .row>div>small{display:block}.row>div>b{display:inline-block;margin-right:6px}
+
+.spin.hot{box-shadow:0 0 0 4px #ffb020b0,0 3px 10px #0005;animation:hot 2s infinite}
+@keyframes hot{50%{box-shadow:0 0 0 8px #ffb02040,0 3px 10px #0005}}
+.spot .ctx{font-size:.82rem;color:var(--pri);margin:3px 0 4px;line-height:1.4}.spot .ctx b{color:var(--ink)}
+.spot-a .tag.pri{background:linear-gradient(135deg,var(--pri),var(--pri2));color:#fff}
+
+.spot .ctx b{display:inline;font-size:inherit}
