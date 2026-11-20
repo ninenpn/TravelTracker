@@ -544,10 +544,11 @@ function renderPlan() {
     ${ui.edit ? '' : bell(ui.day, k)}<div class="grip" aria-label="ลากเพื่อจัดลำดับ"><svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></div></div></div>`).join('') + '</div>';
   if (!d.steps.length && !ui.edit) h += '<div class="card empty flat">ยังไม่มีแผนสำหรับวันนี้<br><small>กด “แก้ไข” เพื่อเพิ่มรายการ</small></div>';
   if (ui.edit) h += '<button class="addstep" id="addStep">+ เพิ่มรายการ</button>';
-  if (!ui.edit) for (const g of p.ideas) h += `<div class="card flat"><h3>💡 ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map(i => `<li>${mapLink(i)}</li>`).join('')}</ul></div>`;
+  if (!ui.edit) for (const g of p.ideas) h += `<div class="card flat"><h3>💡 ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map(i => `<li>${mapLink(i)} <button class="tag sm" data-idea="${esc(i)}">+ เพิ่มเข้าแผน</button></li>`).join('')}</ul></div>`;
   el.innerHTML = h;
   dayBar.innerHTML = p.days.map(pill).join('') + (ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : '');
   const sel = $('.pill.sel', dayBar); if (sel) dayBar.scrollLeft = sel.offsetLeft - dayBar.clientWidth / 2 + sel.clientWidth / 2;
+  $$('[data-idea]', el).forEach(b => b.onclick = () => addToPlanDialog(b.dataset.idea));
   $$('.pill[data-day]', dayBar).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; ui.refit = true; ui.activeStep = null; renderPlan(); });
   $('#editBtn').onclick = toggleEdit;
   bindBells(el);
@@ -1108,7 +1109,7 @@ function focusOnMap(c) { $('[data-tab=map]').click(); setTimeout(() => { if (map
 function spotCard(s, a) {
   const [ic, col] = SPOT[s.type], d = a && s.c ? distM(a.c, s.c) : null;
   return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic}</div><div class="spot-b"><b>${esc(s.name)}</b><small>${[nice(s.cuisine), s.meal, d != null ? dist(d) : ''].filter(Boolean).map(esc).join(' · ')}</small>${s.note ? `<div class="note">${esc(s.note)}</div>` : ''}
-  <div class="spot-a">${s.c ? `<a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.c.lat},${s.c.lng}">นำทาง</a><button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button>` : `<button class="tag" data-fix="${esc(s.q || s.name)}">ตั้งพิกัด</button>`}</div></div></div>`;
+  <div class="spot-a">${s.c ? `<a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.c.lat},${s.c.lng}">นำทาง</a><button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button>` : `<button class="tag" data-fix="${esc(s.q || s.name)}">ตั้งพิกัด</button>`}<button class="tag pri" data-pick="${esc(s.name)}">+ เพิ่มเข้าแผน</button></div></div></div>`;
 }
 function listHtml() {
   const a = currentAnchor(), f = ui.spotFilter || 'all', all = allSpots(), cnt = t => all.filter(s => s.type === t).length;
@@ -1212,6 +1213,31 @@ async function addSpotToPlan(it) {
   if (t >= 0) { const nx = d.steps[at + 1]; setCell(nx._row, ix.sl, it.spot.name); d.steps[at + 1] = stepFromRow(nx._row, ix, false); }
   ui.day = it.di; renderPlan(); renderSpots(); scheduleSave(); toast(`เพิ่ม “${it.spot.name}” เข้าแผน ${dayTitle(d, it.di)} แล้ว`, 3500);
 }
+/* put any place (an idea from the plan sheet or a saved place) into a chosen day, at a chosen time */
+async function addToPlanDialog(name) {
+  if (!sheetApi.on()) return googleDialog('เพิ่มเข้าแผนได้เมื่อเข้าสู่ระบบด้วย Google');
+  if (!auth.valid()) { try { await signIn(); } catch (e) { return toast(e.message, 4500); } }
+  const p = data.plan; if (!p || !p.days.length) return toast('ยังไม่มีวันในแผน');
+  planDates(p); const cur = ui.day != null && ui.day < p.days.length ? ui.day : 0;
+  const d = openDlg(`<form method="dialog"><h3>เพิ่มเข้าแผน</h3><div class="mut" style="margin-bottom:6px"><b>${esc(name)}</b></div>
+  <label>วัน</label><select name="day">${p.days.map((x, i) => `<option value="${i}" ${i === cur ? 'selected' : ''}>${esc(dayTitle(x, i))}${x.city ? ' · ' + esc(x.city) : ''}</option>`).join('')}</select>
+  <label>เวลา (ไม่ใส่ = ต่อท้ายวัน)</label><input name="time" type="time">
+  <div class="btns"><button value="ok" class="btn pri">เพิ่มเข้าแผน</button><button value="x" class="btn" formnovalidate>ยกเลิก</button></div></form>`);
+  $('form', d).onsubmit = ev => {
+    if (ev.submitter && ev.submitter.value !== 'ok') return;
+    const f = new FormData(ev.target), di = +f.get('day'), t = String(f.get('time') || '');
+    const day = p.days[di], ix = p.cols, mins = t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : null;
+    let at = day.steps.length;
+    if (mins != null) { const k = day.steps.findIndex(st => { const x = tm(st.time); return x && x[0] * 60 + x[1] > mins; }); if (k >= 0) at = k; }
+    const prev = at > 0 ? day.steps[at - 1] : null, from = prev ? (prev.to || prev.from || '') : '';
+    const setCell = (row, c, v) => { if (c >= 0) { while (row.length <= c) row.push(''); row[c] = v; } };
+    const row = []; if (t) setCell(row, ix.st, t.replace(':', '.')); setCell(row, ix.sl, from); setCell(row, ix.al, name);
+    day.steps.splice(at, 0, stepFromRow(row, ix, at === 0));
+    const nx = day.steps[at + 1];
+    if (nx && from && qName(nx.from) === qName(from)) { setCell(nx._row, ix.sl, name); day.steps[at + 1] = stepFromRow(nx._row, ix, false); }
+    ui.day = di; renderPlan(); if (ui.tab === 'spots') renderSpots(); scheduleSave(); toast(`เพิ่ม “${name}” เข้า ${dayTitle(day, di)} แล้ว`, 3500);
+  };
+}
 function renderSpots() {
   const el = $('#tab-spots'); if (!el) return;
   const v = ui.spotView === 'list' ? 'list' : 'sug';
@@ -1220,6 +1246,7 @@ function renderSpots() {
   $('#addSpot').onclick = () => spotDialog();
   $$('[data-sf]', el).forEach(b => b.onclick = () => { ui.spotFilter = b.dataset.sf; renderSpots(); });
   $$('[data-focus]', el).forEach(b => b.onclick = () => { const x = allSpots().find(y => y.name === b.dataset.focus); if (x && x.c) focusOnMap(x.c); });
+  $$('[data-pick]', el).forEach(b => b.onclick = () => addToPlanDialog(b.dataset.pick));
   $$('[data-fix]', el).forEach(b => b.onclick = () => placeDialog(b.dataset.fix));
   $$('[data-addplan]', el).forEach(b => b.onclick = () => { const it = (ui._sug || [])[+b.dataset.addplan]; if (it) addSpotToPlan(it); });
   const gi = $('#linkIn'), go = $('#linkGo');
