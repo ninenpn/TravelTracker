@@ -62,9 +62,10 @@ const sheetApi = {
   on: () => !!(trip().scriptUrl && trip().scriptToken),
   async call(action, payload) {
     const t = trip();
-    const r = await fetch(t.scriptUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ token: t.scriptToken, action, ...payload }) });
+    let r; try { r = await fetch(t.scriptUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ token: t.scriptToken, action, ...payload }) }); }
+    catch { throw new Error('เรียกสคริปต์ไม่ได้ — ตรวจว่า Deploy เป็น Web app, “Who has access” = Anyone และใช้ URL ที่ลงท้าย /exec'); }
     const j = await r.json().catch(() => null);
-    if (!j || !j.ok) throw new Error((j && j.error) || 'บันทึกไม่สำเร็จ');
+    if (!j || !j.ok) throw new Error((j && j.error) || 'สคริปต์ตอบกลับไม่ถูกต้อง — ตรวจว่าวางโค้ดล่าสุดแล้ว Deploy เวอร์ชันใหม่');
     return j;
   }
 };
@@ -954,17 +955,20 @@ async function setupDialog(reason) {
   let code = '';
   try { code = (await (await fetch('apps-script/Code.gs')).text()).replace('__TOKEN__', token); } catch { code = '// โหลดโค้ดไม่ได้ — เปิดไฟล์ apps-script/Code.gs ใน repo'; }
   const d = openDlg(`<form method="dialog"><h3>เชื่อมต่อ Google Sheet</h3>${reason ? `<div class="mut">${esc(reason)}</div>` : ''}
-  <ol class="steps"><li>เปิดชีตของทริป → <b>ส่วนขยาย → Apps Script</b></li><li>ลบโค้ดเดิม แล้ว<b>วางโค้ดด้านล่าง</b> กดบันทึก</li><li>กด <b>Deploy → New deployment → Web app</b> ตั้ง <i>Execute as: Me</i> และ <i>Who has access: Anyone</i> แล้วอนุญาตสิทธิ์</li><li>คัดลอก <b>Web app URL</b> มาวางด้านล่าง</li></ol>
+  <ol class="steps"><li>เปิดชีตของทริป → <b>ส่วนขยาย → Apps Script</b></li><li>ลบโค้ดเดิม แล้ว<b>วางโค้ดด้านล่าง</b> กดบันทึก</li><li>กด <b>Deploy → New deployment</b> → เลือกประเภท <b>Web app</b> ตั้ง <i>Execute as: Me</i> และ <i>Who has access: Anyone</i> แล้วกด Deploy และอนุญาตสิทธิ์</li><li>คัดลอก <b>Web app URL ที่ลงท้ายด้วย /exec</b> (ไม่ใช่ลิงก์ “Test deployments” ที่ลงท้าย /dev) มาวางด้านล่าง</li></ol>
   <textarea class="code" readonly id="codeBox">${esc(code)}</textarea>
   <div class="btns" style="margin-top:6px"><button type="button" class="btn" id="bCopy">คัดลอกโค้ด</button></div>
-  <label>Web app URL</label><input name="url" value="${esc(t.scriptUrl || '')}" placeholder="https://script.google.com/macros/s/…/exec" inputmode="url">
+  <label>Web app URL (ต้องลงท้ายด้วย /exec — ไม่ใช่ /dev)</label><input name="url" value="${esc(t.scriptUrl || '')}" placeholder="https://script.google.com/macros/s/…/exec" inputmode="url">
   <input type="hidden" name="token" value="${esc(token)}">
   <div class="btns"><button value="ok" class="btn pri">ทดสอบและบันทึก</button>${t.scriptUrl ? '<button value="off" class="btn danger" formnovalidate>ยกเลิกการเชื่อมต่อ</button>' : ''}<button value="x" class="btn" formnovalidate>ปิด</button></div></form>`);
   $('#bCopy').onclick = () => copyText(code, 'คัดลอกโค้ดแล้ว');
   $('form', d).onsubmit = async ev => {
     const v = ev.submitter ? ev.submitter.value : 'ok', f = new FormData(ev.target); if (v === 'x') return;
     if (v === 'off') { t.scriptUrl = ''; t.scriptToken = ''; saveCfg(); renderAll(); return; }
-    const url = f.get('url').trim(); if (!/^https:\/\/script\.google\.com\//.test(url)) { toast('URL ไม่ถูกต้อง'); return; }
+    const url = f.get('url').trim();
+    if (!/^https:\/\/script\.google\.com\//.test(url)) { ev.preventDefault(); toast('URL ไม่ถูกต้อง — ต้องขึ้นต้น https://script.google.com/'); return; }
+    if (/\/dev\/?(\?.*)?$/.test(url)) { ev.preventDefault(); toast('นี่คือ URL แบบทดสอบ (/dev) — ต้องใช้ URL ที่ลงท้าย /exec จาก Deploy → New deployment → Web app', 6000); return; }
+    if (!/\/exec\/?(\?.*)?$/.test(url)) { ev.preventDefault(); toast('URL ต้องลงท้ายด้วย /exec', 4000); return; }
     const prev = { u: t.scriptUrl, k: t.scriptToken }; t.scriptUrl = url; t.scriptToken = f.get('token');
     try { const r = await sheetApi.call('ping', {}); saveCfg(); toast(`เชื่อมต่อสำเร็จ (${r.sheets.length} แท็บ)`); renderAll(); }
     catch (e) { t.scriptUrl = prev.u; t.scriptToken = prev.k; toast('เชื่อมต่อไม่สำเร็จ: ' + e.message); }
