@@ -1116,6 +1116,19 @@ function estimateTimes(wps) {
   return wps;
 }
 const NEAR_STOP = 700, DETOUR_MAX = 450;     // metres: "close to a stop" / extra walking if it is on the way
+/* does it make sense time-wise? (visit length, gap to the next stop, meal slot, opening hours, already past) */
+const visitMin = s => s.type === 'food' ? (/ทุกมื้อ|any/i.test(s.meal || '') || !s.meal ? 40 : 50) : s.type === 'sight' ? 60 : 30;
+function timeOk(s, c, a, b, di) {
+  const m = c.m, h = m / 60, V = visitMin(s);
+  if (isToday(data.plan.days[di]) && m < new Date().getHours() * 60 + new Date().getMinutes()) return false;   // already past
+  if (h < (s.type === 'food' ? 7 : 9) || h > (s.type === 'food' ? 23 : 19)) return false;                    // sleeping / closed hours
+  if (!c.est && s.type === 'food' && s.meal && !mealMatches(s.meal, slotOfMin(m))) return false;              // wrong meal for that hour
+  if (b && !a.est && !b.est) {                                                                                // enough room before the next fixed time
+    const leg = distM(a.c, b.c), extra = c.kind === 'onway' ? c.detour / 80 : 2 * c.d / 80;
+    if (b.m - a.m < leg / 250 + extra + V + 10) return false;
+  }
+  return true;
+}
 function spotMatches() {
   const p = data.plan; if (!p) return { items: [], pending: 0 }; planDates(p);
   const list = data.spots.map(s => ({ ...s, c: { lat: s.lat, lng: s.lng } })); let pending = 0;
@@ -1134,10 +1147,10 @@ function spotMatches() {
       let cand = null;
       for (let i = 0; i < wps.length; i++) {
         const a = wps[i], dA = distM(a.c, s.c);
-        if (dA <= NEAR_STOP && (!cand || dA < cand.score)) cand = { kind: 'near', stop: a, d: dA, score: dA, m: a.m, est: !!a.est, pos: i };
+        if (dA <= NEAR_STOP && (!cand || dA < cand.score)) { const c = { kind: 'near', stop: a, d: dA, score: dA, m: a.m, est: !!a.est, pos: i }; if (timeOk(s, c, a, wps[i + 1], di)) cand = c; }
         if (i < wps.length - 1) {
           const b = wps[i + 1], leg = distM(a.c, b.c), dB = distM(s.c, b.c);
-          if (leg >= 150 && dA < leg && dB < leg) { const detour = dA + dB - leg, sc = detour * 0.6; if (detour <= DETOUR_MAX && (!cand || sc < cand.score)) cand = { kind: 'onway', from: a, to: b, detour, score: sc, m: Math.round((a.m + b.m) / 2), est: !!(a.est || b.est), pos: i + .5 }; }
+          if (leg >= 150 && dA < leg && dB < leg) { const detour = dA + dB - leg, sc = detour * 0.6; if (detour <= DETOUR_MAX && (!cand || sc < cand.score)) { const c = { kind: 'onway', from: a, to: b, detour, score: sc, m: Math.round((a.m + b.m) / 2), est: !!(a.est || b.est), pos: i + .5 }; if (timeOk(s, c, a, b, di)) cand = c; } }
         }
       }
       if (cand) { items.push({ spot: s, di, ...cand }); break; }
