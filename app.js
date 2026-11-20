@@ -196,8 +196,8 @@ function parsePlan(rows) {
     if (!Object.values(v).some(Boolean)) continue;
     const first = !!v.d;
     if (first) { day = { label: v.d, city: v.loc, date: parseDayLabel(v.d), steps: [], extra: [], head: null }; days.push(day); idea = null; }
-    else if (/^day\s*\d+/i.test(v.st) && !v.at) { idea = { title: v.st, items: [] }; ideas.push(idea); day = null; if (v.sl) idea.items.push(v.sl); tail.push(r); continue; }
-    if (!day && idea) { const t = [v.sl, v.st, v.al].filter(Boolean).join(' · '); if (t) idea.items.push(t); tail.push(r); continue; }
+    else if (/^day\s*\d+/i.test(v.st) && !v.at) { idea = { title: v.st, items: [], rows: [] }; ideas.push(idea); day = null; if (v.sl) { idea.items.push(v.sl); idea.rows.push({ r, head: true }); } tail.push(r); continue; }
+    if (!day && idea) { const t = [v.sl, v.st, v.al].filter(Boolean).join(' · '); if (t) { idea.items.push(t); idea.rows.push({ r, head: false }); } tail.push(r); continue; }
     if (!day) { tail.push(r); continue; }
     if (/^end\s*day$/i.test(v.st.trim())) { day.extra.push(r); continue; }
     const hasStep = isTime(v.st) || v.st || v.sl || v.at || v.al || v.how || v.note || v.notice || v.tk;
@@ -544,11 +544,11 @@ function renderPlan() {
     ${ui.edit ? '' : bell(ui.day, k)}<div class="grip" aria-label="ลากเพื่อจัดลำดับ"><svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></div></div></div>`).join('') + '</div>';
   if (!d.steps.length && !ui.edit) h += '<div class="card empty flat">ยังไม่มีแผนสำหรับวันนี้<br><small>กด “แก้ไข” เพื่อเพิ่มรายการ</small></div>';
   if (ui.edit) h += '<button class="addstep" id="addStep">+ เพิ่มรายการ</button>';
-  if (!ui.edit) for (const g of p.ideas) h += `<div class="card flat"><h3>💡 ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map(i => `<li>${mapLink(i)} <button class="tag sm" data-idea="${esc(i)}">+ เพิ่มเข้าแผน</button></li>`).join('')}</ul></div>`;
+  if (!ui.edit) p.ideas.forEach((g, gi) => { if (g.items.length) h += `<div class="card flat"><h3>💡 ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map((i, ii) => `<li>${mapLink(i)} <button class="tag sm" data-gi="${gi}" data-ii="${ii}">+ เพิ่มเข้าแผน</button></li>`).join('')}</ul></div>`; });
   el.innerHTML = h;
   dayBar.innerHTML = p.days.map(pill).join('') + (ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : '');
   const sel = $('.pill.sel', dayBar); if (sel) dayBar.scrollLeft = sel.offsetLeft - dayBar.clientWidth / 2 + sel.clientWidth / 2;
-  $$('[data-idea]', el).forEach(b => b.onclick = () => addToPlanDialog(b.dataset.idea));
+  $$('[data-gi]', el).forEach(b => b.onclick = () => { const g = p.ideas[+b.dataset.gi]; addToPlanDialog(g.items[+b.dataset.ii], { gi: +b.dataset.gi, ii: +b.dataset.ii }); });
   $$('.pill[data-day]', dayBar).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; ui.refit = true; ui.activeStep = null; renderPlan(); });
   $('#editBtn').onclick = toggleEdit;
   bindBells(el);
@@ -1213,8 +1213,14 @@ async function addSpotToPlan(it) {
   if (t >= 0) { const nx = d.steps[at + 1]; setCell(nx._row, ix.sl, it.spot.name); d.steps[at + 1] = stepFromRow(nx._row, ix, false); }
   ui.day = it.di; renderPlan(); renderSpots(); scheduleSave(); toast(`เพิ่ม “${it.spot.name}” เข้าแผน ${dayTitle(d, it.di)} แล้ว`, 3500);
 }
+function removeIdea(gi, ii) {
+  const p = data.plan, g = p && p.ideas[gi]; if (!g || !g.rows || !g.rows[ii]) return;
+  const { r, head } = g.rows[ii];
+  if (head) { if (p.cols.sl >= 0) r[p.cols.sl] = ''; } else { const k = p.tail.indexOf(r); if (k >= 0) p.tail.splice(k, 1); }
+  g.items.splice(ii, 1); g.rows.splice(ii, 1);
+}
 /* put any place (an idea from the plan sheet or a saved place) into a chosen day, at a chosen time */
-async function addToPlanDialog(name) {
+async function addToPlanDialog(name, idea) {
   if (!sheetApi.on()) return googleDialog('เพิ่มเข้าแผนได้เมื่อเข้าสู่ระบบด้วย Google');
   if (!auth.valid()) { try { await signIn(); } catch (e) { return toast(e.message, 4500); } }
   const p = data.plan; if (!p || !p.days.length) return toast('ยังไม่มีวันในแผน');
@@ -1235,6 +1241,7 @@ async function addToPlanDialog(name) {
     day.steps.splice(at, 0, stepFromRow(row, ix, at === 0));
     const nx = day.steps[at + 1];
     if (nx && from && qName(nx.from) === qName(from)) { setCell(nx._row, ix.sl, name); day.steps[at + 1] = stepFromRow(nx._row, ix, false); }
+    if (idea) removeIdea(idea.gi, idea.ii);
     ui.day = di; renderPlan(); if (ui.tab === 'spots') renderSpots(); scheduleSave(); toast(`เพิ่ม “${name}” เข้า ${dayTitle(day, di)} แล้ว`, 3500);
   };
 }
@@ -1246,7 +1253,11 @@ function renderSpots() {
   $('#addSpot').onclick = () => spotDialog();
   $$('[data-sf]', el).forEach(b => b.onclick = () => { ui.spotFilter = b.dataset.sf; renderSpots(); });
   $$('[data-focus]', el).forEach(b => b.onclick = () => { const x = allSpots().find(y => y.name === b.dataset.focus); if (x && x.c) focusOnMap(x.c); });
-  $$('[data-pick]', el).forEach(b => b.onclick = () => addToPlanDialog(b.dataset.pick));
+  $$('[data-pick]', el).forEach(b => b.onclick = () => {
+    const n = b.dataset.pick; let idea = null;
+    (data.plan ? data.plan.ideas : []).forEach((g, gi) => { const ii = g.items.indexOf(n); if (!idea && ii >= 0) idea = { gi, ii }; });
+    addToPlanDialog(n, idea);
+  });
   $$('[data-fix]', el).forEach(b => b.onclick = () => placeDialog(b.dataset.fix));
   $$('[data-addplan]', el).forEach(b => b.onclick = () => { const it = (ui._sug || [])[+b.dataset.addplan]; if (it) addSpotToPlan(it); });
   const gi = $('#linkIn'), go = $('#linkGo');
