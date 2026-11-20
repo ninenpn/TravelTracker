@@ -599,19 +599,33 @@ async function savePlan() {
 $('#tripSub').onclick = () => { if (ui.dirty && !ui.saving) savePlan(); };
 
 /* step editor */
+/* places / transport already used in the plan (most used first, "ที่พัก" pinned) - to reuse on other days */
+function reuseLists() {
+  const pl = {}, hw = {}, add = (o, k) => { k = String(k || '').trim(); if (k) o[k] = (o[k] || 0) + 1; };
+  data.plan.days.forEach(d => d.steps.forEach(st => { add(pl, st.from); add(pl, st.to); add(hw, st.how); }));
+  data.spots.forEach(x => add(pl, x.name));
+  const top = o => Object.entries(o).sort((a, b) => b[1] - a[1]).map(x => x[0]);
+  const places = top(pl).filter(n => n !== 'ที่พัก' && !GENERIC.test(n)).slice(0, 14);
+  return { places: ['ที่พัก', ...places], how: top(hw).slice(0, 8) };
+}
 function stepDialog(i) {
   const p = data.plan, d = p.days[ui.day], s = i == null ? { time: '', text: '', from: '', to: '', toTime: '', how: '', note: '', _row: [] } : d.steps[i];
   const d0 = d.steps[i == null ? d.steps.length - 1 : i - 1];
   const dlgEl = openDlg(`<form method="dialog"><h3>${i == null ? 'เพิ่มรายการ' : 'แก้ไขรายการ'}</h3>
   <label>เวลาเริ่ม (เช่น 10.05) หรือข้อความอิสระ</label><input name="st" value="${esc(s.time || s.text || '')}" placeholder="10.05 หรือ “เดินเล่น + หาข้าว”">
+  <label>ต้นทาง / ปลายทาง <small>(แตะเพื่อเติมช่องที่เลือกอยู่)</small></label><div class="chips reuse" id="reusePl">${reuseLists().places.map(n => `<button type="button" class="tag" data-v="${esc(n)}">${esc(n.length > 26 ? n.slice(0, 25) + '…' : n)}</button>`).join('')}</div>
   <label>ต้นทาง</label><input name="from" value="${esc(s.from || (i == null && d0 ? d0.to : ''))}">
   <label>ปลายทาง</label><input name="to" value="${esc(s.to || '')}">
   <label>เวลาถึง</label><input name="at" value="${esc(s.toTime || '')}">
-  <label>วิธีเดินทาง</label><input name="how" value="${esc(s.how || '')}" placeholder="Airplane / Taxi / Walk">
+  <label>วิธีเดินทาง</label><input name="how" value="${esc(s.how || '')}" placeholder="Airplane / Taxi / Walk"><div class="chips reuse" id="reuseHow">${reuseLists().how.map(n => `<button type="button" class="tag" data-v="${esc(n)}">${esc(n)}</button>`).join('')}</div>
   <label>โน้ต</label><input name="note" value="${esc(s.note || '')}">
   <label>ลิงก์ Google Maps ของปลายทาง (ไม่บังคับ — ใช้ปักหมุด)</label><input name="map" inputmode="url" placeholder="วางลิงก์จาก Google Maps">
   <label>ย้ายไปวัน</label><select name="day">${p.days.map((x, k) => `<option value="${k}" ${k === ui.day ? 'selected' : ''}>${esc(dayTitle(x, k))}</option>`).join('')}</select>
   <div class="btns"><button value="ok" class="btn pri">บันทึก</button>${i == null ? '' : '<button value="del" class="btn danger" formnovalidate>ลบ</button>'}<button value="x" class="btn" formnovalidate>ยกเลิก</button></div></form>`);
+  const fm = $('form', dlgEl); let tgt = fm.elements.from.value ? 'to' : 'from';
+  ['from', 'to'].forEach(n => fm.elements[n].addEventListener('focus', () => { tgt = n; }));
+  $$('#reusePl .tag', dlgEl).forEach(b => b.onclick = () => { fm.elements[tgt].value = b.dataset.v; if (tgt === 'from') { tgt = 'to'; fm.elements.to.focus(); } });
+  $$('#reuseHow .tag', dlgEl).forEach(b => b.onclick = () => { fm.elements.how.value = b.dataset.v; });
   $('form', dlgEl).onsubmit = async ev => {
     const v = ev.submitter ? ev.submitter.value : 'ok', f = new FormData(ev.target);
     if (v === 'x') return;
