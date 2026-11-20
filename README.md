@@ -10,9 +10,9 @@ Settings → Pages → Source: **GitHub Actions**, แล้ว merge เข้�
 - **Users**: `Name, Budget`
 - **Expenses**: `Date, Item, Category, Amount, Currency, PaidBy, Type, SplitWith`
   - `Type`: `shared` / ส่วนกลาง (หารเท่าทุกคน) · `personal` / ส่วนตัว · `split` / ออกให้ (หารเฉพาะคนใน `SplitWith` คั่นด้วย `,`)
+- **Locations**: `Name, Lat, Lng, Label, Updated` (แอปมีปุ่ม "คัดลอกแถวตำแหน่ง" ให้วางลงชีต)
 - แท็บประมาณการ (ไม่บังคับ) เช่น "ค่าใช้จ่าย"
 
 สลับทริป: ⚙️ → "เพิ่มทริป/ชีตอื่น" แล้ววางลิงก์ชีต
 
-## แชร์ตำแหน่ง/ค่าใช้จ่ายข้ามเครื่อง (ไม่บังคับ)
-สร้าง Supabase project เฉพาะ, รัน `docs/supabase.sql`, ใส่ URL + anon key ใน ⚙️
+ข้อมูลทั้งหมดอ่านจาก Google Sheet อย่างเดียว (ไม่มี backend อื่น) แอปไม่เขียนกลับชีต: ปุ่ม "สร้างแถว" จะคัดลอกแถวให้วางเอง แล้วกด ⟳

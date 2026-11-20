@@ -1,12 +1,12 @@
 'use strict';
-/* Travel Tracker — static app (GitHub Pages). Data: Google Sheets (read) + optional Supabase (shared expenses/locations). */
+/* Travel Tracker — static app (GitHub Pages). All data comes from Google Sheets (read-only). */
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const COLORS = ['#0f766e', '#dc2626', '#2563eb', '#d97706', '#7c3aed', '#db2777', '#059669', '#475569'];
 const fmt = n => (Math.round(n * 100) / 100).toLocaleString('th-TH', { maximumFractionDigits: 2 });
 const DEFAULT_TRIP = {
   id: '1gtOWIff4TirHlJ8ZP3Ei84F9zb2cLPT-', name: 'Almaty Trip', planGid: '101963523',
-  usersTab: 'Users', expensesTab: 'Expenses', costTab: 'ค่าใช้จ่าย', currency: 'THB'
+  usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', costTab: 'ค่าใช้จ่าย', currency: 'THB'
 };
 
 /* ---------- storage ---------- */
@@ -14,12 +14,10 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { } }
 };
-let cfg = store.get('tt.cfg', null) || { trips: [DEFAULT_TRIP], active: DEFAULT_TRIP.id, me: '', supa: { url: '', key: '' }, rates: { KZT: 0.07 } };
+let cfg = store.get('tt.cfg', null) || { trips: [DEFAULT_TRIP], active: DEFAULT_TRIP.id, me: '', rates: { KZT: 0.07 } };
 const saveCfg = () => store.set('tt.cfg', cfg);
 const trip = () => cfg.trips.find(t => t.id === cfg.active) || cfg.trips[0];
-const localKey = () => 'tt.local.' + trip().id;
-let local = { users: [], expenses: [] };
-let data = { plan: null, costs: null, users: [], expenses: [], cloudExp: [], locs: {} };
+let data = { plan: null, costs: null, users: [], expenses: [], locs: {}, me: null };
 
 /* ---------- CSV / Sheets ---------- */
 function parseCSV(text) {
@@ -108,8 +106,8 @@ function parseExpenses(rows) {
   }));
 }
 const rate = c => c === 'THB' ? 1 : (cfg.rates[c] || 1);
-const allUsers = () => { const m = new Map(); [...local.users, ...data.users].forEach(u => m.set(u.name, u)); return [...m.values()]; };
-const allExpenses = () => [...data.expenses, ...data.cloudExp, ...local.expenses];
+const allUsers = () => data.users;
+const allExpenses = () => data.expenses;
 function calc() {
   const users = allUsers(), names = users.map(u => u.name);
   const S = {}; users.forEach(u => S[u.name] = { ...u, paid: 0, share: 0, personal: 0, shared: 0, forMe: 0, forOthers: 0, net: 0 });
@@ -138,43 +136,30 @@ function calc() {
   return { list, tx, cats, total: list.reduce((a, u) => a + u.paid, 0) };
 }
 
-/* ---------- Supabase (optional, REST) ---------- */
-const sb = {
-  on: () => !!(cfg.supa.url && cfg.supa.key),
-  async req(path, opt = {}) {
-    const r = await fetch(cfg.supa.url.replace(/\/$/, '') + '/rest/v1/' + path, { ...opt, headers: { apikey: cfg.supa.key, Authorization: 'Bearer ' + cfg.supa.key, 'Content-Type': 'application/json', ...(opt.headers || {}) } });
-    if (!r.ok) throw new Error('Supabase: ' + (await r.text()).slice(0, 200));
-    return r.status === 204 ? null : r.json().catch(() => null);
-  },
-  async pull() {
-    const id = encodeURIComponent(trip().id);
-    const [e, l] = await Promise.all([this.req(`tt_expenses?trip_id=eq.${id}&order=created_at`), this.req(`tt_locations?trip_id=eq.${id}`)]);
-    data.cloudExp = e.map(x => ({ id: x.id, src: 'cloud', date: x.date || '', item: x.item, cat: x.category || '', amount: +x.amount, cur: x.currency || 'THB', payer: x.payer, type: x.type, with: x.split_with || [] }));
-    data.locs = Object.fromEntries(l.map(x => [x.user_name, { lat: x.lat, lng: x.lng, label: x.label, at: x.updated_at }]));
-  },
-  addExpense: e => sb.req('tt_expenses', { method: 'POST', body: JSON.stringify({ trip_id: trip().id, date: e.date, item: e.item, category: e.cat, amount: e.amount, currency: e.cur, payer: e.payer, type: e.type, split_with: e.with }) }),
-  delExpense: id => sb.req('tt_expenses?id=eq.' + encodeURIComponent(id), { method: 'DELETE' }),
-  putLoc: (u, lat, lng, label) => sb.req('tt_locations?on_conflict=trip_id,user_name', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates' }, body: JSON.stringify({ trip_id: trip().id, user_name: u, lat, lng, label, updated_at: new Date().toISOString() }) })
-};
+function parseLocations(rows) {
+  const h = rows[0] || []; const ix = { n: colIndex(h, ['name', 'ชื่อ', 'user']), lat: colIndex(h, ['lat', 'latitude']), lng: colIndex(h, ['lng', 'lon', 'long', 'longitude']), l: colIndex(h, ['label', 'place', 'สถานที่', 'ที่อยู่']), t: colIndex(h, ['updated', 'time', 'เวลา']) };
+  if (ix.n < 0 || ix.lat < 0 || ix.lng < 0) return null;
+  const out = {};
+  for (const r of rows.slice(1)) { const la = num(r[ix.lat])[0], lo = num(r[ix.lng])[0]; if (r[ix.n] && la != null && lo != null) out[r[ix.n]] = { lat: la, lng: lo, label: r[ix.l] || '', at: r[ix.t] || '' }; }
+  return out;
+}
 
 /* ---------- load ---------- */
 function showErr(m) { const e = $('#error'); e.hidden = !m; e.textContent = m || ''; }
 async function load() {
-  const t = trip(); local = store.get(localKey(), { users: [], expenses: [] });
-  $('#tripTitle').textContent = t.name; $('#syncInfo').textContent = 'กำลังโหลด…';
-  const errs = []; data.users = []; data.expenses = []; data.cloudExp = []; data.plan = null; data.costs = null;
+  const t = trip(); $('#tripTitle').textContent = t.name; $('#syncInfo').textContent = 'กำลังโหลด…';
+  const errs = []; data.users = []; data.expenses = []; data.locs = {}; data.plan = null; data.costs = null;
   const tries = [
     async () => { data.plan = parsePlan(await fetchTab(t, { gid: t.planGid })); },
     async () => { const r = await fetchTab(t, { name: t.usersTab }); data.users = parseUsers(r) || []; },
     async () => { const r = await fetchTab(t, { name: t.expensesTab }); data.expenses = parseExpenses(r) || []; },
     async () => { if (t.costTab) { const r = await fetchTab(t, { name: t.costTab }); data.costs = r[0] && r[0].length >= 2 ? parseCosts(r) : null; } },
-    async () => { if (sb.on()) await sb.pull(); }
+    async () => { const r = await fetchTab(t, { name: t.locationsTab || 'Locations' }); data.locs = parseLocations(r) || {}; }
   ];
   const res = await Promise.allSettled(tries.map(f => f()));
   if (res[0].status === 'rejected') errs.push('แผนเที่ยว: ' + res[0].reason.message);
-  if (res[4].status === 'rejected') errs.push(res[4].reason.message);
   showErr(errs.join('\n'));
-  $('#syncInfo').textContent = 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + (sb.on() ? ' · ซิงก์ออนไลน์' : ' · โหมดออฟไลน์ (ไม่แชร์ข้ามเครื่อง)');
+  $('#syncInfo').textContent = 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' · ข้อมูลจาก Google Sheet';
   if (!cfg.me || !allUsers().some(u => u.name === cfg.me)) cfg.me = allUsers()[0]?.name || '';
   renderAll();
 }
@@ -239,49 +224,40 @@ function renderBudget() {
 }
 function renderExpenses() {
   const el = $('#tab-expenses'), ex = allExpenses(), T = { shared: 'ส่วนกลาง', personal: 'ส่วนตัว', split: 'ออกให้/หาร' };
-  let h = `<div class="row"><button class="pri" id="addExp">+ เพิ่มค่าใช้จ่าย</button><small>รายการจากชีตแก้ในชีตโดยตรง · รายการที่เพิ่มในแอป${sb.on() ? 'ซิงก์ให้ทุกคน' : 'เก็บในเครื่องนี้'}</small></div><div class="card"><table><tr><th>วันที่/รายการ</th><th>ผู้จ่าย</th><th>ประเภท</th><th class="n">จำนวน</th><th></th></tr>`;
-  h += ex.map(e => `<tr><td>${esc(e.date)} ${esc(e.item)}<br><small>${esc(e.cat)}${e.with.length ? ' · ' + esc(e.with.join(', ')) : ''}${e.src === 'sheet' ? ' · 📄ชีต' : ''}</small></td><td>${esc(e.payer)}</td><td>${T[e.type]}</td><td class="n">${fmt(e.amount)} ${esc(e.cur)}</td><td>${e.src !== 'sheet' ? `<button class="sm danger" data-del="${esc(e.id)}">✕</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="mut">ยังไม่มีรายการ</td></tr>';
+  let h = `<div class="row"><button class="pri" id="addExp">+ สร้างแถวสำหรับวางในชีต</button><small>ข้อมูลทั้งหมดอ่านจากแท็บ "${esc(trip().expensesTab)}" — เพิ่ม/แก้ในชีตแล้วกด ⟳</small></div><div class="card"><table><tr><th>วันที่/รายการ</th><th>ผู้จ่าย</th><th>ประเภท</th><th class="n">จำนวน</th></tr>`;
+  h += ex.map(e => `<tr><td>${esc(e.date)} ${esc(e.item)}<br><small>${esc(e.cat)}${e.with.length ? ' · ' + esc(e.with.join(', ')) : ''}</small></td><td>${esc(e.payer)}</td><td>${T[e.type]}</td><td class="n">${fmt(e.amount)} ${esc(e.cur)}</td></tr>`).join('') || '<tr><td colspan="4" class="mut">ยังไม่มีรายการ (สร้างแท็บ Expenses ในชีต)</td></tr>';
   el.innerHTML = h + '</table></div>';
   $('#addExp').onclick = expenseDialog;
-  el.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
-    const id = b.dataset.del; if (!confirm('ลบรายการนี้?')) return;
-    if (local.expenses.some(e => e.id === id)) { local.expenses = local.expenses.filter(e => e.id !== id); store.set(localKey(), local); }
-    else { try { await sb.delExpense(id); await sb.pull(); } catch (e) { showErr(e.message); } }
-    renderAll();
-  });
 }
 function renderPeople() {
   const el = $('#tab-people'), us = allUsers();
   el.innerHTML = `<div class="card"><h3>ฉันคือใคร?</h3><select id="meSel">${us.map(u => `<option ${u.name === cfg.me ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></div>
-  <div class="card"><h3>สมาชิกในทริป</h3><table><tr><th>ชื่อ</th><th class="n">งบ</th><th></th></tr>${us.map(u => `<tr><td>${esc(u.name)}</td><td class="n">${fmt(u.budget)}</td><td>${local.users.some(x => x.name === u.name) ? `<button class="sm danger" data-rm="${esc(u.name)}">✕</button>` : '<small>📄ชีต</small>'}</td></tr>`).join('') || '<tr><td colspan="3" class="mut">ยังไม่มี</td></tr>'}</table>
-  <div class="row" style="margin-top:8px"><input id="nuName" placeholder="ชื่อ"><input id="nuBud" type="number" placeholder="งบตั้งต้น"><button class="pri" id="nuAdd">เพิ่ม</button></div>
-  <small>หรือสร้างแท็บ <b>${esc(trip().usersTab)}</b> ในชีต: คอลัมน์ <code>Name, Budget</code></small></div>`;
+  <div class="card"><h3>สมาชิกในทริป</h3><table><tr><th>ชื่อ</th><th class="n">งบ</th></tr>${us.map(u => `<tr><td>${esc(u.name)}</td><td class="n">${fmt(u.budget)}</td></tr>`).join('') || '<tr><td colspan="2" class="mut">ยังไม่มี</td></tr>'}</table>
+  <small>เพิ่มสมาชิกในแท็บ <b>${esc(trip().usersTab)}</b> ของชีต: คอลัมน์ <code>Name, Budget</code></small></div>`;
   $('#meSel').onchange = e => { cfg.me = e.target.value; saveCfg(); renderAll(); };
-  $('#nuAdd').onclick = () => { const n = $('#nuName').value.trim(); if (!n) return; local.users.push({ name: n, budget: +$('#nuBud').value || 0 }); store.set(localKey(), local); renderAll(); };
-  el.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { local.users = local.users.filter(u => u.name !== b.dataset.rm); store.set(localKey(), local); renderAll(); });
 }
 
 /* ---------- map / location ---------- */
-let map, markers = {}, watchId = null, lastPush = 0;
+let map, markers = {}, watchId = null;
 function renderMap() {
   const el = $('#tab-map');
   if (!el.dataset.init) {
     el.dataset.init = 1;
-    el.innerHTML = `<div class="row"><button class="pri" id="shareBtn">📡 แชร์ตำแหน่งของฉัน</button><input id="lbl" placeholder="ตอนนี้อยู่ที่… (เช่น Green Bazaar)" style="flex:1"><button id="lblBtn">เช็คอิน</button></div><div id="map"></div><div class="card" id="locList" style="margin-top:12px"></div>`;
+    el.innerHTML = `<div class="row"><button class="pri" id="shareBtn">📡 แชร์ตำแหน่งของฉัน</button><input id="lbl" placeholder="ตอนนี้อยู่ที่… (เช่น Green Bazaar)" style="flex:1"><button id="lblBtn">📋 คัดลอกแถวตำแหน่ง</button></div><div id="map"></div><div class="card" id="locList" style="margin-top:12px"></div>`;
     map = L.map('map').setView([43.25, 76.95], 11);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(map);
-    $('#shareBtn').onclick = toggleShare; $('#lblBtn').onclick = () => { const p = data.locs[cfg.me]; if (p) pushLoc(p.lat, p.lng, true); else alert('ต้องเปิดแชร์ตำแหน่งก่อน'); };
+    $('#shareBtn').onclick = toggleShare; $('#lblBtn').onclick = copyLocRow;
   }
   $('#shareBtn').textContent = watchId == null ? '📡 แชร์ตำแหน่งของฉัน' : '⏹ หยุดแชร์ตำแหน่ง';
-  const us = allUsers().map(u => u.name); Object.keys(data.locs).forEach(n => { if (!us.includes(n)) us.push(n); });
+  const us = allUsers().map(u => u.name); if (cfg.me && !us.includes(cfg.me)) us.push(cfg.me); Object.keys(data.locs).forEach(n => { if (!us.includes(n)) us.push(n); });
   const pts = [];
   us.forEach((n, i) => {
-    const p = data.locs[n]; if (!p) return; pts.push([p.lat, p.lng]);
+    const p = (n === cfg.me && data.me) || data.locs[n]; if (!p) return; pts.push([p.lat, p.lng]);
     const html = `<b>${esc(n)}</b><br>${esc(p.label || '')}<br><small>${p.at ? new Date(p.at).toLocaleString('th-TH') : ''}</small>`;
     if (markers[n]) { markers[n].setLatLng([p.lat, p.lng]).setPopupContent(html); }
     else markers[n] = L.circleMarker([p.lat, p.lng], { radius: 10, color: '#fff', weight: 2, fillColor: COLORS[i % 8], fillOpacity: 1 }).addTo(map).bindPopup(html);
   });
-  $('#locList').innerHTML = '<h3>ใครอยู่ที่ไหน</h3><table>' + us.map((n, i) => { const p = data.locs[n]; return `<tr><td><span class="dot" style="background:${COLORS[i % 8]}"></span>${esc(n)}</td><td>${p ? `<a href="https://www.google.com/maps?q=${p.lat},${p.lng}" target="_blank" rel="noopener">${esc(p.label || `${(+p.lat).toFixed(4)}, ${(+p.lng).toFixed(4)}`)}</a>` : '<span class="mut">ยังไม่แชร์</span>'}</td><td><small>${p?.at ? new Date(p.at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : ''}</small></td></tr>`; }).join('') + '</table>' + (sb.on() ? '' : '<small>ตั้งค่า Supabase ใน ⚙️ เพื่อให้เห็นตำแหน่งเพื่อนๆ ข้ามเครื่อง</small>');
+  $('#locList').innerHTML = '<h3>ใครอยู่ที่ไหน</h3><table>' + us.map((n, i) => { const p = (n === cfg.me && data.me) || data.locs[n]; return `<tr><td><span class="dot" style="background:${COLORS[i % 8]}"></span>${esc(n)}</td><td>${p ? `<a href="https://www.google.com/maps?q=${p.lat},${p.lng}" target="_blank" rel="noopener">${esc(p.label || `${(+p.lat).toFixed(4)}, ${(+p.lng).toFixed(4)}`)}</a>` : '<span class="mut">ยังไม่แชร์</span>'}</td><td><small>${p?.at ? new Date(p.at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : ''}</small></td></tr>`; }).join('') + '</table>' + '<small>ตำแหน่งเพื่อนอ่านจากแท็บ "' + esc(trip().locationsTab || 'Locations') + '" (Name, Lat, Lng, Label, Updated) — กด "คัดลอกแถวตำแหน่ง" แล้ววางในชีต จากนั้นทุกคนกด ⟳</small>';
   setTimeout(() => { map.invalidateSize(); if (pts.length) map.fitBounds(pts, { maxZoom: 15, padding: [30, 30] }); }, 50);
 }
 function toggleShare() {
@@ -291,11 +267,14 @@ function toggleShare() {
   watchId = navigator.geolocation.watchPosition(pos => pushLoc(pos.coords.latitude, pos.coords.longitude), err => { alert('ขอตำแหน่งไม่ได้: ' + err.message); watchId = null; renderMap(); }, { enableHighAccuracy: true, maximumAge: 15000 });
   renderMap();
 }
-async function pushLoc(lat, lng, force) {
-  const label = $('#lbl')?.value.trim() || data.locs[cfg.me]?.label || '';
-  data.locs[cfg.me] = { lat, lng, label, at: new Date().toISOString() };
-  if (sb.on() && (force || Date.now() - lastPush > 20000)) { lastPush = Date.now(); try { await sb.putLoc(cfg.me, lat, lng, label); } catch (e) { showErr(e.message); } }
+function pushLoc(lat, lng) {
+  data.me = { lat, lng, label: $('#lbl')?.value.trim() || '', at: new Date().toISOString() };
   if (!$('#tab-map').hidden) renderMap();
+}
+async function copyLocRow() {
+  if (!data.me) return alert('ต้องเปิดแชร์ตำแหน่งก่อน');
+  const m = data.me, row = [cfg.me, m.lat.toFixed(6), m.lng.toFixed(6), $('#lbl').value.trim(), new Date().toLocaleString('th-TH')].join('\t');
+  try { await navigator.clipboard.writeText(row); alert('คัดลอกแล้ว — วางเป็นแถวใหม่ (หรือทับแถวชื่อคุณ) ในแท็บ Locations'); } catch { prompt('คัดลอกแถวนี้:', row); }
 }
 
 /* ---------- dialogs ---------- */
@@ -304,21 +283,19 @@ function openDlg(html) { dlg.innerHTML = html; dlg.showModal(); return dlg; }
 function expenseDialog() {
   const us = allUsers().map(u => u.name);
   if (!us.length) return alert('เพิ่มสมาชิกก่อน');
-  const d = openDlg(`<form method="dialog"><h3>เพิ่มค่าใช้จ่าย</h3>
+  const d = openDlg(`<form method="dialog"><h3>สร้างแถวค่าใช้จ่าย</h3>
   <label>รายการ</label><input name="item" required><label>จำนวนเงิน</label><input name="amount" type="number" step="any" required>
   <label>สกุลเงิน (อัตราแปลงตั้งใน ⚙️)</label><input name="cur" value="${esc(trip().currency || 'THB')}">
   <label>หมวด</label><input name="cat" placeholder="อาหาร / เดินทาง / ที่พัก…">
   <label>ใครจ่าย</label><select name="payer">${us.map(n => `<option ${n === cfg.me ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
   <label>ประเภท</label><select name="type"><option value="shared">ส่วนกลาง — หารเท่ากันทุกคน</option><option value="personal">ส่วนตัว — เฉพาะผู้จ่าย</option><option value="split">ออกให้ — หารเฉพาะคนที่เลือก</option></select>
   <label>หารกับใคร (ใช้กับ "ออกให้" / จำกัดผู้หารส่วนกลาง)</label><div class="checks">${us.map(n => `<label><input type="checkbox" name="w" value="${esc(n)}">${esc(n)}</label>`).join('')}</div>
-  <div class="row" style="margin-top:12px"><button value="ok" class="pri">บันทึก</button><button value="x" formnovalidate>ยกเลิก</button></div></form>`);
+  <div class="row" style="margin-top:12px"><button value="ok" class="pri">คัดลอกแถว</button><button value="x" formnovalidate>ยกเลิก</button></div></form>`);
   $('form', d).onsubmit = async ev => {
     if (ev.submitter?.value !== 'ok') return;
     const f = new FormData(ev.target);
-    const e = { date: new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }), item: f.get('item'), amount: +f.get('amount'), cur: (f.get('cur') || 'THB').toUpperCase(), cat: f.get('cat'), payer: f.get('payer'), type: f.get('type'), with: f.getAll('w') };
-    if (sb.on()) { try { await sb.addExpense(e); await sb.pull(); } catch (er) { showErr(er.message); } }
-    else { local.expenses.push({ ...e, id: 'l' + Date.now(), src: 'local' }); store.set(localKey(), local); }
-    renderAll();
+    const row = [new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }), f.get('item'), f.get('cat'), f.get('amount'), (f.get('cur') || 'THB').toUpperCase(), f.get('payer'), f.get('type'), f.getAll('w').join(', ')].join('\t');
+    try { await navigator.clipboard.writeText(row); alert('คัดลอกแถวแล้ว — วางต่อท้ายแท็บ Expenses ในชีต แล้วกด ⟳'); } catch { prompt('คัดลอกแถวนี้:', row); }
   };
 }
 function tripFields(t) {
@@ -327,22 +304,20 @@ function tripFields(t) {
   <label>แท็บแผนเที่ยว: gid (ท้ายลิงก์ ?gid=…; ว่าง = แท็บแรก)</label><input name="planGid" value="${esc(t.planGid || '')}">
   <label>ชื่อแท็บสมาชิก/งบ</label><input name="usersTab" value="${esc(t.usersTab || 'Users')}">
   <label>ชื่อแท็บค่าใช้จ่าย</label><input name="expensesTab" value="${esc(t.expensesTab || 'Expenses')}">
+  <label>ชื่อแท็บตำแหน่ง</label><input name="locationsTab" value="${esc(t.locationsTab || 'Locations')}">
   <label>ชื่อแท็บประมาณการ (ไม่บังคับ)</label><input name="costTab" value="${esc(t.costTab || '')}">
   <label>สกุลเงินหลัก</label><input name="currency" value="${esc(t.currency || 'THB')}">`;
 }
 function readTrip(f) {
   const url = f.get('url'), m = url.match(/\/d\/([\w-]+)/); if (!m) { alert('ลิงก์ไม่ถูกต้อง'); return null; }
   const g = url.match(/gid=(\d+)/);
-  return { id: m[1], name: f.get('name'), planGid: f.get('planGid') || (g ? g[1] : ''), usersTab: f.get('usersTab'), expensesTab: f.get('expensesTab'), costTab: f.get('costTab'), currency: (f.get('currency') || 'THB').toUpperCase() };
+  return { id: m[1], name: f.get('name'), planGid: f.get('planGid') || (g ? g[1] : ''), usersTab: f.get('usersTab'), expensesTab: f.get('expensesTab'), locationsTab: f.get('locationsTab'), costTab: f.get('costTab'), currency: (f.get('currency') || 'THB').toUpperCase() };
 }
 function settingsDialog() {
   const t = trip();
   const d = openDlg(`<form method="dialog"><h3>⚙️ ตั้งค่า</h3>
   <h3>ทริปปัจจุบัน</h3>${tripFields(t)}
   <label>อัตราแปลงเป็น ${esc(t.currency)} (เช่น KZT=0.07, USD=35)</label><input name="rates" value="${esc(Object.entries(cfg.rates).map(([k, v]) => k + '=' + v).join(', '))}">
-  <h3 style="margin-top:14px">ซิงก์ออนไลน์ (Supabase — ไม่บังคับ)</h3><small>ใช้แชร์ตำแหน่ง/ค่าใช้จ่ายที่เพิ่มในแอปข้ามเครื่อง · ดู docs/supabase.sql</small>
-  <label>Project URL</label><input name="surl" value="${esc(cfg.supa.url)}" placeholder="https://xxxx.supabase.co">
-  <label>anon / publishable key</label><input name="skey" value="${esc(cfg.supa.key)}">
   <div class="row" style="margin-top:12px"><button value="ok" class="pri">บันทึก</button><button value="new" formnovalidate>+ เพิ่มทริป/ชีตอื่น</button><button value="del" class="danger" formnovalidate>ลบทริปนี้</button><button value="x" formnovalidate>ปิด</button></div></form>`);
   $('form', d).onsubmit = ev => {
     const v = ev.submitter?.value, f = new FormData(ev.target);
@@ -352,7 +327,6 @@ function settingsDialog() {
     const nt = readTrip(f); if (!nt) return;
     Object.assign(t, nt); if (nt.id !== cfg.active) cfg.active = nt.id;
     cfg.rates = Object.fromEntries(String(f.get('rates')).split(',').map(x => x.split('=').map(s => s.trim())).filter(p => p[0] && +p[1]).map(p => [p[0].toUpperCase(), +p[1]]));
-    cfg.supa = { url: f.get('surl').trim(), key: f.get('skey').trim() };
     saveCfg(); fillTrips(); load();
   };
 }
@@ -377,5 +351,5 @@ $('#tabs').onclick = e => {
 $('#tripSelect').onchange = e => { cfg.active = e.target.value; saveCfg(); load(); };
 $('#btnReload').onclick = load; $('#btnSettings').onclick = settingsDialog;
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
-setInterval(async () => { if (sb.on() && !document.hidden) { try { await sb.pull(); renderBudget(); renderExpenses(); if (!$('#tab-map').hidden) renderMap(); } catch { } } }, 20000);
+setInterval(() => { if (!document.hidden && !dlg.open) load(); }, 60000);
 fillTrips(); load();
