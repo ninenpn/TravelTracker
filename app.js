@@ -520,11 +520,11 @@ function stayCard() {
   const st = data.stay; if (!st || (!st.name && !st.address)) return '';
   const nav = st.lat != null ? `https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(st.address)}`;
   const rules = String(st.rules || '').split('\n').map(x => x.trim()).filter(Boolean);
-  return `<div class="card stay"><div class="row2" style="align-items:flex-start;margin:0"><div><small>🏠 ที่พัก${st.platform ? ' · ' + esc(st.platform) : ''}</small><h3>${esc(st.name || 'ที่พัก')}</h3></div><a class="btn pri" target="_blank" rel="noopener" href="${nav}">นำทาง</a></div>
-  ${st.address ? `<div class="note" style="margin-top:6px">${esc(st.address)}</div>` : ''}
+  return `<details class="card stay"><summary><span class="stay-n">🏠 <b>${esc(st.name || 'ที่พัก')}</b></span><a class="btn pri sm" target="_blank" rel="noopener" href="${nav}">นำทาง</a></summary>
+  ${st.address ? `<div class="note" style="margin-top:8px">${esc(st.address)}</div>` : ''}
   ${st.checkin ? `<div class="stay-ci">📩 ${esc(st.checkin)}</div>` : ''}
-  <div class="btns" style="margin-top:8px">${st.address ? '<button class="btn" id="stCopy">คัดลอกที่อยู่</button>' : ''}</div>
-  ${rules.length ? `<details><summary>กฎของที่พัก (${rules.length})</summary><ul class="ideas">${rules.map(r => `<li>${esc(r)}</li>`).join('')}</ul></details>` : ''}</div>`;
+  ${st.address ? '<div class="btns" style="margin-top:8px"><button class="btn" id="stCopy">คัดลอกที่อยู่</button></div>' : ''}
+  ${rules.length ? `<div class="stay-r"><b>กฎของที่พัก</b><ul class="ideas">${rules.map(r => `<li>${esc(r)}</li>`).join('')}</ul></div>` : ''}</details>`;
 }
 function renderPlan() {
   const el = $('#tab-plan'), p = data.plan, dayBar = $('#homeDays');
@@ -669,10 +669,10 @@ function renderBudget(el) {
   const rem = mine.budget - mine.share, pct = mine.budget ? mine.share / mine.budget * 100 : 0;
   h += c.hasBudget
     ? `<div class="card hero">${donut(pct, rem < 0)}<div><small>งบคงเหลือของ ${esc(mine.name)}</small><div class="big">${fmt(rem)} <small>${esc(cur)}</small></div><small>ใช้ไป ${fmt(mine.share)} จาก ${fmt(mine.budget)}</small></div></div>`
-    : `<div class="card hero"><div><small>ใช้ไปของ ${esc(mine.name)}</small><div class="big">${fmt(mine.share)} <small>${esc(cur)}</small></div><small>ตั้งงบได้ที่คอลัมน์ “Budget ${esc(cur)}” ในแท็บ ${esc(trip().usersTab)}</small></div></div>`;
-  h += `<div class="stats"><div class="stat"><small>จ่ายให้ตัวเอง</small><b>${fmt(mine.personal)}</b></div><div class="stat"><small>ส่วนกลาง (หารเท่า)</small><b>${fmt(mine.shared)}</b></div><div class="stat"><small>คนอื่นออกให้ฉัน</small><b>${fmt(mine.forMe)}</b></div><div class="stat"><small>ฉันออกให้คนอื่น</small><b>${fmt(mine.forOthers)}</b></div></div>`;
+    : `<div class="card hero"><div><small>ใช้ไปของ ${esc(mine.name)}</small><div class="big">${fmt(mine.share)} <small>${esc(cur)}</small></div></div></div>`;
+  const bits = [['จ่ายให้ตัวเอง', mine.personal], ['ส่วนกลาง', mine.shared], ['คนอื่นออกให้', mine.forMe], ['ออกให้คนอื่น', mine.forOthers]].filter(x => x[1]); if (bits.length) h += `<div class="bits">${bits.map(x => `<span>${x[0]} <b>${fmt(x[1])}</b></span>`).join('')}</div>`;
   h += `<div class="card"><h2>ใครติดใคร</h2>${c.pairs.length ? c.pairs.map(p => `<div class="tx">${avatar(p.from, 'sm')}<b>${esc(p.from)}</b><span class="arr">ติด</span>${avatar(p.to, 'sm')}<b>${esc(p.to)}</b><b class="v ${p.from === mine.name ? 'neg' : p.to === mine.name ? 'pos' : ''}">${fmt(p.v)} ${esc(cur)}</b></div>`).join('') : '<span class="mut">ไม่มีใครติดกัน</span>'}</div>`;
-  h += `<div class="card"><h2>ทุกคน</h2>${c.list.map(u => { const r = u.budget - u.share, p = u.budget ? Math.min(100, u.share / u.budget * 100) : 0; return `<div class="row">${avatar(u.name)}<div><b>${esc(u.name)}${u.name === me ? ' <span class="chip">ฉัน</span>' : ''}</b>${u.budget ? `<div class="track ${r < 0 ? 'over' : ''}"><i style="width:${p}%"></i></div>` : ''}<small>ส่วนตัว ${fmt(u.personal)} · กลาง ${fmt(u.shared)} · ออกให้ ${fmt(u.forOthers)}</small></div><div class="amt ${u.net >= 0 ? 'pos' : 'neg'}">${u.net >= 0 ? '+' : '−'}${fmt(Math.abs(u.net))}</div></div>`; }).join('')}</div>`;
+  h += `<div class="card"><h2>ทุกคน</h2>${c.list.map(u => { const r = u.budget - u.share, p = u.budget ? Math.min(100, u.share / u.budget * 100) : 0; return `<div class="row">${avatar(u.name)}<div><b>${esc(u.name)}${u.name === me ? ' <span class="chip">ฉัน</span>' : ''}</b>${u.budget ? `<div class="track ${r < 0 ? 'over' : ''}"><i style="width:${p}%"></i></div>` : ''}</div><div class="amt ${u.net >= 0 ? 'pos' : 'neg'}">${u.net >= 0 ? '+' : '−'}${fmt(Math.abs(u.net))}</div></div>`; }).join('')}</div>`;
   const cats = Object.entries(c.cats).sort((a, b) => b[1] - a[1]), mx = cats[0] ? cats[0][1] : 1;
   if (cats.length) h += `<div class="card"><h2>แยกตามหมวด</h2>${cats.map(([k, v]) => `<div class="cat"><div><span>${esc(k)}</span><b>${fmt(v)}</b></div><div class="track"><i style="width:${v / mx * 100}%"></i></div></div>`).join('')}</div>`;
   if (data.costs && data.costs.length) h += tableCard('ประมาณการ', data.costs);
@@ -1156,7 +1156,7 @@ function sugCard(it, idx) {
 }
 function sugHtml() {
   const { items, pending } = spotMatches(), p = data.plan; ui._sug = items;
-  let h = '<div class="card flat"><div class="mut" style="font-size:.86rem">แนะนำเฉพาะสถานที่ <b>ในลิสของคุณ</b> ที่แผนเดินทางผ่านอยู่แล้ว หรืออยู่ใกล้จุดที่จะไป — เพิ่มสถานที่ใหม่เมื่อไรก็คำนวณใหม่ให้เอง</div></div>';
+  let h = '';
   if (!data.spots.length) return h + '<div class="empty">ยังไม่มีสถานที่ในลิส<br><small>กด + หรือวางลิงก์ Google Maps ในแท็บ “ลิสทั้งหมด”</small></div>';
   if (pending) h += `<div class="mut" style="font-size:.82rem;margin:2px 4px">⏳ กำลังหาพิกัดจุดในแผนอีก ${pending} จุด…</div>`;
   if (!items.length) return h + (pending ? '' : '<div class="empty">ยังไม่มีสถานที่ในลิสที่อยู่ใกล้เส้นทางตามแผน<br><small>เพิ่มสถานที่ใหม่ หรือเพิ่มจุดในแผนแถวนั้น แล้วจะแนะนำให้เอง</small></div>');
@@ -1354,7 +1354,7 @@ function fmtCd(ms) {
 const nextEvent = () => planEvents().find(e => e.dt.getTime() > Date.now()) || null;
 function cdCard() {
   const e = nextEvent(); if (!e) return ''; const on = remOn(e);
-  return `<div class="cd" id="cd" data-key="${esc(e.key)}"><div class="cd-t" id="cdTime">${fmtCd(e.dt - Date.now())}</div><div class="cd-b"><small>ถัดไป · ${esc(e.dt.toLocaleString('th-TH', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}</small><b>${esc(e.title)}</b>${e.how ? `<span class="chip">${howIcon(e.how, false)} ${esc(e.how)}</span>` : ''}</div><button class="bellbtn ${on ? 'on' : ''}" data-bell="${esc(e.key)}" aria-label="เตือน">${on ? '🔔' : '🔕'}</button></div>`;
+  return `<div class="cd" id="cd" data-key="${esc(e.key)}"><div class="cd-b"><small>ถัดไป · อีก <span id="cdTime">${fmtCd(e.dt - Date.now())}</span></small><b>${esc(e.title)}</b></div><button class="bellbtn ${on ? 'on' : ''}" data-bell="${esc(e.key)}" aria-label="เตือน">${on ? '🔔' : '🔕'}</button></div>`;
 }
 const bell = (di, k) => { const e = evMapCur[di + '|' + k]; if (!e || e.dt < Date.now() - 36e5) return ''; return `<button class="bellbtn sm ${remOn(e) ? 'on' : ''}" data-bell="${esc(e.key)}" aria-label="เตือน">${remOn(e) ? '🔔' : '🔕'}</button>`; };
 function bindBells(el) {
@@ -1429,17 +1429,16 @@ function notifCard() {
   const perm = !('Notification' in window) ? 'unsupported' : Notification.permission, n = planEvents().length;
   const chip = perm === 'granted' ? '<span class="chip ok">อนุญาตแล้ว</span>' : perm === 'denied' ? '<span class="chip bad">ถูกบล็อก</span>' : perm === 'unsupported' ? '<span class="chip bad">ไม่รองรับ</span>' : '<span class="chip">ยังไม่อนุญาต</span>';
   return `<div class="card"><div class="row2"><h2>การแจ้งเตือน</h2>${chip}</div>
-  <div class="row2" style="margin:8px 0"><div>เตือนทุกรายการที่มีเวลา<small style="display:block">${n} รายการในแผน · เปิดปิดรายตัวได้ด้วยไอคอนกระดิ่ง</small></div><button class="switch ${cfg.notif.on ? 'on' : ''}" id="nOn" aria-label="เตือนทุกรายการ"><i></i></button></div>
+  <div class="row2" style="margin:8px 0"><div>เตือนทุกรายการที่มีเวลา<small style="display:block">${n} รายการ · เปิดปิดรายตัวด้วยกระดิ่ง</small></div><button class="switch ${cfg.notif.on ? 'on' : ''}" id="nOn" aria-label="เตือนทุกรายการ"><i></i></button></div>
   <div class="row2" style="margin:8px 0"><span>เตือนล่วงหน้า</span><select class="dropdown" id="nLead">${[5, 10, 15, 30, 60, 120].map(m => `<option value="${m}" ${cfg.notif.lead === m ? 'selected' : ''}>${m < 60 ? m + ' นาที' : m / 60 + ' ชั่วโมง'}</option>`).join('')}</select></div>
-  <div class="btns" style="margin-top:6px">${perm === 'default' ? '<button class="btn pri" id="nAllow">อนุญาตการแจ้งเตือน</button>' : ''}<button class="btn" id="nTest">ทดสอบเตือน</button><button class="btn" id="nIcs">เพิ่มลงปฏิทิน (.ics)</button></div>
-  <small style="display:block;margin-top:8px">แจ้งเตือนในแอปทำงานตอนเปิดแอปค้างไว้ (หรือติดตั้งเป็นแอป) — <b>ถ้าปิดแอปแล้วจะไม่เตือน</b> ให้ใช้ “เพิ่มลงปฏิทิน” เพื่อให้ปฏิทินในเครื่องเตือนแทน · iPhone: ต้องกดแชร์ → “เพิ่มลงหน้าจอหลัก” ก่อนจึงจะรับแจ้งเตือนได้</small></div>`;
+  <div class="btns" style="margin-top:6px">${perm === 'default' ? '<button class="btn pri" id="nAllow">อนุญาตการแจ้งเตือน</button>' : ''}<button class="btn" id="nIcs">เพิ่มลงปฏิทิน (.ics)</button></div>
+  <small style="display:block;margin-top:8px">เตือนได้ตอนเปิดแอปค้างไว้ · อยากให้เตือนตอนปิดแอป ให้ใช้ “เพิ่มลงปฏิทิน”</small></div>`;
 }
 function bindNotif(el) {
   const on = $('#nOn'); if (!on) return;
   on.onclick = async () => { cfg.notif.on = !cfg.notif.on; saveCfg(); if (cfg.notif.on) await ensurePermission(); renderMenu(); renderPlan(); };
   $('#nLead').onchange = e => { cfg.notif.lead = +e.target.value; saveCfg(); };
   const al = $('#nAllow'); if (al) al.onclick = async () => { await ensurePermission(); renderMenu(); };
-  $('#nTest').onclick = async () => { await ensurePermission(); notify('ทดสอบการแจ้งเตือน', 'ถ้าเห็นข้อความนี้ แปลว่าแจ้งเตือนทำงานปกติ', 'test'); };
   $('#nIcs').onclick = downloadIcs;
 }
 
