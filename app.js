@@ -98,8 +98,8 @@ async function signOut() {
   ui.edit = false; renderAll();
 }
 async function saveClientIdToSheet() {
-  const id = clientId(); if (!id || (data.settings && data.settings.googleClientId === id)) return;
-  try { await setColumnForAllUsers('GoogleClientId', id); data.settings = { ...(data.settings || {}), googleClientId: id }; toast('บันทึก Client ID ลงแท็บ Users แล้ว — คนอื่นกดเข้าสู่ระบบได้เลย', 4000); } catch { }
+  const id = clientId(); if (!id || (data.settings && data.settings.googleClientId === id)) return true;
+  try { await setColumnForAllUsers('GoogleClientId', id); data.settings = { ...(data.settings || {}), googleClientId: id }; toast('บันทึก Client ID ลงแท็บ Users แล้ว — คนอื่นกดเข้าสู่ระบบได้เลย', 4000); renderMenu(); return true; } catch (e) { toast('บันทึก Client ID ลงชีตไม่สำเร็จ: ' + e.message, 9000); return false; }
 }
 const getToken = async () => auth.valid() ? auth.token : signIn();
 /* Google only hands out 1-hour tokens to browsers, so renew quietly in the background while the app is open */
@@ -116,7 +116,12 @@ const shApi = {
     const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${trip().id}${path}`, { ...opt, headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json', ...(opt.headers || {}) } });
     if (r.status === 401) { auth.token = ''; auth.exp = 0; throw new Error('หมดเวลาเข้าสู่ระบบ — แตะเพื่อเข้าสู่ระบบอีกครั้ง'); }
     const j = await r.json().catch(() => ({}));
-    if (r.status === 403) throw new Error('บัญชี Google นี้ไม่มีสิทธิ์แก้ไขชีต — ขอให้เจ้าของชีตแชร์สิทธิ์ “ผู้แก้ไข” ให้');
+    if (r.status === 403) {
+      const m = (j.error && j.error.message) || '', raw = JSON.stringify(j);
+      if (/SERVICE_DISABLED|has not been used|is disabled/i.test(raw)) throw new Error('ยังไม่ได้เปิดใช้ Google Sheets API ในโปรเจกต์ Google Cloud — ไปที่ APIs & Services → Library → Google Sheets API → Enable');
+      throw new Error('บัญชี Google นี้ไม่มีสิทธิ์แก้ไขชีต — ขอให้เจ้าของชีตแชร์สิทธิ์ “ผู้แก้ไข” ให้' + (m ? ` (${m.slice(0, 80)})` : ''));
+    }
+    if (r.status === 404) throw new Error('ไม่พบชีตนี้ — ตรวจว่าบัญชีที่เข้าสู่ระบบเข้าถึงชีตได้');
     if (!r.ok) { const e = new Error((j.error && j.error.message) || ('HTTP ' + r.status)); e.status = r.status; throw e; }
     return j;
   },
@@ -1162,7 +1167,7 @@ function renderMenu() {
   const el = $('#tab-menu'), on = sheetApi.on();
   let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
   const signed = !!auth.email && !!clientId(), cid = clientId();
-  h += `<div class="card"><div class="row2"><h2>บัญชี Google</h2><span class="chip ${signed ? 'ok' : 'bad'}">${signed ? 'เข้าสู่ระบบแล้ว' : cid ? 'ยังไม่ได้เข้าสู่ระบบ' : 'ยังไม่ตั้งค่า'}</span></div><div class="mut">${signed ? `${esc(auth.email)} — จำการเข้าสู่ระบบไว้แล้ว แอปต่ออายุให้เองเบื้องหลัง (ถ้าบัญชีนี้มีสิทธิ์แก้ไขชีต แก้ได้เลย)` : 'เข้าสู่ระบบด้วยบัญชี Google ที่มีสิทธิ์แก้ไขชีต แล้วแก้ได้ทันที ไม่ต้องตั้งค่าอะไรเพิ่ม'}</div><div class="btns">${signed ? '<button class="btn" id="bOut">ออกจากระบบ</button>' : `<button class="btn pri" id="bConn">${cid ? 'เข้าสู่ระบบด้วย Google' : 'ตั้งค่า Google'}</button>`}${cid ? '' : '<button class="btn" id="bCid">ตั้งค่า Client ID</button>'}</div></div>`;
+  h += `<div class="card"><div class="row2"><h2>บัญชี Google</h2><span class="chip ${signed ? 'ok' : 'bad'}">${signed ? 'เข้าสู่ระบบแล้ว' : cid ? 'ยังไม่ได้เข้าสู่ระบบ' : 'ยังไม่ตั้งค่า'}</span></div><div class="mut">${signed ? `${esc(auth.email)} — จำการเข้าสู่ระบบไว้แล้ว แอปต่ออายุให้เองเบื้องหลัง (ถ้าบัญชีนี้มีสิทธิ์แก้ไขชีต แก้ได้เลย)` : 'เข้าสู่ระบบด้วยบัญชี Google ที่มีสิทธิ์แก้ไขชีต แล้วแก้ได้ทันที ไม่ต้องตั้งค่าอะไรเพิ่ม'}</div><div class="btns">${signed ? '<button class="btn" id="bOut">ออกจากระบบ</button>' : `<button class="btn pri" id="bConn">${cid ? 'เข้าสู่ระบบด้วย Google' : 'ตั้งค่า Google'}</button>`}${cid ? '' : '<button class="btn" id="bCid">ตั้งค่า Client ID</button>'}${signed ? '<button class="btn" id="bChk">ตรวจการเชื่อมต่อ</button>' : ''}${signed && cid && !(data.settings && data.settings.googleClientId === cid) ? '<button class="btn pri" id="bSaveCid">บันทึก Client ID ลงชีต</button>' : ''}</div>${cid ? `<small style="display:block;margin-top:10px">Client ID: ${data.settings && data.settings.googleClientId === cid ? '<b>บันทึกในชีตแล้ว ✓</b> (คนอื่นเข้าสู่ระบบได้เลย)' : '<b>มีเฉพาะในเครื่องนี้</b> — ยังไม่ได้บันทึกลงแท็บ Users'}</small>` : ''}</div>`;
   h += notifCard();
   h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
   h += `<div class="card"><h2 style="margin-bottom:4px">ทริป</h2>${cfg.trips.map(t => `<button class="li ${t.id === cfg.active ? 'on' : ''}" data-trip="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b></div></button>`).join('')}<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div></div>`;
@@ -1171,7 +1176,9 @@ function renderMenu() {
   h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด ${ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '—'} · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
   el.innerHTML = h;
   $('#bSwitch').onclick = () => $('#btnMe').click(); const bc = $('#bConn'); if (bc) bc.onclick = async () => { if (!clientId()) return googleDialog(); try { cfg.googleDeclined = false; await signIn(); toast('เข้าสู่ระบบแล้ว: ' + auth.email); renderAll(); } catch (e) { toast(e.message, 4500); } };
-  const bo = $('#bOut'); if (bo) bo.onclick = signOut; const bi = $('#bCid'); if (bi) bi.onclick = () => googleDialog();
+  const bo = $('#bOut'); if (bo) bo.onclick = signOut;
+  const bk = $('#bChk'); if (bk) bk.onclick = async () => { try { const n = (await shApi.meta()).length; toast(`เชื่อมต่อ Google Sheets ได้ — พบ ${n} แท็บ`, 3500); } catch (e) { toast(e.message, 9000); } };
+  const bs = $('#bSaveCid'); if (bs) bs.onclick = async () => { if (await saveClientIdToSheet()) load(); }; const bi = $('#bCid'); if (bi) bi.onclick = () => googleDialog();
   bindNotif(el);
   $('#bTheme').onclick = () => { cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark'; saveCfg(); applyTheme(); renderMenu(); }; $('#bNew').onclick = newTripDialog; $('#bSet').onclick = settingsDialog;
   $('#bReload').onclick = async () => { toast('กำลังโหลด…', 1000); await load(); toast('อัปเดตแล้ว', 1200); };
