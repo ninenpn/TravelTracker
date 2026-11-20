@@ -228,3 +228,5 @@ html[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) bri
 .keys button{width:72px;height:72px;border-radius:50%;background:#ffffff22;border:1px solid #ffffff38;color:#fff;font-size:1.5rem;font-weight:600;backdrop-filter:blur(8px)}
 .keys button:active{background:#ffffff55}
 .pin-links{display:flex;gap:18px;margin-top:10px}.pin-links .link{margin-top:0}
+
+.pinwarn{max-width:300px;margin-top:4px;background:#ffffff28;border:1px solid #ffffff44;border-radius:12px;padding:8px 12px;font-size:.78rem;line-height:1.35;text-align:center}

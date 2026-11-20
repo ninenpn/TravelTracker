@@ -406,7 +406,7 @@ function pinPad(name, mode) {
   $('#loginUsers').hidden = true; $('#loginGuest').hidden = true; $('#loginSub').hidden = true; box.hidden = false;
   const title = () => mode === 'verify' ? 'ใส่ PIN ของคุณ' : first ? 'ยืนยัน PIN อีกครั้ง' : 'ตั้ง PIN 4 หลัก (ครั้งแรก)';
   const draw = (msg, bad) => {
-    box.innerHTML = `<div class="pinpad">${avatar(name, 'lg')}<h2>${esc(name)}</h2><p id="pinMsg" class="${bad ? 'bad' : ''}">${esc(msg || title())}</p>
+    box.innerHTML = `<div class="pinpad">${avatar(name, 'lg')}<h2>${esc(name)}</h2><p id="pinMsg" class="${bad ? 'bad' : ''}">${esc(msg || title())}</p>${mode === 'create' && !auth.valid() ? '<div class="pinwarn">⚠ PIN จะถูกบันทึกลงชีตเมื่อเข้าสู่ระบบ Google สำเร็จ — ถ้ายังไม่สำเร็จ PIN จะใช้ได้เฉพาะเครื่องนี้ (เปลี่ยนเครื่องต้องตั้งใหม่)</div>' : ''}
     <div class="dots ${bad ? 'shake' : ''}">${Array.from({ length: PIN_LEN }, (_, i) => `<i class="${i < digits.length ? 'f' : ''}"></i>`).join('')}</div>
     <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => `<button data-k="${k}">${k}</button>`).join('')}<button data-k="back" aria-label="ลบ">⌫</button><button data-k="0">0</button><span></span></div>
     <div class="pin-links"><button class="link" data-a="back">← เปลี่ยนชื่อ</button>${mode === 'verify' ? '<button class="link" data-a="forgot">ลืม PIN?</button>' : ''}</div></div>`;
@@ -1166,6 +1166,7 @@ async function saveSpot(s, dayIdx) {
 function renderMenu() {
   const el = $('#tab-menu'), on = sheetApi.on();
   let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
+  if (me && cfg.pendingPin[me]) h += `<div class="card" style="border-color:#ffb020"><h2>⚠ PIN ของคุณยังอยู่แค่ในเครื่องนี้</h2><div class="mut">ยังไม่ได้บันทึกลงชีต เปลี่ยนเครื่องแล้วจะต้องตั้ง PIN ใหม่ — เข้าสู่ระบบ Google เพื่อบันทึกลงแท็บ Users</div><div class="btns"><button class="btn pri" id="bPinSync">บันทึก PIN ลงชีตตอนนี้</button></div></div>`;
   const signed = !!auth.email && !!clientId(), cid = clientId();
   h += `<div class="card"><div class="row2"><h2>บัญชี Google</h2><span class="chip ${signed ? 'ok' : 'bad'}">${signed ? 'เข้าสู่ระบบแล้ว' : cid ? 'ยังไม่ได้เข้าสู่ระบบ' : 'ยังไม่ตั้งค่า'}</span></div><div class="mut">${signed ? `${esc(auth.email)} — จำการเข้าสู่ระบบไว้แล้ว แอปต่ออายุให้เองเบื้องหลัง (ถ้าบัญชีนี้มีสิทธิ์แก้ไขชีต แก้ได้เลย)` : 'เข้าสู่ระบบด้วยบัญชี Google ที่มีสิทธิ์แก้ไขชีต แล้วแก้ได้ทันที ไม่ต้องตั้งค่าอะไรเพิ่ม'}</div><div class="btns">${signed ? '<button class="btn" id="bOut">ออกจากระบบ</button>' : `<button class="btn pri" id="bConn">${cid ? 'เข้าสู่ระบบด้วย Google' : 'ตั้งค่า Google'}</button>`}${cid ? '' : '<button class="btn" id="bCid">ตั้งค่า Client ID</button>'}${signed ? '<button class="btn" id="bChk">ตรวจการเชื่อมต่อ</button>' : ''}${signed && cid && !(data.settings && data.settings.googleClientId === cid) ? '<button class="btn pri" id="bSaveCid">บันทึก Client ID ลงชีต</button>' : ''}</div>${cid ? `<small style="display:block;margin-top:10px">Client ID: ${data.settings && data.settings.googleClientId === cid ? '<b>บันทึกในชีตแล้ว ✓</b> (คนอื่นเข้าสู่ระบบได้เลย)' : '<b>มีเฉพาะในเครื่องนี้</b> — ยังไม่ได้บันทึกลงแท็บ Users'}</small>` : ''}</div>`;
   h += notifCard();
@@ -1177,6 +1178,7 @@ function renderMenu() {
   el.innerHTML = h;
   $('#bSwitch').onclick = () => $('#btnMe').click(); const bc = $('#bConn'); if (bc) bc.onclick = async () => { if (!clientId()) return googleDialog(); try { cfg.googleDeclined = false; await signIn(); toast('เข้าสู่ระบบแล้ว: ' + auth.email); renderAll(); } catch (e) { toast(e.message, 4500); } };
   const bo = $('#bOut'); if (bo) bo.onclick = signOut;
+  const bp = $('#bPinSync'); if (bp) bp.onclick = async () => { if (!sheetApi.on()) return googleDialog('ต้องตั้งค่า Google ก่อน PIN ถึงจะบันทึกลงชีตได้'); await syncPendingPins(true); renderMenu(); if (!cfg.pendingPin[me]) toast('บันทึก PIN ลงชีตแล้ว — ใช้ได้ทุกเครื่อง', 3500); };
   const bk = $('#bChk'); if (bk) bk.onclick = async () => { try { const n = (await shApi.meta()).length; toast(`เชื่อมต่อ Google Sheets ได้ — พบ ${n} แท็บ`, 3500); } catch (e) { toast(e.message, 9000); } };
   const bs = $('#bSaveCid'); if (bs) bs.onclick = async () => { if (await saveClientIdToSheet()) load(); }; const bi = $('#bCid'); if (bi) bi.onclick = () => googleDialog();
   bindNotif(el);
