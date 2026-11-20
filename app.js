@@ -32,7 +32,7 @@ function applyTheme() { const d = cfg.theme === 'dark'; document.documentElement
 applyTheme();
 const trip = () => cfg.trips.find(t => t.id === cfg.active) || cfg.trips[0];
 let me = sess.get('tt.me') || '';
-let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], me: null, meLabel: '' };
+let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: {}, me: null, meLabel: '' };
 const ui = { tab: 'plan', day: null, exFilter: 'all', cur: null, edit: false, dirty: false, saving: false, loaded: false };
 
 /* ---------- CSV / Sheets ---------- */
@@ -61,7 +61,7 @@ const num = s => { const m = String(s ?? '').replace(/,/g, '').match(/-?\d+(\.\d
 
 /* ---------- write-back (Apps Script) ---------- */
 /* ---------- Google sign-in (OAuth) + Sheets API: anyone with edit access to the sheet can edit through the app ---------- */
-const clientId = () => cfg.googleClientId || (window.TT_CONFIG && window.TT_CONFIG.googleClientId) || '';
+const clientId = () => (window.TT_CONFIG && window.TT_CONFIG.googleClientId) || (data.settings && data.settings.googleClientId) || cfg.googleClientId || '';
 const auth = { token: '', exp: 0, email: '', name: '' };
 try { const a = JSON.parse(localStorage.getItem('tt.auth') || 'null'); if (a) Object.assign(auth, a); } catch { }
 auth.valid = () => !!auth.token && Date.now() < auth.exp - 60000;
@@ -70,7 +70,9 @@ const loadGis = () => gisPromise = gisPromise || new Promise((res, rej) => {
   if (window.google && google.accounts && google.accounts.oauth2) return res();
   const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; sc.onload = res; sc.onerror = () => { gisPromise = null; rej(new Error('โหลด Google Sign-in ไม่ได้ — ตรวจอินเทอร์เน็ต')); }; document.head.appendChild(sc);
 });
-async function signIn() {
+let signInP;
+async function signIn() { if (signInP) return signInP; signInP = signInRaw().finally(() => { signInP = null; }); return signInP; }
+async function signInRaw() {
   if (!clientId()) throw new Error('ยังไม่ได้ตั้งค่า Google Client ID');
   await loadGis();
   return new Promise((resolve, reject) => {
@@ -81,7 +83,7 @@ async function signIn() {
         auth.token = resp.access_token; auth.exp = Date.now() + (+resp.expires_in || 3600) * 1000;
         try { const u = await (await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: 'Bearer ' + auth.token } })).json(); auth.email = u.email || ''; auth.name = u.name || ''; } catch { }
         try { localStorage.setItem('tt.auth', JSON.stringify({ token: auth.token, exp: auth.exp, email: auth.email, name: auth.name })); } catch { }
-        renewBlockedUntil = 0; syncPendingPins(false);
+        renewBlockedUntil = 0; cfg.googleDeclined = false; saveCfg(); syncPendingPins(false); saveClientIdToSheet();
         try { renderMenu(); renderMapStatus(); } catch { }
         resolve(auth.token);
       },
@@ -94,6 +96,10 @@ async function signOut() {
   try { if (auth.token && window.google && google.accounts) google.accounts.oauth2.revoke(auth.token, () => { }); } catch { }
   auth.token = ''; auth.exp = 0; auth.email = ''; auth.name = ''; try { localStorage.removeItem('tt.auth'); } catch { }
   ui.edit = false; renderAll();
+}
+async function saveClientIdToSheet() {
+  const id = clientId(); if (!id || (data.settings && data.settings.googleClientId === id)) return;
+  try { await sheetApi.call('upsert', { tab: 'Settings', header: ['Key', 'Value'], key: 'GoogleClientId', keyCol: 0, values: ['GoogleClientId', id] }); data.settings = { ...(data.settings || {}), googleClientId: id }; toast('บันทึก Client ID ลงชีตแล้ว — คนอื่นกดเข้าสู่ระบบได้เลย', 4000); } catch { }
 }
 const getToken = async () => auth.valid() ? auth.token : signIn();
 /* Google only hands out 1-hour tokens to browsers, so renew quietly in the background while the app is open */
@@ -216,6 +222,11 @@ function parseTable(rows) {
 }
 
 /* ---------- users, expenses, locations, places ---------- */
+function parseSettings(rows) {
+  const h = rows[0] || [], ki = colIndex(h, ['key', 'คีย์']), vi = colIndex(h, ['value', 'ค่า']); if (ki < 0 || vi < 0) return {};
+  const o = {}; rows.slice(1).forEach(r => { if (r[ki]) o[norm(r[ki])] = String(r[vi] || '').trim(); });
+  return { googleClientId: o.googleclientid || '' };
+}
 function parseUsers(rows) {
   const h = rows[0] || []; const ni = colIndex(h, ['name', 'ชื่อ', 'user']);
   if (ni < 0) return null;
@@ -307,10 +318,11 @@ const sameAsPlan = r => rawPlanHead && (r[0] || []).join('|') === rawPlanHead;
 async function load() {
   const t = trip(); $('#tripTitle').textContent = t.name;
   const keep = { me: data.me, meLabel: data.meLabel };
-  const next = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], ...keep };
+  const next = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: data.settings || {}, ...keep };
   const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r); });
   await Promise.allSettled([planP]);
   const rest = [
+    async () => { try { next.settings = parseSettings(await fetchTab(t, { name: 'Settings' })); } catch { } },
     async () => { next.users = parseUsers(await fetchTab(t, { name: t.usersTab })) || []; },
     async () => { next.expenses = parseExpenses(await fetchTab(t, { name: t.expensesTab })) || []; },
     async () => { next.locs = parseLocations(await fetchTab(t, { name: t.locationsTab || 'Locations' })) || {}; },
@@ -341,6 +353,8 @@ function enter(name) {
   me = name; sess.set('tt.me', name); if (name) { cfg.lastMe = name; saveCfg(); }
   $('#login').hidden = true; $('#app').hidden = false; renderAll();
   if (name) startLocation();
+  if (name && sheetApi.on() && !auth.email && !cfg.googleDeclined && !Object.keys(cfg.pendingPin || {}).length)
+    signIn().catch(() => { cfg.googleDeclined = true; saveCfg(); });          // one tap on the name -> Google account chooser -> Allow
 }
 /* PIN: stored as a salted SHA-256 hash in the sheet's Users tab (column "PIN") so it works on every device; remembered per device after the first success.
    A 4-digit PIN only keeps friends from picking each other's name — anyone who can read the sheet could brute-force it. */
@@ -1146,7 +1160,7 @@ function renderMenu() {
   const el = $('#tab-menu'), on = sheetApi.on();
   let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
   const signed = !!auth.email && !!clientId(), cid = clientId();
-  h += `<div class="card"><div class="row2"><h2>บัญชี Google</h2><span class="chip ${signed ? 'ok' : 'bad'}">${signed ? 'เข้าสู่ระบบแล้ว' : cid ? 'ยังไม่ได้เข้าสู่ระบบ' : 'ยังไม่ตั้งค่า'}</span></div><div class="mut">${signed ? `${esc(auth.email)} — จำการเข้าสู่ระบบไว้แล้ว แอปต่ออายุให้เองเบื้องหลัง (ถ้าบัญชีนี้มีสิทธิ์แก้ไขชีต แก้ได้เลย)` : 'เข้าสู่ระบบด้วยบัญชี Google ที่มีสิทธิ์แก้ไขชีต แล้วแก้ได้ทันที ไม่ต้องตั้งค่าอะไรเพิ่ม'}</div><div class="btns">${signed ? '<button class="btn" id="bOut">ออกจากระบบ</button>' : `<button class="btn pri" id="bConn">${cid ? 'เข้าสู่ระบบด้วย Google' : 'ตั้งค่า Google'}</button>`}${window.TT_CONFIG && window.TT_CONFIG.googleClientId ? '' : '<button class="btn" id="bCid">ตั้งค่า Client ID</button>'}</div></div>`;
+  h += `<div class="card"><div class="row2"><h2>บัญชี Google</h2><span class="chip ${signed ? 'ok' : 'bad'}">${signed ? 'เข้าสู่ระบบแล้ว' : cid ? 'ยังไม่ได้เข้าสู่ระบบ' : 'ยังไม่ตั้งค่า'}</span></div><div class="mut">${signed ? `${esc(auth.email)} — จำการเข้าสู่ระบบไว้แล้ว แอปต่ออายุให้เองเบื้องหลัง (ถ้าบัญชีนี้มีสิทธิ์แก้ไขชีต แก้ได้เลย)` : 'เข้าสู่ระบบด้วยบัญชี Google ที่มีสิทธิ์แก้ไขชีต แล้วแก้ได้ทันที ไม่ต้องตั้งค่าอะไรเพิ่ม'}</div><div class="btns">${signed ? '<button class="btn" id="bOut">ออกจากระบบ</button>' : `<button class="btn pri" id="bConn">${cid ? 'เข้าสู่ระบบด้วย Google' : 'ตั้งค่า Google'}</button>`}${cid ? '' : '<button class="btn" id="bCid">ตั้งค่า Client ID</button>'}</div></div>`;
   h += notifCard();
   h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
   h += `<div class="card"><h2 style="margin-bottom:4px">ทริป</h2>${cfg.trips.map(t => `<button class="li ${t.id === cfg.active ? 'on' : ''}" data-trip="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b></div></button>`).join('')}<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div></div>`;
@@ -1154,7 +1168,7 @@ function renderMenu() {
   h += data.extra.map(x => tableCard(x.name, x.rows)).join('');
   h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด ${ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '—'} · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
   el.innerHTML = h;
-  $('#bSwitch').onclick = () => $('#btnMe').click(); const bc = $('#bConn'); if (bc) bc.onclick = async () => { if (!clientId()) return googleDialog(); try { await signIn(); toast('เข้าสู่ระบบแล้ว: ' + auth.email); renderAll(); } catch (e) { toast(e.message, 4500); } };
+  $('#bSwitch').onclick = () => $('#btnMe').click(); const bc = $('#bConn'); if (bc) bc.onclick = async () => { if (!clientId()) return googleDialog(); try { cfg.googleDeclined = false; await signIn(); toast('เข้าสู่ระบบแล้ว: ' + auth.email); renderAll(); } catch (e) { toast(e.message, 4500); } };
   const bo = $('#bOut'); if (bo) bo.onclick = signOut; const bi = $('#bCid'); if (bi) bi.onclick = () => googleDialog();
   bindNotif(el);
   $('#bTheme').onclick = () => { cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark'; saveCfg(); applyTheme(); renderMenu(); }; $('#bNew').onclick = newTripDialog; $('#bSet').onclick = settingsDialog;
@@ -1165,21 +1179,22 @@ const dlg = $('#dlg');
 function openDlg(html) { dlg.innerHTML = html; dlg.showModal(); return dlg; }
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 function googleDialog(reason) {
-  const cid = clientId(), signed = !!auth.email;
+  const cid = clientId();
   const d = openDlg(`<form method="dialog"><h3>เข้าสู่ระบบด้วย Google</h3>${reason ? `<div class="mut">${esc(reason)}</div>` : ''}
-  <div class="mut" style="margin-top:6px">ใครมีสิทธิ์ “ผู้แก้ไข” ในชีตนี้อยู่แล้ว เข้าสู่ระบบแล้วแก้ผ่านแอปได้เลย ใครไม่มีสิทธิ์ Google จะไม่อนุญาตเอง</div>
-  ${cid ? `<div class="btns"><button type="button" class="btn pri" id="gIn">${signed ? 'เข้าสู่ระบบแล้ว — ' + esc(auth.email) : 'เข้าสู่ระบบด้วย Google'}</button></div>` : '<div class="chip bad" style="margin-top:10px">ยังไม่ได้ตั้งค่า Google Client ID</div>'}
-  <details ${cid ? '' : 'open'}><summary>สำหรับเจ้าของแอป: ตั้งค่า Client ID (ทำครั้งเดียว)</summary>
-  <ol class="steps"><li>เปิด <b>console.cloud.google.com</b> → สร้างโปรเจกต์</li><li><b>APIs &amp; Services → Library</b> → เปิดใช้ <b>Google Sheets API</b></li><li><b>OAuth consent screen</b> → External → ใส่ชื่อแอปและอีเมล → เพิ่มอีเมลเพื่อนๆ ที่จะใช้ใน <b>Test users</b></li><li><b>Credentials → Create credentials → OAuth client ID</b> → ชนิด <b>Web application</b> → ที่ <i>Authorized JavaScript origins</i> ใส่ <code>https://ninenpn.github.io</code> → Create</li><li>คัดลอก <b>Client ID</b> (ลงท้าย .apps.googleusercontent.com) มาวางด้านล่าง</li></ol>
-  <label>Google Client ID</label><input name="cid" value="${esc(cfg.googleClientId || '')}" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" autocapitalize="off">
-  <small style="display:block;margin-top:6px">บันทึกในเครื่องนี้ก่อนเพื่อทดสอบ — ถ้าอยากให้ทุกคนใช้ได้โดยไม่ต้องใส่ ให้ส่ง Client ID ให้ผู้ดูแลฝังไว้ในโค้ด</small></details>
-  <div class="btns"><button value="ok" class="btn">บันทึก Client ID</button><button value="x" class="btn" formnovalidate>ปิด</button></div></form>`);
-  const gi = $('#gIn'); if (gi) gi.onclick = async () => { try { await signIn(); toast('เข้าสู่ระบบแล้ว: ' + auth.email); dlg.close(); renderAll(); } catch (e) { toast(e.message, 4500); } };
-  $('form', d).onsubmit = ev => {
-    if (ev.submitter && ev.submitter.value !== 'ok') return;
-    const v = String(new FormData(ev.target).get('cid') || '').trim();
-    if (v && !/\.apps\.googleusercontent\.com$/.test(v)) { ev.preventDefault(); toast('Client ID ต้องลงท้าย .apps.googleusercontent.com', 4000); return; }
-    cfg.googleClientId = v; saveCfg(); renderAll(); toast(v ? 'บันทึก Client ID แล้ว' : 'ล้าง Client ID แล้ว');
+  ${cid ? '<div class="mut" style="margin:6px 0 4px">กดปุ่มเดียว เลือกบัญชี แล้วกดอนุญาต — ใครมีสิทธิ์แก้ไขชีตอยู่แล้วก็แก้ได้เลย</div>'
+        : `<div class="mut" style="margin:6px 0 4px">ยังไม่ได้ตั้งค่า (ผู้ดูแลทำครั้งเดียว) — วาง Client ID แล้วกดปุ่ม แอปจะบันทึกลงชีตให้ทุกคนใช้ได้เลย</div>
+           <input name="cid" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" autocapitalize="off" value="${esc(cfg.googleClientId || '')}">`}
+  <div class="btns"><button type="button" class="btn pri block" id="gIn">${cid ? 'เข้าสู่ระบบด้วย Google' : 'บันทึกและเข้าสู่ระบบ'}</button></div>
+  <details><summary>ยังไม่มี Client ID? วิธีสร้าง (ทำครั้งเดียว)</summary>
+  <ol class="steps"><li>เปิด <b>console.cloud.google.com</b> → สร้างโปรเจกต์</li><li><b>APIs &amp; Services → Library</b> → เปิดใช้ <b>Google Sheets API</b></li><li><b>OAuth consent screen</b> → External → ใส่ชื่อแอปและอีเมล → เพิ่มอีเมลเพื่อนๆ ใน <b>Test users</b></li><li><b>Credentials → Create credentials → OAuth client ID</b> → <b>Web application</b> → Authorized JavaScript origins: <code>https://ninenpn.github.io</code></li><li>คัดลอก <b>Client ID</b> มาวางด้านบน</li></ol></details>
+  <div class="btns"><button value="x" class="btn" formnovalidate>ปิด</button></div></form>`);
+  $('#gIn').onclick = async () => {
+    if (!cid) {
+      const v = String(($('[name=cid]', d) || {}).value || '').trim();
+      if (!/\.apps\.googleusercontent\.com$/.test(v)) return toast('Client ID ต้องลงท้าย .apps.googleusercontent.com', 4000);
+      cfg.googleClientId = v; saveCfg();
+    }
+    try { cfg.googleDeclined = false; await signIn(); toast('เข้าสู่ระบบแล้ว: ' + auth.email); dlg.close(); renderAll(); } catch (e) { toast(e.message, 4500); }
   };
 }
 function tripFields(t) {

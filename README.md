@@ -18,11 +18,7 @@ https://ninenpn.github.io/TravelTracker/
 ใครมีสิทธิ์ “ผู้แก้ไข” ในชีตอยู่แล้วก็แก้ผ่านแอปได้ ใครไม่มีสิทธิ์ Google จะไม่อนุญาต
 ทำได้: แก้/ลากวางแผน, เพิ่มค่าใช้จ่าย, บันทึกสถานที่/พิกัดจากลิงก์ Google Maps, แชร์ตำแหน่ง (ก่อนเขียนทับแผนจะสำรองไว้ที่แท็บซ่อน `_plan_backup`)
 
-**ตั้งค่าครั้งเดียวโดยเจ้าของแอป** — สร้าง OAuth Client ID แล้วใส่ใน `config.js` (`googleClientId`):
-1. console.cloud.google.com → สร้างโปรเจกต์ → เปิดใช้ **Google Sheets API**
-2. OAuth consent screen → External → เพิ่มอีเมลเพื่อนๆ ใน **Test users** (สถานะ Testing)
-3. Credentials → OAuth client ID → **Web application** → Authorized JavaScript origins: `https://ninenpn.github.io`
-4. คัดลอก Client ID (ลงท้าย `.apps.googleusercontent.com`) ไปใส่ `config.js` — ไม่ใช่ความลับ ใส่ใน repo ได้
+**ตั้งค่าครั้งเดียวโดยเจ้าของแอป** — สร้าง OAuth Client ID ใน Google Cloud (Sheets API + OAuth consent + Web client, origin `https://ninenpn.github.io`) แล้ววางในแอป (เมนู → บัญชี Google) กดเข้าสู่ระบบ — แอปบันทึก Client ID ลงแท็บ `Settings` ของชีต (`GoogleClientId`) ให้อัตโนมัติ คนอื่นแค่เลือกชื่อ Google ก็เด้งให้เลือกบัญชีและกดอนุญาต (Client ID ไม่ใช่ความลับ)
 
 ## ตำแหน่ง
 ขอสิทธิ์ตำแหน่งเฉพาะช่วงตั้งแต่เที่ยวบินแรกลงจอดจนถึงเที่ยวบินสุดท้ายออก (คำนวณจากแผนในชีต)
