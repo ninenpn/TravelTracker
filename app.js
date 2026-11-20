@@ -65,6 +65,7 @@ const sheetApi = {
     let r; try { r = await fetch(t.scriptUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ token: t.scriptToken, action, ...payload }) }); }
     catch { throw new Error('เรียกสคริปต์ไม่ได้ — ตรวจว่า Deploy เป็น Web app, “Who has access” = Anyone และใช้ URL ที่ลงท้าย /exec'); }
     const j = await r.json().catch(() => null);
+    if (j && !j.ok && /รหัสลับ/.test(j.error || '')) throw new Error('รหัสลับไม่ตรงกับในสคริปต์ — ใส่ค่า TOKEN ในสคริปต์ลงช่อง “รหัสลับ” หรือคัดลอกโค้ดใหม่จากหน้านี้ไปวางแล้ว Deploy เวอร์ชันใหม่');
     if (!j || !j.ok) throw new Error((j && j.error) || 'สคริปต์ตอบกลับไม่ถูกต้อง — ตรวจว่าวางโค้ดล่าสุดแล้ว Deploy เวอร์ชันใหม่');
     return j;
   }
@@ -991,7 +992,9 @@ const dlg = $('#dlg');
 function openDlg(html) { dlg.innerHTML = html; dlg.showModal(); return dlg; }
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 async function setupDialog(reason) {
-  const t = trip(), token = t.scriptToken || Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, '0')).join('');
+  const t = trip();
+  if (!t.scriptToken && !t.scriptDraft) { t.scriptDraft = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, '0')).join(''); saveCfg(); }
+  const token = t.scriptToken || t.scriptDraft;
   let code = '';
   try { code = (await (await fetch('apps-script/Code.gs')).text()).replace('__TOKEN__', token); } catch { code = '// โหลดโค้ดไม่ได้ — เปิดไฟล์ apps-script/Code.gs ใน repo'; }
   const d = openDlg(`<form method="dialog"><h3>เชื่อมต่อ Google Sheet</h3>${reason ? `<div class="mut">${esc(reason)}</div>` : ''}
@@ -999,7 +1002,7 @@ async function setupDialog(reason) {
   <textarea class="code" readonly id="codeBox">${esc(code)}</textarea>
   <div class="btns" style="margin-top:6px"><button type="button" class="btn" id="bCopy">คัดลอกโค้ด</button></div>
   <label>Web app URL (ต้องลงท้ายด้วย /exec — ไม่ใช่ /dev)</label><input name="url" value="${esc(t.scriptUrl || '')}" placeholder="https://script.google.com/macros/s/…/exec" inputmode="url">
-  <input type="hidden" name="token" value="${esc(token)}">
+  <label>รหัสลับ (ต้องตรงกับค่า TOKEN ในสคริปต์ — โค้ดด้านบนใส่ให้แล้ว ถ้าคุณมีสคริปต์อยู่แล้ว ให้คัดลอกค่า TOKEN จากสคริปต์มาใส่ที่นี่)</label><input name="token" value="${esc(token)}" autocomplete="off" autocapitalize="off">
   <div class="btns"><button value="ok" class="btn pri">ทดสอบและบันทึก</button>${t.scriptUrl ? '<button value="off" class="btn danger" formnovalidate>ยกเลิกการเชื่อมต่อ</button>' : ''}<button value="x" class="btn" formnovalidate>ปิด</button></div></form>`);
   $('#bCopy').onclick = () => copyText(code, 'คัดลอกโค้ดแล้ว');
   $('form', d).onsubmit = async ev => {
@@ -1009,8 +1012,8 @@ async function setupDialog(reason) {
     if (!/^https:\/\/script\.google\.com\//.test(url)) { ev.preventDefault(); toast('URL ไม่ถูกต้อง — ต้องขึ้นต้น https://script.google.com/'); return; }
     if (/\/dev\/?(\?.*)?$/.test(url)) { ev.preventDefault(); toast('นี่คือ URL แบบทดสอบ (/dev) — ต้องใช้ URL ที่ลงท้าย /exec จาก Deploy → New deployment → Web app', 6000); return; }
     if (!/\/exec\/?(\?.*)?$/.test(url)) { ev.preventDefault(); toast('URL ต้องลงท้ายด้วย /exec', 4000); return; }
-    const prev = { u: t.scriptUrl, k: t.scriptToken }; t.scriptUrl = url; t.scriptToken = f.get('token');
-    try { const r = await sheetApi.call('ping', {}); saveCfg(); toast(`เชื่อมต่อสำเร็จ (${r.sheets.length} แท็บ)`); renderAll(); }
+    const prev = { u: t.scriptUrl, k: t.scriptToken }; t.scriptUrl = url; t.scriptToken = f.get('token').trim();
+    try { const r = await sheetApi.call('ping', {}); delete t.scriptDraft; saveCfg(); toast(`เชื่อมต่อสำเร็จ (${r.sheets.length} แท็บ)`); renderAll(); }
     catch (e) { t.scriptUrl = prev.u; t.scriptToken = prev.k; toast('เชื่อมต่อไม่สำเร็จ: ' + e.message); }
   };
 }
