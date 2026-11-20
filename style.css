@@ -230,3 +230,7 @@ html[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) bri
 .pin-links{display:flex;gap:18px;margin-top:10px}.pin-links .link{margin-top:0}
 
 .pinwarn{max-width:300px;margin-top:4px;background:#ffffff28;border:1px solid #ffffff44;border-radius:12px;padding:8px 12px;font-size:.78rem;line-height:1.35;text-align:center}
+
+.seglbl.warn{border-color:#ff5a5f;color:#e5484d}
+.trvsum{font-size:.88rem;font-weight:600;color:var(--ink);background:var(--soft);border-radius:12px;padding:8px 12px;margin:2px 0 6px}
+.pl small.leg{color:var(--pri);font-weight:500}

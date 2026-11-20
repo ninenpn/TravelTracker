@@ -763,7 +763,12 @@ function drawMap(fit) {
     L.marker([p.lat, p.lng], { icon: pinIcon(n, n === me), zIndexOffset: 1000 }).addTo(layer).bindPopup(`<b>${esc(n)}</b><br>${esc(p.label || '')}`);
   }
   const route = drawPlaces(), spots = drawSpots();
-  const focus = route.length ? [...pts.slice(0, 1), ...route] : [...pts, ...spots];
+  let focus = route.length ? [...pts.slice(0, 1), ...route] : [...pts, ...spots];
+  if (route.length > 2) {
+    const R = 150e3, near = (a, b) => distM({ lat: a[0], lng: a[1] }, { lat: b[0], lng: b[1] }) < R;
+    let best = -1, bi = 0; route.forEach((a, i) => { const n = route.filter(b => near(a, b)).length; if (n >= best) { best = n; bi = i; } });
+    if (best < route.length) focus = [...pts.slice(0, 1).filter(q => near(q, route[bi])), ...route.filter(b => near(route[bi], b))];
+  }
   setTimeout(() => { map.invalidateSize(); if (fit && focus.length) focus.length === 1 ? map.setView(focus[0], 16) : map.fitBounds(focus, { maxZoom: 16, padding: [40, 40] }); }, 60);
 }
 const GEO_MSG = {
@@ -837,13 +842,13 @@ const coordOf = q => ovr(q) || gc.cache[gKey(q)];
 const knownQ = q => !!ovr(q) || (gKey(q) in gc.cache);
 function dayWaypoints(di) {
   const p = data.plan, d = p && p.days[di]; if (!d) return [];
-  const out = [], add = (n, t, how) => {
+  const out = [], add = (n, t, how, ts, te) => {
     if (!n) return; const q = qName(n); if (!q) return;
     if (GENERIC.test(n.trim()) && !ovr(q)) return;
     if (out.length && out[out.length - 1].q === q) { if (how && !out[out.length - 1].how) out[out.length - 1].how = how; return; }
-    out.push({ name: n.trim(), q, time: t || '', di, day: dayTitle(d, di), how: how || '' });
+    out.push({ name: n.trim(), q, time: t || '', di, day: dayTitle(d, di), how: how || '', ts: ts || '', te: te || '' });
   };
-  d.steps.forEach((st, k) => { if (k === 0) add(st.from, st.time, ''); add(st.to, st.toTime || st.time, st.how); });
+  d.steps.forEach((st, k) => { if (k === 0) add(st.from, st.time, ''); add(st.to, st.toTime || st.time, st.how, st.time, st.toTime); });
   return out;
 }
 function scopeDays() {
@@ -882,8 +887,58 @@ async function runGeocode() {
     }
   } catch { } finally { gc.running = false; const rf = ui.refit; ui.refit = false; drawMap(rf); renderPlaces(); }
 }
+/* ---------- travel time between stops: OSM routing (foot/car); transit & taxi are estimates; flights use the plan's own times ---------- */
+const trv = { cache: store.get('tt.trv', {}), memo: {}, pending: {}, q: Promise.resolve(), t: 0 };
+const legMode = (how, d) => {
+  const s = String(how || '').toLowerCase();
+  if (howIcon(how, false) === '✈️') return 'air';
+  if (/walk|เดิน/.test(s)) return 'foot';
+  if (/bullet|train|rail|metro|bts|mrt|subway|รถไฟ|bus|tour|รถบัส/.test(s)) return 'transit';
+  if (/taxi|yandex|didi|grab|uber|แท็กซี่|car|รถ/.test(s)) return 'car';
+  return d < 1500 ? 'foot' : 'car';
+};
+const MODE_ICON = { foot: '🚶', car: '🚗', transit: '🚆', air: '✈️' };
+const fmtDur = m => { m = Math.max(1, Math.round(m)); return m < 60 ? `${m} นาที` : `${Math.floor(m / 60)} ชม.${m % 60 ? ' ' + (m % 60) + ' น.' : ''}`; };
+const fmtKm = m => m < 1000 ? `${Math.max(10, Math.round(m / 10) * 10)} ม.` : `${(m / 1000).toLocaleString('th-TH', { maximumFractionDigits: 1 })} กม.`;
+const planMin = w => { const a = tm(w.ts), b = tm(w.te); if (!a || !b) return null; let m = b[0] * 60 + b[1] - (a[0] * 60 + a[1]); if (m <= 0) m += 1440; return m; };
+const legKey = (a, b, mode) => { const f = x => x.toFixed(4); return `${f(a.lat)},${f(a.lng)}|${f(b.lat)},${f(b.lng)}|${mode}`; };
+function legsChanged() { clearTimeout(trv.t); trv.t = setTimeout(() => { if (ui.tab === 'map') { drawMap(false); renderPlaces(); } }, 150); }
+function legInfo(a, b, how) {
+  const d = distM(a, b), mode = legMode(how, d);
+  if (mode === 'air') return { mode, air: true, m: d };
+  if (d < 80) return { mode, skip: true, min: 0, m: d };
+  const key = legKey(a, b, mode), hit = trv.cache[key] || trv.memo[key];
+  if (hit) return { mode, ...hit };
+  ensureLeg(key, a, b, mode, d); return { mode, loading: true, m: d };
+}
+function ensureLeg(key, a, b, mode, d) {
+  if (trv.pending[key]) return; trv.pending[key] = 1;
+  trv.q = trv.q.then(async () => {
+    let r = null;
+    try {
+      const res = await fetch(`https://routing.openstreetmap.de/${mode === 'foot' ? 'routed-foot' : 'routed-car'}/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}?overview=false`);
+      if (res.ok) { const j = await res.json(), rt = j.routes && j.routes[0]; if (j.code === 'Ok' && rt) r = mode === 'foot' ? { min: rt.duration / 60, m: rt.distance, est: false } : mode === 'car' ? { min: rt.duration / 60 * 1.15, m: rt.distance, est: true } : { min: rt.duration / 60 * 1.5 + 5, m: rt.distance, est: true }; }
+    } catch { }
+    if (r) { trv.cache[key] = r; store.set('tt.trv', trv.cache); }
+    else { const km = d * 1.3 / 1000; trv.memo[key] = { min: km / ({ foot: 4.8, car: 28, transit: 20 }[mode]) * 60, m: d * 1.3, est: true, approx: true }; }
+    delete trv.pending[key]; legsChanged(); await sleep(350);
+  });
+}
+const legText = (info, w) => {
+  if (info.air) return `ระยะบิน ~${fmtKm(info.m)}`;
+  if (info.skip) return '';
+  if (info.loading) return '⏳ คำนวณเวลา…';
+  return `${info.est ? '~' : ''}${fmtDur(info.min)} · ${fmtKm(info.m)}`;
+};
+const tight = (info, w) => { if (info.air || info.skip || info.loading) return null; const pm = planMin(w); return pm != null && info.min > pm * 1.15 + 5 ? pm : null; };
+function dayTravel(di) {
+  const seq = dayWaypoints(di).map(w => ({ ...w, c: coordOf(w.q) })).filter(w => w.c); let min = 0, m = 0, loading = false, warn = 0;
+  for (let i = 1; i < seq.length; i++) { const info = legInfo(seq[i - 1].c, seq[i].c, seq[i].how); if (info.air || info.skip) continue; if (info.loading) { loading = true; continue; } min += info.min; m += info.m; if (tight(info, seq[i]) != null) warn++; }
+  return { min, m, loading, warn, legs: Math.max(0, seq.length - 1) };
+}
+const travelSum = t => t.legs ? (t.loading ? '⏳ กำลังคำนวณเวลาเดินทาง…' : `🧭 รวมเดินทาง ~${fmtDur(t.min)} · ${fmtKm(t.m)}${t.warn ? ` · ⚠ ${t.warn} ช่วงเวลาตามแผนอาจไม่พอ` : ''}`) : '';
 const bearing = (a, b) => Math.atan2(-(b.lat - a.lat), (b.lng - a.lng) * Math.cos(a.lat * Math.PI / 180)) * 180 / Math.PI;
-const legIcon = (how, color) => L.divIcon({ className: '', iconSize: [0, 0], iconAnchor: [0, 0], html: `<div class="seglbl" style="--c:${color}">${howIcon(how, false)} ${esc(String(how).length > 20 ? String(how).slice(0, 20) + '…' : how)}</div>` });
+const legIcon = (how, color, timeTxt, warn, mode) => L.divIcon({ className: '', iconSize: [0, 0], iconAnchor: [0, 0], html: `<div class="seglbl ${warn ? 'warn' : ''}" style="--c:${color}">${how ? howIcon(how, false) + ' ' + esc(String(how).length > 14 ? String(how).slice(0, 14) + '…' : how) : (MODE_ICON[mode] || '')}${timeTxt ? ` · ${esc(timeTxt)}` : ''}${warn ? ' ⚠' : ''}</div>` });
 const arrowIcon = (deg, color) => L.divIcon({ className: '', iconSize: [20, 20], iconAnchor: [10, 10], html: `<svg viewBox="0 0 24 24" width="20" height="20" style="transform:rotate(${deg}deg);display:block"><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>` });
 function drawPlaces() {
   if (!map || !plLayer) return []; plLayer.clearLayers();
@@ -898,11 +953,13 @@ function drawPlaces() {
       for (let i = 0; i < seq.length - 1; i++) {
         const a = seq[i].c, b = seq[i + 1].c, d = distM(a, b), how = seq[i + 1].how; if (d < 80) continue;
         const at = f => [a.lat + (b.lat - a.lat) * f, a.lng + (b.lng - a.lng) * f];
-        L.marker(at(how && d >= 150 ? .66 : .5), { icon: arrowIcon(bearing(a, b), color), interactive: false }).addTo(plLayer);
-        if (how && d >= 150) L.marker(at(.36), { icon: legIcon(how, color), interactive: false, zIndexOffset: 300 }).addTo(plLayer);
+        const info = legInfo(a, b, how), tt = info.air ? fmtKm(info.m) : (info.loading || info.skip ? '' : `${info.est ? '~' : ''}${fmtDur(info.min)}`), wn = tight(info, seq[i + 1]) != null;
+        const showLbl = d >= 150 && (how || tt);
+        L.marker(at(showLbl ? .66 : .5), { icon: arrowIcon(bearing(a, b), color), interactive: false }).addTo(plLayer);
+        if (showLbl) L.marker(at(.36), { icon: legIcon(how, color, tt, wn, info.mode), interactive: false, zIndexOffset: 300 }).addTo(plLayer);
       }
     }
-    seq.forEach((w, k) => { const num = continuous ? ++counter : k + 1; L.marker([w.c.lat, w.c.lng], { icon: placeIcon(num, di), zIndexOffset: 500 }).addTo(plLayer).bindPopup(`<b>${num}. ${esc(w.name)}</b><br>${esc(w.day)} ${esc(w.time)}${w.how ? `<br>มาโดย ${howIcon(w.how, false)} ${esc(w.how)}` : ''}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${w.c.lat},${w.c.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`); });
+    seq.forEach((w, k) => { const num = continuous ? ++counter : k + 1, lt = k ? legText(legInfo(seq[k - 1].c, w.c, w.how), w) : ''; L.marker([w.c.lat, w.c.lng], { icon: placeIcon(num, di), zIndexOffset: 500 }).addTo(plLayer).bindPopup(`<b>${num}. ${esc(w.name)}</b><br>${esc(w.day)} ${esc(w.time)}${w.how ? `<br>มาโดย ${howIcon(w.how, false)} ${esc(w.how)}` : ''}${lt ? `<br>เดินทางจากจุดก่อนหน้า: ${esc(lt)}` : ''}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${w.c.lat},${w.c.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`); });
   }
   return all;
 }
@@ -923,14 +980,18 @@ function renderPlaces() {
   const needHotel = !ovr('ที่พัก') && p.days.some(d => d.steps.some(s => /^ที่พัก$/.test((s.from || '').trim()) || /^ที่พัก$/.test((s.to || '').trim())));
   let h = `<div class="card"><div class="row2"><h3>เส้นทางตามแผน</h3><select class="dropdown" id="placeSel"><option value="none" ${cur === 'none' ? 'selected' : ''}>ซ่อน</option><option value="all" ${cur === 'all' ? 'selected' : ''}>ทั้งทริป</option>${p.days.map((d, i) => `<option value="${i}" ${cur === i ? 'selected' : ''}>${esc(dayTitle(d, i))}</option>`).join('')}</select></div>`;
   let n = 0, counter = 0; const continuous = ui.placeDay === 'all';
+  if (ui.f.route && days.length) { const tot = days.map(dayTravel).reduce((a, t) => ({ min: a.min + t.min, m: a.m + t.m, loading: a.loading || t.loading, warn: a.warn + t.warn, legs: a.legs + t.legs }), { min: 0, m: 0, loading: false, warn: 0, legs: 0 }); h += `<div class="trvsum">${esc(travelSum(tot))}</div>`; }
   for (const di of days) {
-    const wps = dayWaypoints(di); if (days.length > 1 && wps.length) h += `<div class="dgroup" style="margin:10px 0 2px!important">${esc(dayTitle(p.days[di], di))}</div>`;
-    let seq = 0;
+    const wps = dayWaypoints(di), dt = ui.f.route ? dayTravel(di) : null;
+    if (days.length > 1 && wps.length) h += `<div class="dgroup" style="margin:10px 0 2px!important">${esc(dayTitle(p.days[di], di))}${dt && dt.legs && !dt.loading ? ` <small style="text-transform:none;letter-spacing:0">~${esc(fmtDur(dt.min))} · ${esc(fmtKm(dt.m))}</small>` : ''}</div>`;
+    let seq = 0, prev = null;
     wps.forEach((x, k) => {
       const c = coordOf(x.q), st = !knownQ(x.q) ? '⏳' : c ? '' : 'ตั้งพิกัด'; if (!knownQ(x.q)) n++;
       if (c) { seq++; counter++; }
       const num = continuous ? counter : seq;
-      h += `<button class="pl" data-d="${di}" data-k="${k}"><span class="plc sm" style="--c:${c ? COLORS[di % 8] : '#94a3b8'}">${c ? num : '–'}</span><div><b>${esc(x.name)}</b><small>${[x.time, x.how ? howIcon(x.how, false) + ' ' + x.how : ''].filter(Boolean).map(esc).join(' · ')}</small></div>${st ? `<span class="chip">${st}</span>` : ''}</button>`;
+      let lt = '', wn = null; if (c && prev && ui.f.route) { const info = legInfo(prev, c, x.how); lt = legText(info, x); wn = tight(info, x); }
+      if (c) prev = c;
+      h += `<button class="pl" data-d="${di}" data-k="${k}"><span class="plc sm" style="--c:${c ? COLORS[di % 8] : '#94a3b8'}">${c ? num : '–'}</span><div><b>${esc(x.name)}</b><small>${[x.time, x.how ? howIcon(x.how, false) + ' ' + x.how : ''].filter(Boolean).map(esc).join(' · ')}</small>${lt ? `<small class="leg">↳ ${esc(lt)}${wn != null ? ` <span class="chip bad">⚠ แผนให้ ${fmtDur(wn)}</span>` : ''}</small>` : ''}</div>${st ? `<span class="chip">${st}</span>` : ''}</button>`;
     });
   }
   if (n) h += `<small>กำลังค้นหาพิกัด…</small>`;
