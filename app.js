@@ -312,7 +312,7 @@ function renderPlan() {
   const sel = $('.pill.sel', el); sel && sel.scrollIntoView({ inline: 'center', block: 'nearest' });
   $$('.pill[data-day]', el).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; renderPlan(); });
   $('#editBtn').onclick = toggleEdit;
-  const nd = $('#nudge'); if (nd) nd.onclick = () => { ui.spotView = 'near'; ui.nearKind = null; ui.nearState = null; $('[data-tab=spots]').click(); };
+  const nd = $('#nudge'); if (nd) nd.onclick = () => { ui.spotView = 'near'; ui.sugDay = null; ui.winOpen = null; $('[data-tab=spots]').click(); };
   if (ui.edit) {
     $('#addStep').onclick = () => stepDialog(null);
     const ad = $('#addDay'); if (ad) ad.onclick = addDay;
@@ -817,14 +817,6 @@ function anchorOptions() {
   return o;
 }
 const currentAnchor = () => { const o = anchorOptions(); return o.find(x => x.id === ui.anchor) || o[0] || null; };
-let nearTok = 0;
-async function loadNear() {
-  const a = currentAnchor(); if (!a) { ui.nearState = 'noanchor'; return renderSpots(); }
-  const slot = ui.nearSlot || slotOf(), kind = ui.nearKind || SLOT_KIND[slot], tok = ++nearTok; ui.nearState = 'loading'; renderSpots();
-  try { const r = kind === 'sight' ? 1500 : 900; const items = (await nearby(kind, a.c, r)).filter(i => distM(a.c, i) <= r); if (tok !== nearTok) return; ui.nearItems = items; ui.nearState = 'ok'; }
-  catch (e) { if (tok !== nearTok) return; ui.nearState = 'err'; ui.nearErr = e.message; }
-  renderSpots();
-}
 function focusOnMap(c, pins) { if (pins) { ui.sugPins = pins; } $('[data-tab=map]').click(); setTimeout(() => { if (map) map.setView([c.lat, c.lng], 17); }, 500); }
 function spotCard(s, a) {
   const [ic, col] = SPOT[s.type], d = a && s.c ? distM(a.c, s.c) : null;
@@ -840,45 +832,93 @@ function listHtml() {
   if (a) h += `<div class="mut" style="text-align:center"><small>ระยะทางนับจาก: ${esc(a.label)}</small></div>`;
   return h;
 }
+/* ---- suggestions along the plan: for each meal window of a day, find the stop you are at (by time) and suggest places near it ---- */
+const SLOT_MID = { morning: 510, lunch: 750, afternoon: 930, dinner: 1140 };
+const SLOT_LABEL = { morning: 'มื้อเช้า / คาเฟ่', lunch: 'อาหารกลางวัน', afternoon: 'คาเฟ่ / ของว่างช่วงบ่าย', dinner: 'อาหารเย็น' };
+const SLOT_ICON = { morning: '🌅', lunch: '🍽', afternoon: '☕', dinner: '🌙' };
+const fmtMin = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+const wpMin = t => { const x = tm(t); return x ? x[0] * 60 + x[1] : null; };
+function estimateTimes(wps) {
+  const n = wps.length, known = wps.map((w, i) => w.m != null ? i : -1).filter(i => i >= 0);
+  if (!known.length) { wps.forEach((w, i) => { w.m = n === 1 ? 750 : Math.round(540 + (600 * i) / (n - 1)); w.est = true; }); return wps; }
+  wps.forEach((w, i) => {
+    if (w.m != null) return; w.est = true;
+    const prev = [...known].reverse().find(k => k < i), next = known.find(k => k > i);
+    if (prev != null && next != null) w.m = Math.round(wps[prev].m + (wps[next].m - wps[prev].m) * (i - prev) / (next - prev));
+    else if (prev != null) w.m = Math.min(1380, wps[prev].m + 60 * (i - prev));
+    else w.m = Math.max(360, wps[next].m - 60 * (next - i));
+  });
+  return wps;
+}
+function planWindows(di) {
+  if (!data.plan || !data.plan.days[di]) return [];
+  const all = estimateTimes(dayWaypoints(di).map(w => ({ ...w, m: wpMin(w.time) }))).map(w => ({ ...w, c: coordOf(w.q) })).filter(w => w.c);
+  const out = []; let lastQ = '';
+  for (const slot of ['morning', 'lunch', 'afternoon', 'dinner']) {
+    let best = null; for (const w of all) { const d = Math.abs(w.m - SLOT_MID[slot]); if (d <= 150 && (!best || d < best.d)) best = { w, d }; }
+    if (!best || best.w.q === lastQ) continue; lastQ = best.w.q;
+    out.push({ slot, kind: SLOT_KIND[slot], anchor: best.w, c: best.w.c, key: `${di}|${slot}|${best.w.q}` });
+  }
+  return out;
+}
+const sug = { items: {}, state: {}, chain: Promise.resolve(), err: '' };
+function ensureSug(key, kind, c) {
+  const k = key + '|' + kind; if (sug.state[k]) return k; sug.state[k] = 'loading';
+  sug.chain = sug.chain.then(async () => {
+    try { const r = 900; sug.items[k] = (await nearby(kind, c, r)).filter(i => distM(c, i) <= r); sug.state[k] = 'ok'; }
+    catch (e) { sug.state[k] = 'err'; sug.err = e.message; }
+    if (ui.tab === 'spots' && ui.spotView === 'near') renderSpots();
+    await sleep(1100);
+  });
+  return k;
+}
+function sugDay() { const p = data.plan; if (!p || !p.days.length) return 0; planDates(p); if (ui.sugDay != null && ui.sugDay < p.days.length) return ui.sugDay; const t = p.days.findIndex(isToday); return t >= 0 ? t : (ui.day || 0); }
+function winCard(w, title, sub) {
+  const kind = ui.winKind[w.key] || w.kind, k = ensureSug(w.key, kind, w.c), open = ui.winOpen === w.key, a = { c: w.c }, st = sug.state[k];
+  let body = '';
+  const mine = allSpots().filter(x => x.c && x.src !== 'idea' && x.type === 'food' && distM(w.c, x.c) <= 1500 && (kind === 'cafe' ? /คาเฟ่|ของหวาน|เช้า|cafe|coffee|breakfast/i.test(x.meal + ' ' + x.cuisine) : mealMatches(x.meal, w.slot))).sort((x, y) => distM(w.c, x.c) - distM(w.c, y.c)).slice(0, 3);
+  if (st === 'err') body = `<div class="mut" style="margin:8px 0">${esc(sug.err || 'ค้นหาไม่ได้')}</div><button class="tag" data-retry="${esc(k)}">ลองใหม่</button>`;
+  else if (st !== 'ok') body = '<div class="skeleton" style="height:56px;margin-top:8px"></div>';
+  else {
+    const items = rank(sug.items[k] || [], kind, w.slot, a).filter(it => !mine.some(m => m.name.toLowerCase() === it.name.toLowerCase())).slice(0, open ? 10 : 3);
+    ui._shown[k] = items;
+    if (!items.length && !mine.length) return '';
+    body = mine.map(m => `<div class="sg"><div class="sg-b"><b>⭐ ${esc(m.name)}</b><small>${[nice(m.cuisine), m.meal, dist(distM(w.c, m.c))].filter(Boolean).map(esc).join(' · ')}</small></div><div class="sg-a"><a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${m.c.lat},${m.c.lng}">นำทาง</a></div></div>`).join('')
+      + (items.length ? items.map((it, i) => `<div class="sg"><div class="sg-b"><b>${esc(it.name)}</b><small>${[nice(it.cuisine), dist(it.d), walk(it.d)].filter(Boolean).map(esc).join(' · ')}</small>${it.open === true ? '<span class="chip ok">เปิดอยู่</span>' : it.open === false ? '<span class="chip bad">อาจปิด</span>' : ''}</div><div class="sg-a"><a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${it.lat},${it.lng}">นำทาง</a><button class="tag" data-add="${esc(k)}::${i}">+</button></div></div>`).join('') : (mine.length ? '' : '<div class="mut" style="margin:8px 0">ไม่พบสถานที่ในรัศมีนี้</div>'));
+  }
+  return `<div class="card win"><div class="row2" style="align-items:flex-start"><div><b>${SLOT_ICON[w.slot]} ${esc(title)}</b><small style="display:block">${esc(sub)}</small></div></div>
+  ${open ? `<div class="seg" style="margin:8px 0 4px">${[['food', '🍽 อาหาร'], ['cafe', '☕ คาเฟ่']].map(([kk, l]) => `<button data-wk="${esc(w.key)}::${kk}" class="${kind === kk ? 'on' : ''}">${l}</button>`).join('')}</div>` : ''}
+  ${body}<div class="btns" style="margin-top:8px">${st === 'ok' ? `<button class="tag" data-open="${esc(open ? '' : w.key)}">${open ? 'ย่อ' : 'ดูเพิ่ม'}</button><button class="tag" data-wmap="${esc(k)}">ดูบนแผนที่</button>` : ''}</div></div>`;
+}
 function nearHtml() {
-  const o = anchorOptions(), a = currentAnchor(), slot = ui.nearSlot || slotOf(), kind = ui.nearKind || SLOT_KIND[slot], auto = slotOf();
-  let h = `<div class="card"><div class="row2"><h3>แนะนำใกล้ๆ</h3><select class="dropdown" id="anchorSel">${o.map(x => `<option value="${esc(x.id)}" ${a && x.id === a.id ? 'selected' : ''}>${esc(x.label)}</option>`).join('') || '<option>—</option>'}</select></div>
-  <div class="chips">${SLOTS.map(([k, l]) => `<button class="tag ${slot === k ? 'on' : ''}" data-slot="${k}">${l}${k === auto ? ' •' : ''}</button>`).join('')}</div>
-  <div class="seg" style="margin-top:10px">${[['food', '🍽 อาหาร'], ['cafe', '☕ คาเฟ่'], ['sight', '🏛 ที่เที่ยว']].map(([k, l]) => `<button data-kind="${k}" class="${kind === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-  <small>• = ช่วงเวลาตอนนี้ ข้อมูลจาก OpenStreetMap (เวลาเปิดอาจไม่ครบ ควรเช็กก่อนไป)</small></div>`;
-  if (!a) return h + '<div class="empty">ยังไม่ทราบตำแหน่ง<br><small>เปิดตำแหน่ง หรือตั้งพิกัดสถานที่ในแผนก่อน</small></div>';
-  const mine = allSpots().filter(s => s.c && s.src !== 'idea' && distM(a.c, s.c) <= 2500 && (kind === 'sight' ? s.type === 'sight' : s.type === 'food' && (kind === 'cafe' ? /คาเฟ่|ของหวาน|เช้า|cafe|coffee|breakfast/i.test(s.meal + ' ' + s.cuisine) : mealMatches(s.meal, slot)))).sort((x, y) => distM(a.c, x.c) - distM(a.c, y.c));
-  if (mine.length) h += `<div class="dgroup">⭐ ในลิสของเรา</div>` + mine.map(s => spotCard(s, a)).join('');
-  h += `<div class="dgroup">✨ แนะนำ${a.id === 'me' ? 'ใกล้ฉัน' : ' ' + esc(a.label)}</div>`;
-  if (ui.nearState === 'loading' || !ui.nearState) return h + '<div class="skeleton"></div><div class="skeleton" style="margin-top:8px"></div>';
-  if (ui.nearState === 'err') return h + `<div class="card">${esc(ui.nearErr || 'ค้นหาไม่ได้')}<div class="btns"><button class="btn" id="nearRetry">ลองใหม่</button></div></div>`;
-  const items = rank(ui.nearItems || [], kind, slot, a).filter(it => !mine.some(m => m.name.toLowerCase() === it.name.toLowerCase())).slice(0, 10);
-  if (!items.length) return h + '<div class="empty">ไม่พบสถานที่ในรัศมีนี้</div>';
-  const pins = items.map(it => ({ name: it.name, lat: it.lat, lng: it.lng, kind, sub: [nice(it.cuisine), dist(it.d)].filter(Boolean).join(' · ') }));
-  h += items.map((it, i) => `<div class="spot"><div class="spot-i" style="--c:${kind === 'sight' ? '#0ea5e9' : '#f97316'}">${kind === 'sight' ? '🏛' : kind === 'cafe' ? '☕' : '🍽'}</div><div class="spot-b"><b>${esc(it.name)}</b><small>${[nice(it.cuisine), dist(it.d), walk(it.d)].filter(Boolean).map(esc).join(' · ')}</small>
-    <div>${it.open === true ? '<span class="chip ok">เปิดอยู่</span>' : it.open === false ? '<span class="chip bad">ปิดอยู่</span>' : ''}${it.oh ? `<span class="chip">${esc(it.oh.length > 28 ? it.oh.slice(0, 28) + '…' : it.oh)}</span>` : ''}</div>
-    <div class="spot-a"><a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${it.lat},${it.lng}">นำทาง</a><button class="tag" data-add="${i}">+ บันทึกเข้าลิส</button></div></div></div>`).join('');
-  h += `<div class="btns" style="justify-content:center"><button class="btn" id="showAll">ดูทั้งหมดบนแผนที่</button></div>`;
-  ui._nearShown = { items, pins, kind, slot }; return h;
+  const p = data.plan; if (!p || !p.days.length) return '<div class="empty">ยังไม่มีแผนในชีต</div>';
+  planDates(p); const di = sugDay(); ui._shown = {};
+  let h = `<div class="card"><div class="row2"><h3>แนะนำตามแผน</h3><select class="dropdown" id="sugDay">${p.days.map((d, i) => `<option value="${i}" ${i === di ? 'selected' : ''}>${esc(dayTitle(d, i))}</option>`).join('')}</select></div><small>ร้านใกล้จุดที่คุณจะไปในแต่ละช่วงเวลาตามแผน (ถ้าแผนไม่ระบุเวลา จะประมาณจากลำดับ) · ข้อมูลจาก OpenStreetMap เวลาเปิดอาจไม่ครบ ควรเช็กก่อนไป</small></div>`;
+  if (data.me && geo.state === 'ok' && gate().state === 'active') {
+    const slot = slotOf(); if (slot !== 'late') h += winCard({ slot, kind: SLOT_KIND[slot], c: { lat: data.me.lat, lng: data.me.lng }, key: `me|${slot}|${data.me.lat.toFixed(3)},${data.me.lng.toFixed(3)}` }, `ตอนนี้ — ${SLOT_LABEL[slot]}`, 'ใกล้ตำแหน่งของคุณ');
+  }
+  const wins = planWindows(di);
+  if (!wins.length) return h + '<div class="empty">ยังหาตำแหน่งของจุดในแผนวันนี้ไม่ได้<br><small>เปิดแท็บ “แผนที่” เพื่อให้ระบบค้นพิกัด หรือวางลิงก์ Google Maps ของสถานที่</small></div>';
+  h += wins.map(w => winCard(w, `${SLOT_LABEL[w.slot]} · ~${fmtMin(w.anchor.m)}${w.anchor.est ? ' (ประมาณ)' : ''}`, `ใกล้ ${w.anchor.name}`)).join('');
+  return h;
 }
 function renderSpots() {
   const el = $('#tab-spots'); if (!el) return;
-  const v = ui.spotView || 'list';
-  el.innerHTML = `<div class="seg"><button data-v="list" class="${v === 'list' ? 'on' : ''}">ลิสของเรา</button><button data-v="near" class="${v === 'near' ? 'on' : ''}">แนะนำใกล้ๆ</button></div>` + (v === 'near' ? nearHtml() : listHtml()) + '<button class="fab" id="addSpot" aria-label="เพิ่มสถานที่"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>';
-  $$('[data-v]', el).forEach(b => b.onclick = () => { ui.spotView = b.dataset.v; if (b.dataset.v === 'near' && !ui.nearState) loadNear(); else renderSpots(); });
+  const v = ui.spotView || 'list'; ui.winKind = ui.winKind || {};
+  el.innerHTML = `<div class="seg"><button data-v="list" class="${v === 'list' ? 'on' : ''}">ลิสของเรา</button><button data-v="near" class="${v === 'near' ? 'on' : ''}">แนะนำตามแผน</button></div>` + (v === 'near' ? nearHtml() : listHtml()) + '<button class="fab" id="addSpot" aria-label="เพิ่มสถานที่"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>';
+  $$('[data-v]', el).forEach(b => b.onclick = () => { ui.spotView = b.dataset.v; renderSpots(); });
   $('#addSpot').onclick = () => spotDialog();
   $$('[data-sf]', el).forEach(b => b.onclick = () => { ui.spotFilter = b.dataset.sf; renderSpots(); });
-  $$('[data-focus]', el).forEach(b => b.onclick = () => { const s = allSpots().find(x => x.name === b.dataset.focus); if (s && s.c) focusOnMap(s.c); });
+  $$('[data-focus]', el).forEach(b => b.onclick = () => { const x = allSpots().find(y => y.name === b.dataset.focus); if (x && x.c) focusOnMap(x.c); });
   $$('[data-fix]', el).forEach(b => b.onclick = () => placeDialog(b.dataset.fix));
   const gi = $('#linkIn'), go = $('#linkGo');
   if (gi) { gi.onpaste = () => setTimeout(() => { if (gi.value.trim()) spotDialog({ url: gi.value.trim() }); }, 50); go.onclick = () => spotDialog({ url: gi.value.trim() }); }
-  const as = $('#anchorSel'); if (as) as.onchange = () => { ui.anchor = as.value; loadNear(); };
-  $$('[data-slot]', el).forEach(b => b.onclick = () => { ui.nearSlot = b.dataset.slot; ui.nearKind = SLOT_KIND[b.dataset.slot]; loadNear(); });
-  $$('[data-kind]', el).forEach(b => b.onclick = () => { ui.nearKind = b.dataset.kind; loadNear(); });
-  const rt = $('#nearRetry'); if (rt) rt.onclick = loadNear;
-  const sa = $('#showAll'); if (sa && ui._nearShown) sa.onclick = () => { const s = ui._nearShown, a = currentAnchor(); focusOnMap(a.c, s.pins); };
-  $$('[data-add]', el).forEach(b => b.onclick = () => { const s = ui._nearShown, it = s.items[+b.dataset.add]; spotDialog({ name: it.name, lat: it.lat, lng: it.lng, type: s.kind === 'sight' ? 'sight' : 'food', meal: s.kind === 'cafe' ? 'คาเฟ่' : s.kind === 'food' ? SLOT_MEAL[s.slot] : '', cuisine: nice(it.cuisine) }); });
-  if (ui.tab === 'spots' && v === 'near' && !ui.nearState) loadNear();
+  const sd = $('#sugDay'); if (sd) sd.onchange = () => { ui.sugDay = +sd.value; ui.winOpen = null; renderSpots(); };
+  $$('[data-open]', el).forEach(b => b.onclick = () => { ui.winOpen = b.dataset.open || null; renderSpots(); });
+  $$('[data-wk]', el).forEach(b => b.onclick = () => { const [key, kind] = b.dataset.wk.split('::'); ui.winKind[key] = kind; renderSpots(); });
+  $$('[data-retry]', el).forEach(b => b.onclick = () => { delete sug.state[b.dataset.retry]; renderSpots(); });
+  $$('[data-wmap]', el).forEach(b => b.onclick = () => { const k = b.dataset.wmap, items = ui._shown[k] || []; if (!items.length) return toast('ยังไม่มีผลลัพธ์'); const kind = k.split('|').pop(); focusOnMap({ lat: items[0].lat, lng: items[0].lng }, items.map(it => ({ name: it.name, lat: it.lat, lng: it.lng, kind, sub: [nice(it.cuisine), dist(it.d)].filter(Boolean).join(' · ') }))); });
+  $$('[data-add]', el).forEach(b => b.onclick = () => { const [k, i] = b.dataset.add.split('::'), it = (ui._shown[k] || [])[+i]; if (!it) return; const kind = k.split('|').pop(), slot = k.split('|')[1]; spotDialog({ name: it.name, lat: it.lat, lng: it.lng, type: kind === 'sight' ? 'sight' : 'food', meal: kind === 'cafe' ? 'คาเฟ่' : (SLOT_MEAL[slot] || ''), cuisine: nice(it.cuisine) }); });
 }
 /* paste a Google Maps link -> name + coordinates */
 async function detectLink(url) {

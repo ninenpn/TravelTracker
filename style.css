@@ -189,3 +189,10 @@ ol.steps{padding-left:18px;margin:8px 0;color:var(--ink);font-size:.88rem}ol.ste
 .nudge{display:flex;gap:12px;align-items:center;width:100%;text-align:left;background:linear-gradient(135deg,#fff4e5,#ffe8d6);color:#7c2d12;border-radius:18px;padding:12px 14px;margin-top:12px;border:1px solid #fed7aa}
 .nudge span{font-size:1.5rem}.nudge b{display:block}.nudge small{color:#9a3412}
 .leaflet-container{font-family:inherit}
+
+.win b{font-size:.95rem}
+.sg{display:flex;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
+.sg:first-of-type{border-top:0}
+.sg-b{flex:1;min-width:0}.sg-b b{display:block;font-size:.9rem}.sg-b small{display:block}
+.sg-a{display:flex;gap:6px;flex:none}
+.sg-a .tag,.win .btns .tag{background:var(--soft);border:0;color:var(--ink)}
