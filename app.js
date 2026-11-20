@@ -332,7 +332,7 @@ async function load() {
   const t = trip(); $('#tripTitle').textContent = t.name;
   const keep = { me: data.me, meLabel: data.meLabel };
   const next = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: data.settings || {}, stay: data.stay || {}, ...keep };
-  const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r); const mk = 'tt.maxdays.' + t.id; store.set(mk, Math.max(+(store.get(mk) || 0), next.plan.days.length)); });
+  const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r);; });
   await Promise.allSettled([planP]);
   const rest = [
     async () => { try { next.stay = parseStay(await fetchTab(t, { name: 'Stay' })); } catch { } },
@@ -593,12 +593,9 @@ function scheduleSave() { ui.dirty = true; setSub('กำลังบันท�
 async function savePlan() {
   if (!sheetApi.on() || !data.plan) return;
   if (ui.saving) { scheduleSave(); return; }
-  const mk = 'tt.maxdays.' + trip().id, seen = +(store.get(mk) || 0);
-  if (data.plan.days.length < seen) { ui.dirty = false; setSub(''); return toast(`ไม่บันทึก: แผนมี ${data.plan.days.length} วัน แต่เคยมี ${seen} วัน (กันข้อมูลหาย) — กด “รีเฟรชข้อมูล” ในเมนูก่อน`, 7000); }
-  store.set(mk, Math.max(seen, data.plan.days.length));
   ui.saving = true;
   try { await sheetApi.call('savePlan', { gid: trip().planGid || '', rows: planToRows(data.plan) }); ui.dirty = false; setSub('บันทึกลงชีตแล้ว ✓', 2500); }
-  catch (e) { setSub('บันทึกไม่สำเร็จ — แตะเพื่อลองใหม่'); toast(e.message); }
+  catch (e) { setSub('บันทึกไม่สำเร็จ — แตะเพื่อลองใหม่'); toast('บันทึกไม่สำเร็จ: ' + e.message, 9000); }
   finally { ui.saving = false; }
 }
 $('#tripSub').onclick = () => { if (ui.dirty && !ui.saving) savePlan(); };
