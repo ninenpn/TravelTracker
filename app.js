@@ -9,15 +9,23 @@ const DEFAULT_TRIP = {
   usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', costTab: 'ค่าใช้จ่าย', currency: 'THB'
 };
 
+const PRESETS = [
+  { id: '10SWKXgZ1Tw1YUhZGYkrLdNv_99DYBk9N', name: 'Kunming - Lijiang', costTab: 'ค่าเสียหาย', extraTabs: 'Chinese Language' },
+  { id: '18xlP9LoISk-_Gy3Y0ATXkQM0lWElkvh3', name: 'Macao', costTab: 'ค่าเสียหาย', extraTabs: '' },
+  { id: '1ec6Jq7HhUSjsyC50sjyLoFvw-gNXS9gN', name: 'Nagoya - Osaka', costTab: 'ค่าเสียหาย', extraTabs: 'Transport Price,JCB-Transport' },
+  { id: '1Lii3MIGLVncBMjXrVBAKZDfxHORD222Z', name: "Xi'an", costTab: 'ค่าเสียหาย', extraTabs: 'Xian OJC Holiday,Chinese Language' }
+].map(p => ({ planGid: '', usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', currency: 'THB', ...p }));
+
 /* ---------- storage ---------- */
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { } }
 };
 let cfg = store.get('tt.cfg', null) || { trips: [DEFAULT_TRIP], active: DEFAULT_TRIP.id, me: '', rates: { KZT: 0.07 } };
+if (cfg.v !== 2) { cfg.v = 2; PRESETS.forEach(p => { if (!cfg.trips.some(t => t.id === p.id)) cfg.trips.push(p); }); }
 const saveCfg = () => store.set('tt.cfg', cfg);
 const trip = () => cfg.trips.find(t => t.id === cfg.active) || cfg.trips[0];
-let data = { plan: null, costs: null, users: [], expenses: [], locs: {}, me: null };
+let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, me: null };
 
 /* ---------- CSV / Sheets ---------- */
 function parseCSV(text) {
@@ -56,30 +64,32 @@ function parseDayLabel(s) {
   if (mi < 0) mi = EN_M.findIndex(x => m[2].toLowerCase().includes(x));
   return mi < 0 ? null : { d: +m[1], m: mi };
 }
-const isTime = s => /^\d{1,2}[.:]\d{2}$/.test(s);
+const cleanT = s => String(s || '').replace(/\s*น\.?\s*$/, '').trim();
+const isTime = s => /^\d{1,2}[.:]\d{2}$/.test(cleanT(s));
 function parsePlan(rows) {
+  const h = rows[0] || [];
+  const ix = { day: colIndex(h, ['Day', 'วัน', 'วันที่']), loc: colIndex(h, ['Location', 'เมือง']), st: colIndex(h, ['Start time']), sl: colIndex(h, ['Start Location']), at: colIndex(h, ['Arrive time']), al: colIndex(h, ['Arrive Location']), how: colIndex(h, ['How to Travel']), note: colIndex(h, ['Note']), notice: colIndex(h, ['Notice']), tk: colIndex(h, ['Tickets']) };
+  if (ix.day < 0) ix.day = 0;
+  const g = (r, i) => i >= 0 ? (r[i] || '') : '';
   const days = [], ideas = []; let day = null, idea = null;
   for (const r of rows.slice(1)) {
-    const [c0, c1, c2, c3, c4, c5, c6] = [0, 1, 2, 3, 4, 5, 6].map(i => r[i] || '');
-    if (![c0, c1, c2, c3, c4, c5, c6].some(Boolean)) continue;
-    if (c0) { day = { label: c0, date: parseDayLabel(c0), steps: [] }; days.push(day); idea = null; }
-    else if (/^day\s*\d+/i.test(c1) && !c3) { idea = { title: c1, items: [] }; ideas.push(idea); day = null; if (c2) idea.items.push(c2); continue; }
-    if (!day && idea) { const t = [c2, c1, c4].filter(Boolean).join(' · '); if (t) idea.items.push(t); continue; }
+    const v = { d: g(r, ix.day), loc: g(r, ix.loc), st: g(r, ix.st), sl: g(r, ix.sl), at: g(r, ix.at), al: g(r, ix.al), how: g(r, ix.how), note: g(r, ix.note), notice: g(r, ix.notice), tk: g(r, ix.tk) };
+    if (!Object.values(v).some(Boolean)) continue;
+    if (v.d) { day = { label: v.d, city: v.loc, date: parseDayLabel(v.d), steps: [] }; days.push(day); idea = null; }
+    else if (/^day\s*\d+/i.test(v.st) && !v.at) { idea = { title: v.st, items: [] }; ideas.push(idea); day = null; if (v.sl) idea.items.push(v.sl); continue; }
+    if (!day && idea) { const t = [v.sl, v.st, v.al].filter(Boolean).join(' · '); if (t) idea.items.push(t); continue; }
     if (!day) continue;
-    const step = isTime(c1) ? { time: c1 } : { text: c1 };
-    Object.assign(step, { from: c2, toTime: c3, to: c4, how: c5, note: c6 });
-    if (step.time || step.text || c2 || c3 || c4 || c5 || c6) day.steps.push(step);
+    if (/^end\s*day$/i.test(v.st.trim())) continue;
+    const step = isTime(v.st) ? { time: cleanT(v.st) } : { text: v.st };
+    Object.assign(step, { from: v.sl, toTime: cleanT(v.at), to: v.al, how: v.how, note: v.note, notice: v.notice, tickets: v.tk, city: v.d ? '' : v.loc });
+    if (step.time || step.text || v.sl || v.at || v.al || v.how || v.note || v.notice || v.tk) day.steps.push(step);
   }
   return { days, ideas };
 }
-function parseCosts(rows) {
-  const a = [], b = [];
-  for (const r of rows.slice(1)) {
-    if (r[0] || r[1]) a.push({ name: r[0], raw: r[1], v: Math.max(0, ...num(r[1])) });
-    if (r[2] || r[3]) b.push({ name: r[2], raw: r[3], v: Math.max(0, ...num(r[3])) });
-  }
-  const clean = l => l.filter(x => x.name && !/^รวม|total/i.test(x.name));
-  return { person: clean(a), group: clean(b) };
+function parseTable(rows) {
+  rows = rows.filter(r => r.some(Boolean));
+  const keep = (rows[0] || []).map((_, i) => rows.some(r => r[i]));
+  return rows.map(r => r.filter((_, i) => keep[i])).slice(0, 300);
 }
 
 /* ---------- users & expenses ---------- */
@@ -146,14 +156,17 @@ function parseLocations(rows) {
 
 /* ---------- load ---------- */
 function showErr(m) { const e = $('#error'); e.hidden = !m; e.textContent = m || ''; }
+const sameAsPlan = r => rawPlanHead && (r[0] || []).join('|') === rawPlanHead;
+let rawPlanHead = '';
 async function load() {
   const t = trip(); $('#tripTitle').textContent = t.name; $('#syncInfo').textContent = 'กำลังโหลด…';
-  const errs = []; data.users = []; data.expenses = []; data.locs = {}; data.plan = null; data.costs = null;
+  const errs = []; data.users = []; data.expenses = []; data.locs = {}; data.plan = null; data.costs = null; data.extra = [];
   const tries = [
-    async () => { data.plan = parsePlan(await fetchTab(t, { gid: t.planGid })); },
+    async () => { const r = await fetchTab(t, { gid: t.planGid }); rawPlanHead = (r[0] || []).join('|'); data.plan = parsePlan(r); },
     async () => { const r = await fetchTab(t, { name: t.usersTab }); data.users = parseUsers(r) || []; },
     async () => { const r = await fetchTab(t, { name: t.expensesTab }); data.expenses = parseExpenses(r) || []; },
-    async () => { if (t.costTab) { const r = await fetchTab(t, { name: t.costTab }); data.costs = r[0] && r[0].length >= 2 ? parseCosts(r) : null; } },
+    async () => { if (t.costTab) { const r = await fetchTab(t, { name: t.costTab }); data.costs = sameAsPlan(r) ? null : parseTable(r); } },
+    async () => { for (const n of String(t.extraTabs || '').split(',').map(x => x.trim()).filter(Boolean)) { try { const r = await fetchTab(t, { name: n }); if (!sameAsPlan(r)) data.extra.push({ name: n, rows: parseTable(r) }); } catch { } } },
     async () => { const r = await fetchTab(t, { name: t.locationsTab || 'Locations' }); data.locs = parseLocations(r) || {}; }
   ];
   const res = await Promise.allSettled(tries.map(f => f()));
@@ -167,6 +180,13 @@ async function load() {
 /* ---------- render ---------- */
 const link = s => esc(s).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
 const mapLink = p => (!p || /^ที่พัก$/.test(p)) ? esc(p) : `<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p)}" target="_blank" rel="noopener">${esc(p)}</a>`;
+function tableCard(title, rows) {
+  if (!rows || !rows.length) return '';
+  return `<div class="card"><h3>${esc(title)}</h3><div class="tbl"><table>${rows.map((r, i) => `<tr>${r.map(c => i === 0 ? `<th>${link(c)}</th>` : `<td>${link(c)}</td>`).join('')}</tr>`).join('')}</table></div></div>`;
+}
+function renderInfo() {
+  $('#tab-info').innerHTML = data.extra.length ? data.extra.map(x => tableCard(x.name, x.rows)).join('') : '<div class="card mut">ไม่มีแท็บข้อมูลเพิ่มเติม — ระบุชื่อแท็บใน ⚙️ (คั่นด้วย ,)</div>';
+}
 function renderPlan() {
   const el = $('#tab-plan'), p = data.plan;
   if (!p) { el.innerHTML = '<div class="card">ไม่มีข้อมูลแผน</div>'; return; }
@@ -181,12 +201,12 @@ function renderPlan() {
   }
   for (const d of p.days) {
     const today = d.date && d.date.d === nd && d.date.m === nm;
-    html += `<div class="card day ${today ? 'today' : ''}"><h2>${esc(d.label)}${today ? ' <span class="chip">วันนี้</span>' : ''}<small>${d.steps.length ? '' : 'ยังไม่มีแผน'}</small></h2>`;
+    html += `<div class="card day ${today ? 'today' : ''}"><h2>${esc(d.label)}${d.city ? ' · ' + esc(d.city) : ''}${today ? ' <span class="chip">วันนี้</span>' : ''}<small>${d.steps.length ? '' : 'ยังไม่มีแผน'}</small></h2>`;
     for (const s of d.steps) {
       const route = (s.from || s.to) ? `<div class="route">${mapLink(s.from)}${s.to ? ' <span class="arrow">→</span> ' + mapLink(s.to) : ''}</div>` : '';
       html += `<div class="step"><div class="time">${esc(s.time || '')}${s.toTime ? `<br><small>→ ${esc(s.toTime)}</small>` : ''}</div><div>
         ${s.text ? `<div>${link(s.text)}</div>` : ''}${route}
-        ${s.how ? `<span class="chip">${esc(s.how)}</span>` : ''}${s.note ? `<span class="note">${link(s.note)}</span>` : ''}</div></div>`;
+        ${s.city ? `<span class="chip">${esc(s.city)}</span>` : ''}${s.how ? `<span class="chip">${esc(s.how)}</span>` : ''}${s.tickets ? `<span class="chip">🎫 ${esc(s.tickets)}</span>` : ''}${s.note ? `<div class="note">${link(s.note)}</div>` : ''}${s.notice ? `<div class="note">⚠️ ${link(s.notice)}</div>` : ''}</div></div>`;
     }
     html += '</div>';
   }
@@ -195,7 +215,7 @@ function renderPlan() {
 }
 function renderBudget() {
   const el = $('#tab-budget'), c = calc(), cur = trip().currency || 'THB';
-  if (!c.list.length) { el.innerHTML = '<div class="card">ยังไม่มีสมาชิก — เพิ่มที่แท็บ 👥 สมาชิก หรือสร้างแท็บ "Users" ในชีต</div>'; return; }
+  if (!c.list.length) { el.innerHTML = '<div class="card">ยังไม่มีสมาชิก — สร้างแท็บ "' + esc(trip().usersTab) + '" ในชีต (คอลัมน์ Name, Budget)</div>' + (data.costs && data.costs.length ? tableCard('📋 ประมาณการ: ' + trip().costTab, data.costs) : ''); return; }
   let h = `<div class="card"><b>รวมจ่ายไปแล้ว ${fmt(c.total)} ${cur}</b></div><div class="grid">`;
   c.list.forEach((u, i) => {
     const rem = u.budget - u.share, pct = u.budget ? Math.min(100, u.share / u.budget * 100) : 0;
@@ -215,11 +235,7 @@ function renderBudget() {
   h += `<div class="card"><h3>🔁 สรุปการโอนเงินเคลียร์กัน</h3>${c.tx.length ? '<ul>' + c.tx.map(t => `<li><b>${esc(t.from)}</b> โอนให้ <b>${esc(t.to)}</b> ${fmt(t.v)} ${cur}</li>`).join('') + '</ul>' : '<span class="mut">เคลียร์กันครบแล้ว / ยังไม่มีรายการ</span>'}</div>`;
   const cats = Object.entries(c.cats).sort((a, b) => b[1] - a[1]);
   if (cats.length) h += `<div class="card"><h3>📊 แยกตามหมวด</h3><table>${cats.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${fmt(v)}</td></tr>`).join('')}</table></div>`;
-  if (data.costs && (data.costs.person.length || data.costs.group.length)) {
-    const sum = l => l.reduce((a, x) => a + x.v, 0);
-    h += `<div class="card"><h3>📋 ประมาณการจากชีต "${esc(trip().costTab)}"</h3><div class="grid"><div><b>ต่อคน</b><table>${data.costs.person.map(x => `<tr><td>${esc(x.name)}</td><td class="n">${esc(x.raw)}</td></tr>`).join('')}<tr><td><b>รวม (สูงสุด)</b></td><td class="n"><b>${fmt(sum(data.costs.person))}</b></td></tr></table></div>
-      <div><b>บางคน/รวม</b><table>${data.costs.group.map(x => `<tr><td>${esc(x.name)}</td><td class="n">${esc(x.raw)}</td></tr>`).join('')}<tr><td><b>รวม</b></td><td class="n"><b>${fmt(sum(data.costs.group))}</b></td></tr></table></div></div></div>`;
-  }
+  if (data.costs && data.costs.length) h += tableCard('📋 ประมาณการ: ' + trip().costTab, data.costs);
   el.innerHTML = h;
 }
 function renderExpenses() {
@@ -304,6 +320,7 @@ function tripFields(t) {
   <label>แท็บแผนเที่ยว: gid (ท้ายลิงก์ ?gid=…; ว่าง = แท็บแรก)</label><input name="planGid" value="${esc(t.planGid || '')}">
   <label>ชื่อแท็บสมาชิก/งบ</label><input name="usersTab" value="${esc(t.usersTab || 'Users')}">
   <label>ชื่อแท็บค่าใช้จ่าย</label><input name="expensesTab" value="${esc(t.expensesTab || 'Expenses')}">
+  <label>แท็บข้อมูลเพิ่มเติม (คั่นด้วย ,)</label><input name="extraTabs" value="${esc(t.extraTabs || '')}">
   <label>ชื่อแท็บตำแหน่ง</label><input name="locationsTab" value="${esc(t.locationsTab || 'Locations')}">
   <label>ชื่อแท็บประมาณการ (ไม่บังคับ)</label><input name="costTab" value="${esc(t.costTab || '')}">
   <label>สกุลเงินหลัก</label><input name="currency" value="${esc(t.currency || 'THB')}">`;
@@ -311,7 +328,7 @@ function tripFields(t) {
 function readTrip(f) {
   const url = f.get('url'), m = url.match(/\/d\/([\w-]+)/); if (!m) { alert('ลิงก์ไม่ถูกต้อง'); return null; }
   const g = url.match(/gid=(\d+)/);
-  return { id: m[1], name: f.get('name'), planGid: f.get('planGid') || (g ? g[1] : ''), usersTab: f.get('usersTab'), expensesTab: f.get('expensesTab'), locationsTab: f.get('locationsTab'), costTab: f.get('costTab'), currency: (f.get('currency') || 'THB').toUpperCase() };
+  return { id: m[1], name: f.get('name'), planGid: f.get('planGid') || (g ? g[1] : ''), usersTab: f.get('usersTab'), expensesTab: f.get('expensesTab'), locationsTab: f.get('locationsTab'), extraTabs: f.get('extraTabs'), costTab: f.get('costTab'), currency: (f.get('currency') || 'THB').toUpperCase() };
 }
 function settingsDialog() {
   const t = trip();
@@ -341,7 +358,7 @@ function newTripDialog() {
 
 /* ---------- boot ---------- */
 function fillTrips() { $('#tripSelect').innerHTML = cfg.trips.map(t => `<option value="${esc(t.id)}" ${t.id === cfg.active ? 'selected' : ''}>${esc(t.name)}</option>`).join(''); }
-function renderAll() { renderPlan(); renderBudget(); renderExpenses(); renderPeople(); if (!$('#tab-map').hidden) renderMap(); }
+function renderAll() { renderPlan(); renderBudget(); renderExpenses(); renderPeople(); renderInfo(); if (!$('#tab-map').hidden) renderMap(); }
 $('#tabs').onclick = e => {
   const b = e.target.closest('button'); if (!b) return;
   document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('active', x === b));

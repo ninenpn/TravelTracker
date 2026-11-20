@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Travel Tracker</title>
 <meta name="theme-color" content="#0f766e">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -22,11 +22,12 @@
     </div>
   </div>
   <nav id="tabs">
-    <button data-tab="plan" class="active">📅 แผน</button>
-    <button data-tab="budget">💰 งบ/สรุป</button>
-    <button data-tab="expenses">🧾 ค่าใช้จ่าย</button>
-    <button data-tab="map">📍 ตำแหน่ง</button>
-    <button data-tab="people">👥 สมาชิก</button>
+    <button data-tab="plan" class="active"><i>📅</i>แผน</button>
+    <button data-tab="budget"><i>💰</i>งบ</button>
+    <button data-tab="expenses"><i>🧾</i>จ่าย</button>
+    <button data-tab="map"><i>📍</i>ตำแหน่ง</button>
+    <button data-tab="info"><i>ℹ️</i>ข้อมูล</button>
+    <button data-tab="people"><i>👥</i>สมาชิก</button>
   </nav>
 </header>
 <main>
@@ -35,6 +36,7 @@
   <section id="tab-budget" hidden></section>
   <section id="tab-expenses" hidden></section>
   <section id="tab-map" hidden></section>
+  <section id="tab-info" hidden></section>
   <section id="tab-people" hidden></section>
 </main>
 <dialog id="dlg"></dialog>
