@@ -217,3 +217,14 @@ html[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) bri
 .bellbtn.sm{width:32px;height:32px;border-radius:11px;font-size:.95rem;background:var(--soft);align-self:flex-start}
 .bellbtn.sm.on{background:var(--priSoft)}
 .editing .bellbtn{display:none}
+
+/* PIN pad */
+.pinpad{display:flex;flex-direction:column;align-items:center;gap:6px}
+.pinpad h2{font-size:1.3rem;margin:6px 0 0}.pinpad p{margin:0;color:#ffffffcc;min-height:1.4em}.pinpad p.bad{color:#ffd5d5;font-weight:600}
+.dots{display:flex;gap:14px;margin:14px 0 10px}.dots i{width:16px;height:16px;border-radius:50%;border:2px solid #ffffffaa}.dots i.f{background:#fff;border-color:#fff}
+.dots.shake{animation:shake .35s}
+@keyframes shake{20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}
+.keys{display:grid;grid-template-columns:repeat(3,72px);gap:12px;justify-content:center}
+.keys button{width:72px;height:72px;border-radius:50%;background:#ffffff22;border:1px solid #ffffff38;color:#fff;font-size:1.5rem;font-weight:600;backdrop-filter:blur(8px)}
+.keys button:active{background:#ffffff55}
+.pin-links{display:flex;gap:18px;margin-top:10px}.pin-links .link{margin-top:0}

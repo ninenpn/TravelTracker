@@ -63,7 +63,7 @@ const num = s => { const m = String(s ?? '').replace(/,/g, '').match(/-?\d+(\.\d
 /* ---------- Google sign-in (OAuth) + Sheets API: anyone with edit access to the sheet can edit through the app ---------- */
 const clientId = () => cfg.googleClientId || (window.TT_CONFIG && window.TT_CONFIG.googleClientId) || '';
 const auth = { token: '', exp: 0, email: '', name: '' };
-try { const a = JSON.parse(sessionStorage.getItem('tt.auth') || 'null'); if (a && a.exp > Date.now()) Object.assign(auth, a); } catch { }
+try { const a = JSON.parse(localStorage.getItem('tt.auth') || 'null'); if (a) Object.assign(auth, a); } catch { }
 auth.valid = () => !!auth.token && Date.now() < auth.exp - 60000;
 let gisPromise;
 const loadGis = () => gisPromise = gisPromise || new Promise((res, rej) => {
@@ -80,7 +80,8 @@ async function signIn() {
         if (resp.error) return reject(new Error(resp.error_description || resp.error));
         auth.token = resp.access_token; auth.exp = Date.now() + (+resp.expires_in || 3600) * 1000;
         try { const u = await (await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: 'Bearer ' + auth.token } })).json(); auth.email = u.email || ''; auth.name = u.name || ''; } catch { }
-        try { sessionStorage.setItem('tt.auth', JSON.stringify({ token: auth.token, exp: auth.exp, email: auth.email, name: auth.name })); } catch { }
+        try { localStorage.setItem('tt.auth', JSON.stringify({ token: auth.token, exp: auth.exp, email: auth.email, name: auth.name })); } catch { }
+        renewBlockedUntil = 0; syncPendingPins(false);
         try { renderMenu(); renderMapStatus(); } catch { }
         resolve(auth.token);
       },
@@ -91,10 +92,17 @@ async function signIn() {
 }
 async function signOut() {
   try { if (auth.token && window.google && google.accounts) google.accounts.oauth2.revoke(auth.token, () => { }); } catch { }
-  auth.token = ''; auth.exp = 0; auth.email = ''; auth.name = ''; try { sessionStorage.removeItem('tt.auth'); } catch { }
+  auth.token = ''; auth.exp = 0; auth.email = ''; auth.name = ''; try { localStorage.removeItem('tt.auth'); } catch { }
   ui.edit = false; renderAll();
 }
 const getToken = async () => auth.valid() ? auth.token : signIn();
+/* Google only hands out 1-hour tokens to browsers, so renew quietly in the background while the app is open */
+let renewBlockedUntil = 0;
+async function silentRenew() {
+  if (!auth.email || !clientId() || Date.now() < renewBlockedUntil) return;
+  if (auth.valid() && auth.exp - Date.now() > 5 * 60000) return;
+  try { await signIn(); } catch { renewBlockedUntil = Date.now() + 10 * 60000; }
+}
 const qa = n => `'${String(n).replace(/'/g, "''")}'`;
 const shApi = {
   async req(path, opt = {}) {
@@ -213,7 +221,8 @@ function parseUsers(rows) {
   if (ni < 0) return null;
   const main = trip().currency || 'THB';
   const bcols = h.map((x, i) => { const m = String(x).match(/^\s*(budget|งบประมาณ|งบ)\s*[\s_(\-]*([a-zA-Z]{3})?\)?\s*$/i); return m ? { i, cur: (m[2] || main).toUpperCase() } : null; }).filter(Boolean);
-  return rows.slice(1).filter(r => r[ni]).map(r => { const budgets = {}; bcols.forEach(b => { const v = num(r[b.i])[0]; if (v) budgets[b.cur] = v; }); return { name: r[ni], budgets }; });
+  const pi = colIndex(h, ['pin', 'รหัส']);
+  return rows.slice(1).filter(r => r[ni]).map(r => { const budgets = {}; bcols.forEach(b => { const v = num(r[b.i])[0]; if (v) budgets[b.cur] = v; }); return { name: r[ni], budgets, pin: pi >= 0 ? String(r[pi] || '').trim() : '' }; });
 }
 function normType(s) {
   s = norm(s);
@@ -322,6 +331,7 @@ async function load() {
 
 /* ---------- login ---------- */
 function renderLogin() {
+  if (!$('#loginPin').hidden) return;
   const us = users();
   $('#loginSub').textContent = us.length ? 'ใครกำลังเข้าใช้งาน? แตะชื่อของคุณ' : (ui.loaded ? 'ยังไม่พบสมาชิกในชีต' : 'กำลังโหลดสมาชิก…');
   $('#loginUsers').innerHTML = us.map(u => `<button data-u="${esc(u.name)}" class="${u.name === cfg.lastMe ? 'last' : ''}">${avatar(u.name, 'lg')}<span>${esc(u.name)}</span>${u.name === cfg.lastMe ? '<small>ใช้ล่าสุด</small>' : ''}</button>`).join('');
@@ -332,9 +342,84 @@ function enter(name) {
   $('#login').hidden = true; $('#app').hidden = false; renderAll();
   if (name) startLocation();
 }
-$('#loginUsers').onclick = e => { const b = e.target.closest('[data-u]'); if (b) enter(b.dataset.u); };
+/* PIN: stored as a salted SHA-256 hash in the sheet's Users tab (column "PIN") so it works on every device; remembered per device after the first success.
+   A 4-digit PIN only keeps friends from picking each other's name — anyone who can read the sheet could brute-force it. */
+const PIN_LEN = 4;
+cfg.trusted = cfg.trusted || {}; cfg.pendingPin = cfg.pendingPin || {};
+async function hashPin(name, pin) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${String(name).trim().toLowerCase()}|${pin}|traveltracker`));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+const colLetter = i => { let t = '', n = i + 1; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = Math.floor((n - 1) / 26); } return t; };
+async function setPinInSheet(name, hash) {
+  const tab = trip().usersTab, enc = r => encodeURIComponent(r);
+  const hdr = (await shApi.req(`/values/${enc(qa(tab) + '!1:1')}`)).values; let hd = (hdr && hdr[0]) || [], ci = hd.findIndex(h => /^pin$/i.test(String(h).trim()));
+  const col = (await shApi.req(`/values/${enc(qa(tab) + '!A:A')}`)).values || [], idx = col.findIndex((r, k) => k > 0 && String(r[0] || '').trim().toLowerCase() === name.trim().toLowerCase());
+  if (idx < 0) throw new Error('ไม่พบชื่อนี้ในแท็บสมาชิกของชีต');
+  if (ci < 0) { ci = hd.length; await shApi.req(`/values/${enc(qa(tab) + '!' + colLetter(ci) + '1')}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: [['PIN']] }) }); }
+  await shApi.req(`/values/${enc(qa(tab) + '!' + colLetter(ci) + (idx + 1))}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: [[hash]] }) });
+}
+let syncingPins = false;
+async function syncPendingPins(interactive) {
+  const names = Object.keys(cfg.pendingPin); if (!names.length || syncingPins || !sheetApi.on()) return;
+  syncingPins = true;
+  try {
+    if (!auth.valid()) { if (!interactive) return; await signIn(); }
+    for (const n of names) {
+      const u = users().find(x => x.name === n);
+      if (u && u.pin) { delete cfg.pendingPin[n]; continue; }          // somebody already set a PIN for this name
+      try { await setPinInSheet(n, cfg.pendingPin[n]); if (u) u.pin = cfg.pendingPin[n]; delete cfg.pendingPin[n]; }
+      catch (e) { if (interactive) toast('บันทึก PIN ลงชีตไม่สำเร็จ: ' + e.message + ' — PIN ใช้ได้เฉพาะเครื่องนี้', 5000); break; }
+    }
+    saveCfg();
+  } catch (e) { if (interactive) toast('PIN ใช้ได้เฉพาะเครื่องนี้ก่อน (' + e.message + ')', 4500); }
+  finally { syncingPins = false; }
+}
+function pickUser(name) {
+  const u = users().find(x => x.name === name), trusted = cfg.trusted[name];
+  if (trusted && ((u && u.pin && trusted === u.pin) || (u && !u.pin))) return enter(name);   // this device already knows the PIN
+  pinPad(name, u && u.pin ? 'verify' : 'create');
+}
+function pinPad(name, mode) {
+  const box = $('#loginPin'); let digits = '', first = '';
+  $('#loginUsers').hidden = true; $('#loginGuest').hidden = true; $('#loginSub').hidden = true; box.hidden = false;
+  const title = () => mode === 'verify' ? 'ใส่ PIN ของคุณ' : first ? 'ยืนยัน PIN อีกครั้ง' : 'ตั้ง PIN 4 หลัก (ครั้งแรก)';
+  const draw = (msg, bad) => {
+    box.innerHTML = `<div class="pinpad">${avatar(name, 'lg')}<h2>${esc(name)}</h2><p id="pinMsg" class="${bad ? 'bad' : ''}">${esc(msg || title())}</p>
+    <div class="dots ${bad ? 'shake' : ''}">${Array.from({ length: PIN_LEN }, (_, i) => `<i class="${i < digits.length ? 'f' : ''}"></i>`).join('')}</div>
+    <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => `<button data-k="${k}">${k}</button>`).join('')}<button data-k="back" aria-label="ลบ">⌫</button><button data-k="0">0</button><span></span></div>
+    <div class="pin-links"><button class="link" data-a="back">← เปลี่ยนชื่อ</button>${mode === 'verify' ? '<button class="link" data-a="forgot">ลืม PIN?</button>' : ''}</div></div>`;
+    $$('[data-k]', box).forEach(b => b.onclick = () => press(b.dataset.k));
+    $('[data-a=back]', box).onclick = leave; const fg = $('[data-a=forgot]', box); if (fg) fg.onclick = () => resetPin(name);
+  };
+  const leave = () => { box.hidden = true; box.innerHTML = ''; $('#loginUsers').hidden = false; $('#loginSub').hidden = false; renderLogin(); };
+  const press = async k => {
+    if (k === 'back') digits = digits.slice(0, -1); else if (digits.length < PIN_LEN) digits += k;
+    draw();
+    if (digits.length < PIN_LEN) return;
+    const pin = digits; digits = '';
+    if (mode === 'verify') {
+      const u = users().find(x => x.name === name), h = await hashPin(name, pin);
+      if (u && u.pin === h) { cfg.trusted[name] = h; saveCfg(); box.hidden = true; box.innerHTML = ''; return enter(name); }
+      return draw('PIN ไม่ถูกต้อง ลองอีกครั้ง', true);
+    }
+    if (!first) { first = pin; return draw(); }
+    if (first !== pin) { first = ''; return draw('PIN ไม่ตรงกัน ตั้งใหม่อีกครั้ง', true); }
+    const h = await hashPin(name, pin); cfg.trusted[name] = h; cfg.pendingPin[name] = h; saveCfg();
+    box.hidden = true; box.innerHTML = ''; enter(name);
+    syncPendingPins(true);                                   // still inside the tap, so Google sign-in may open if needed
+  };
+  draw();
+}
+async function resetPin(name) {
+  if (!sheetApi.on()) return toast('รีเซ็ตในแอปต้องตั้งค่า Google ก่อน — หรือให้ผู้มีสิทธิ์แก้ไขชีตลบค่าในคอลัมน์ PIN ของแท็บ Users', 6000);
+  if (!confirm(`ล้าง PIN ของ ${name}? (ต้องเข้าสู่ระบบ Google ด้วยบัญชีที่มีสิทธิ์แก้ไขชีต)`)) return;
+  try { await signIn(); await setPinInSheet(name, ''); delete cfg.trusted[name]; delete cfg.pendingPin[name]; saveCfg(); const u = users().find(x => x.name === name); if (u) u.pin = ''; toast('ล้าง PIN แล้ว — ตั้ง PIN ใหม่ได้เลย'); pinPad(name, 'create'); }
+  catch (e) { toast(e.message, 5000); }
+}
+$('#loginUsers').onclick = e => { const b = e.target.closest('[data-u]'); if (b) pickUser(b.dataset.u); };
 $('#loginGuest').onclick = () => enter('');
-$('#btnMe').onclick = () => { $('#login').hidden = false; renderLogin(); };
+$('#btnMe').onclick = () => { $('#login').hidden = false; $('#loginPin').hidden = true; $('#loginUsers').hidden = false; $('#loginSub').hidden = false; renderLogin(); };
 
 /* ---------- plan view ---------- */
 const link = s => esc(s).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">เปิดลิงก์</a>');
@@ -1060,8 +1145,8 @@ async function saveSpot(s, dayIdx) {
 function renderMenu() {
   const el = $('#tab-menu'), on = sheetApi.on();
   let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
-  const signed = auth.valid(), cid = clientId();
-  h += `<div class="card"><div class="row2"><h2>บัญชี Google</h2><span class="chip ${signed ? 'ok' : 'bad'}">${signed ? 'เข้าสู่ระบบแล้ว' : cid ? 'ยังไม่ได้เข้าสู่ระบบ' : 'ยังไม่ตั้งค่า'}</span></div><div class="mut">${signed ? `${esc(auth.email)} — ถ้าบัญชีนี้มีสิทธิ์แก้ไขชีต แก้แผน เพิ่มค่าใช้จ่าย และแชร์ตำแหน่งผ่านแอปได้เลย` : 'เข้าสู่ระบบด้วยบัญชี Google ที่มีสิทธิ์แก้ไขชีต แล้วแก้ได้ทันที ไม่ต้องตั้งค่าอะไรเพิ่ม'}</div><div class="btns">${signed ? '<button class="btn" id="bOut">ออกจากระบบ</button>' : `<button class="btn pri" id="bConn">${cid ? 'เข้าสู่ระบบด้วย Google' : 'ตั้งค่า Google'}</button>`}${window.TT_CONFIG && window.TT_CONFIG.googleClientId ? '' : '<button class="btn" id="bCid">ตั้งค่า Client ID</button>'}</div></div>`;
+  const signed = !!auth.email && !!clientId(), cid = clientId();
+  h += `<div class="card"><div class="row2"><h2>บัญชี Google</h2><span class="chip ${signed ? 'ok' : 'bad'}">${signed ? 'เข้าสู่ระบบแล้ว' : cid ? 'ยังไม่ได้เข้าสู่ระบบ' : 'ยังไม่ตั้งค่า'}</span></div><div class="mut">${signed ? `${esc(auth.email)} — จำการเข้าสู่ระบบไว้แล้ว แอปต่ออายุให้เองเบื้องหลัง (ถ้าบัญชีนี้มีสิทธิ์แก้ไขชีต แก้ได้เลย)` : 'เข้าสู่ระบบด้วยบัญชี Google ที่มีสิทธิ์แก้ไขชีต แล้วแก้ได้ทันที ไม่ต้องตั้งค่าอะไรเพิ่ม'}</div><div class="btns">${signed ? '<button class="btn" id="bOut">ออกจากระบบ</button>' : `<button class="btn pri" id="bConn">${cid ? 'เข้าสู่ระบบด้วย Google' : 'ตั้งค่า Google'}</button>`}${window.TT_CONFIG && window.TT_CONFIG.googleClientId ? '' : '<button class="btn" id="bCid">ตั้งค่า Client ID</button>'}</div></div>`;
   h += notifCard();
   h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
   h += `<div class="card"><h2 style="margin-bottom:4px">ทริป</h2>${cfg.trips.map(t => `<button class="li ${t.id === cfg.active ? 'on' : ''}" data-trip="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b></div></button>`).join('')}<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div></div>`;
@@ -1080,7 +1165,7 @@ const dlg = $('#dlg');
 function openDlg(html) { dlg.innerHTML = html; dlg.showModal(); return dlg; }
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 function googleDialog(reason) {
-  const cid = clientId(), signed = auth.valid();
+  const cid = clientId(), signed = !!auth.email;
   const d = openDlg(`<form method="dialog"><h3>เข้าสู่ระบบด้วย Google</h3>${reason ? `<div class="mut">${esc(reason)}</div>` : ''}
   <div class="mut" style="margin-top:6px">ใครมีสิทธิ์ “ผู้แก้ไข” ในชีตนี้อยู่แล้ว เข้าสู่ระบบแล้วแก้ผ่านแอปได้เลย ใครไม่มีสิทธิ์ Google จะไม่อนุญาตเอง</div>
   ${cid ? `<div class="btns"><button type="button" class="btn pri" id="gIn">${signed ? 'เข้าสู่ระบบแล้ว — ' + esc(auth.email) : 'เข้าสู่ระบบด้วย Google'}</button></div>` : '<div class="chip bad" style="margin-top:10px">ยังไม่ได้ตั้งค่า Google Client ID</div>'}
@@ -1272,9 +1357,11 @@ setInterval(() => {
   else if (g !== 'active' && (geo.watch != null || geo.state === 'ok')) { stopLocation(); startLocation(); }
   else if (g === 'before' || g === 'after') { geo.state = g; if (ui.tab === 'map') renderMapStatus(); }
 }, 30000);
+setInterval(silentRenew, 60000);
 setInterval(tickCountdown, 1000);
 setInterval(() => { try { checkReminders(); } catch { } }, 15000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { try { checkReminders(); } catch { } tickCountdown(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { try { checkReminders(); } catch { } tickCountdown(); silentRenew(); } });
+setTimeout(silentRenew, 2000);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
 (async function boot() {
   if (me) { $('#login').hidden = true; $('#app').hidden = false; renderAll(); }
