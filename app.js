@@ -1003,12 +1003,20 @@ const travelSum = t => t.legs ? (t.loading ? '⏳ กำลังคำนวณ
 const bearing = (a, b) => Math.atan2(-(b.lat - a.lat), (b.lng - a.lng) * Math.cos(a.lat * Math.PI / 180)) * 180 / Math.PI;
 const legIcon = (how, color, timeTxt, warn, mode) => L.divIcon({ className: '', iconSize: [0, 0], iconAnchor: [0, 0], html: `<div class="seglbl ${warn ? 'warn' : ''}" style="--c:${color}">${how ? howIcon(how, false) + ' ' + esc(String(how).length > 14 ? String(how).slice(0, 14) + '…' : how) : (MODE_ICON[mode] || '')}${timeTxt ? ` · ${esc(timeTxt)}` : ''}${warn ? ' ⚠' : ''}</div>` });
 const arrowIcon = (deg, color) => L.divIcon({ className: '', iconSize: [20, 20], iconAnchor: [10, 10], html: `<svg viewBox="0 0 24 24" width="20" height="20" style="transform:rotate(${deg}deg);display:block"><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>` });
+/* stops whose activity is over (today: we have left / passed the time; earlier days: all) are not drawn */
+function stillAhead(di, seq) {
+  const d = data.plan.days[di]; if (!d || !d.dt) return seq;
+  if (isPast(d)) return [];
+  if (!isToday(d)) return seq;
+  const now = new Date().getHours() * 60 + new Date().getMinutes();
+  return seq.filter((w, k) => { const nx = seq[k + 1], end = nx ? (wpMin(nx.ts) ?? wpMin(nx.time)) : wpMin(w.time); return end == null || end >= now; });
+}
 function drawPlaces() {
   if (!map || !plLayer) return []; plLayer.clearLayers(); Object.keys(wpMark).forEach(k => delete wpMark[k]);
   if (!ui.f.route) return [];
   const all = []; let counter = 0; const continuous = ui.tab === 'map' && ui.placeDay === 'all';
   for (const di of scopeDays()) {
-    const color = COLORS[di % 8], seq = dayWaypoints(di).map(w => ({ ...w, c: coordOf(w.q) })).filter(w => w.c), ll = seq.map(w => [w.c.lat, w.c.lng]);
+    const color = COLORS[di % 8], seq = stillAhead(di, dayWaypoints(di).map(w => ({ ...w, c: coordOf(w.q) })).filter(w => w.c)), ll = seq.map(w => [w.c.lat, w.c.lng]);
     all.push(...ll);
     if (ll.length > 1) {
       L.polyline(ll, { color: '#fff', weight: 9, opacity: .95, lineCap: 'round' }).addTo(plLayer);
@@ -1479,6 +1487,7 @@ setInterval(() => {
 }, 30000);
 setInterval(silentRenew, 60000);
 setInterval(tickCountdown, 1000);
+setInterval(() => { if (document.hidden || !map || !data.plan || ui.edit || (ui.tab !== 'plan' && ui.tab !== 'map')) return; const d = data.plan.days[ui.day]; if (ui.tab === 'plan' && !(d && isToday(d))) return; try { drawMap(false); } catch { } }, 60000);
 setInterval(() => { try { checkReminders(); } catch { } }, 15000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { try { checkReminders(); } catch { } tickCountdown(); silentRenew(); } });
 setTimeout(silentRenew, 2000);
