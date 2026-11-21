@@ -135,7 +135,7 @@ const shApi = {
 };
 const lastBackup = () => +(sessionStorage.getItem('tt.bak') || 0);
 const sheetApi = {
-  on: () => !!clientId(),                 // feature is available (Client ID configured)
+  on: () => false,                        // read-only app: no Google sign-in, no writing to the sheet
   ready: () => auth.valid(),              // signed in right now (no popup needed)
   async call(action, p) {
     switch (action) {
@@ -233,6 +233,12 @@ function parseTable(rows) {
 }
 
 /* ---------- users, expenses, locations, places ---------- */
+function parseTips(rows) {
+  const h = rows[0] || [], ix = { t: colIndex(h, ['type']), n: colIndex(h, ['name']), d: colIndex(h, ['detail']), w: colIndex(h, ['besttime', 'best time']), s: colIndex(h, ['source']) };
+  if (ix.n < 0) return [];
+  const g = (r, i) => i >= 0 ? String(r[i] || '').trim() : '';
+  return rows.slice(1).filter(r => g(r, ix.n)).map(r => ({ type: (g(r, ix.t) || 'food').toLowerCase(), name: g(r, ix.n), detail: g(r, ix.d), when: g(r, ix.w), src: g(r, ix.s) }));
+}
 function parseStay(rows) {
   const h = rows[0] || [], ki = colIndex(h, ['key', 'คีย์']), vi = colIndex(h, ['value', 'ค่า']); if (ki < 0 || vi < 0) return {};
   const o = {}; rows.slice(1).forEach(r => { if (r[ki]) o[norm(r[ki])] = String(r[vi] || '').trim(); });
@@ -331,10 +337,11 @@ const sameAsPlan = r => rawPlanHead && (r[0] || []).join('|') === rawPlanHead;
 async function load() {
   const t = trip(); $('#tripTitle').textContent = t.name;
   const keep = { me: data.me, meLabel: data.meLabel };
-  const next = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: data.settings || {}, stay: data.stay || {}, ...keep };
+  const next = { tips: data.tips || [], plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: data.settings || {}, stay: data.stay || {}, ...keep };
   const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r);; });
   await Promise.allSettled([planP]);
   const rest = [
+    async () => { try { next.tips = parseTips(await fetchTab(t, { name: t.tipsTab || 'Tips' })); } catch { } },
     async () => { try { next.stay = parseStay(await fetchTab(t, { name: 'Stay' })); } catch { } },
     async () => { next.users = parseUsers(await fetchTab(t, { name: t.usersTab })) || []; },
     async () => { next.expenses = parseExpenses(await fetchTab(t, { name: t.expensesTab })) || []; },
@@ -541,7 +548,7 @@ function renderPlan() {
   if (ui.day == null || ui.day >= p.days.length) { const t = p.days.findIndex(isToday); ui.day = t >= 0 ? t : Math.max(0, p.days.findIndex(d => !isPast(d))); }
   const d = p.days[ui.day], wd = d.dt && !isPast(d) ? d.dt.toLocaleDateString('th-TH', { weekday: 'long' }) : '';
   let h = (ui.edit ? '' : cdCard() + stayCard());
-  h += `<div class="dayh"><div><h2>${esc(dayTitle(d, ui.day))}</h2><small>${[wd, d.city].filter(Boolean).map(esc).join(' · ')}${isToday(d) ? ' <span class="chip">วันนี้</span>' : ''}</small></div><button class="edit-btn ${ui.edit ? 'on' : ''}" id="editBtn">${ui.edit ? 'เสร็จ' : '<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>แก้ไข'}</button></div>`;
+  h += `<div class="dayh"><div><h2>${esc(dayTitle(d, ui.day))}</h2><small>${[wd, d.city].filter(Boolean).map(esc).join(' · ')}${isToday(d) ? ' <span class="chip">วันนี้</span>' : ''}</small></div></div>`;
   if (!ui.edit && !isPast(d)) { const hits = spotMatches().items.filter(m => m.di === ui.day); if (hits.length) h += `<button class="nudge" id="nudge"><span>🛤</span><div><b>แวะได้ ${hits.length} ที่จากลิสของคุณ</b><small>อยู่ใกล้เส้นทางของวันนี้ — แตะเพื่อดู</small></div></button>`; }
   h += `<div class="tl ${ui.edit ? 'editing' : ''}" id="tl">` + d.steps.map((s, k) => `<div class="step" data-i="${k}"><div class="step-t">${esc(s.time || '')}${s.toTime ? `<small>→ ${esc(s.toTime)}</small>` : ''}</div><div class="step-c"><div class="step-i">${howIcon(s.how, !!s.text)}</div><div class="step-b">
     ${s.text ? `<div>${link(s.text)}</div>` : ''}${(s.from || s.to) ? `<div class="route">${ui.edit ? esc(s.from) : mapLink(s.from)}${s.to ? ' <span class="arrow">→</span> ' + (ui.edit ? esc(s.to) : mapLink(s.to)) : ''}</div>` : ''}
@@ -550,13 +557,11 @@ function renderPlan() {
     ${ui.edit ? '' : bell(ui.day, k)}<div class="grip" aria-label="ลากเพื่อจัดลำดับ"><svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></div></div></div>`).join('') + '</div>';
   if (!d.steps.length && !ui.edit) h += '<div class="card empty flat">ยังไม่มีแผนสำหรับวันนี้<br><small>กด “แก้ไข” เพื่อเพิ่มรายการ</small></div>';
   if (ui.edit) h += '<button class="addstep" id="addStep">+ เพิ่มรายการ</button>';
-  if (!ui.edit) p.ideas.forEach((g, gi) => { if (g.items.length) h += `<div class="card flat"><h3>💡 ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map((i, ii) => `<li>${mapLink(i)} <button class="tag sm" data-gi="${gi}" data-ii="${ii}">+ เพิ่มเข้าแผน</button></li>`).join('')}</ul></div>`; });
+  if (!ui.edit) p.ideas.forEach((g, gi) => { if (g.items.length) h += `<div class="card flat"><h3>💡 ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map((i, ii) => `<li>${mapLink(i)}</li>`).join('')}</ul></div>`; });
   el.innerHTML = h;
   dayBar.innerHTML = p.days.map(pill).join('') + (ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : '');
   const sel = $('.pill.sel', dayBar); if (sel) dayBar.scrollLeft = sel.offsetLeft - dayBar.clientWidth / 2 + sel.clientWidth / 2;
-  $$('[data-gi]', el).forEach(b => b.onclick = () => { const g = p.ideas[+b.dataset.gi]; addToPlanDialog(g.items[+b.dataset.ii], { gi: +b.dataset.gi, ii: +b.dataset.ii }); });
   $$('.pill[data-day]', dayBar).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; ui.refit = true; ui.activeStep = null; renderPlan(); });
-  $('#editBtn').onclick = toggleEdit;
   bindBells(el);
   const sc = $('#stCopy'); if (sc) sc.onclick = () => copyText(data.stay.address, 'คัดลอกที่อยู่แล้ว');
   const nd = $('#nudge'); if (nd) nd.onclick = () => { ui.spotView = 'sug'; $('[data-tab=spots]').click(); };
@@ -713,10 +718,9 @@ function renderExpenses(el) {
 }
 function renderMoney() {
   const el = $('#tab-money'), v = ui.moneyView || 'sum';
-  el.innerHTML = `<div class="seg"><button data-v="sum" class="${v === 'sum' ? 'on' : ''}">สรุป</button><button data-v="list" class="${v === 'list' ? 'on' : ''}">รายการ</button></div><div id="moneyBody"></div><button class="fab" id="addExp" aria-label="เพิ่มค่าใช้จ่าย"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>`;
+  el.innerHTML = `<div class="seg"><button data-v="sum" class="${v === 'sum' ? 'on' : ''}">สรุป</button><button data-v="list" class="${v === 'list' ? 'on' : ''}">รายการ</button></div><div id="moneyBody"></div>`;
   (v === 'list' ? renderExpenses : renderBudget)($('#moneyBody'));
   $$('[data-v]', el).forEach(b => b.onclick = () => { ui.moneyView = b.dataset.v; renderMoney(); });
-  $('#addExp').onclick = expenseDialog;
 }
 async function copyText(t, okMsg) { try { await navigator.clipboard.writeText(t); toast(okMsg); } catch { prompt('คัดลอกข้อความนี้:', t); } }
 function expensePreview(f) {
@@ -1129,11 +1133,11 @@ function focusOnMap(c) { $('[data-tab=map]').click(); setTimeout(() => { if (map
 function spotCard(s, a) {
   const [ic, col] = SPOT[s.type], d = a && s.c ? distM(a.c, s.c) : null;
   return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic}</div><div class="spot-b"><b>${esc(s.name)}</b><small>${[nice(s.cuisine), s.meal, d != null ? dist(d) : ''].filter(Boolean).map(esc).join(' · ')}</small>${s.note ? `<div class="note">${esc(s.note)}</div>` : ''}
-  <div class="spot-a">${s.c ? `<a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.c.lat},${s.c.lng}">นำทาง</a><button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button>` : `<button class="tag" data-fix="${esc(s.q || s.name)}">ตั้งพิกัด</button>`}<button class="tag pri" data-pick="${esc(s.name)}">+ เพิ่มเข้าแผน</button></div></div></div>`;
+  <div class="spot-a">${s.c ? `<a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.c.lat},${s.c.lng}">นำทาง</a><button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button>` : `<button class="tag" data-fix="${esc(s.q || s.name)}">ตั้งพิกัด</button>`}</div></div></div>`;
 }
 function listHtml() {
   const a = currentAnchor(), f = ui.spotFilter || 'all', all = allSpots(), cnt = t => all.filter(s => s.type === t).length;
-  let h = `<div class="card"><label style="margin-top:0">เพิ่มสถานที่ — วางลิงก์ Google Maps</label><div class="addrow"><input id="linkIn" inputmode="url" placeholder="วางลิงก์ที่นี่ แล้วระบบหาพิกัดให้"><button class="btn pri" id="linkGo">เพิ่ม</button></div></div>`;
+  let h = '';
   h += `<div class="chips">${[['all', 'ทั้งหมด', all.length], ['food', '🍽 ร้านอาหาร', cnt('food')], ['sight', '🏛 ที่เที่ยว', cnt('sight')], ['other', '📌 อื่นๆ', cnt('other')]].map(([k, l, n]) => `<button class="tag ${f === k ? 'on' : ''}" data-sf="${k}">${l} <small>${n}</small></button>`).join('')}</div>`;
   const list = all.filter(s => f === 'all' || s.type === f).sort((x, y) => (a && x.c && y.c) ? distM(a.c, x.c) - distM(a.c, y.c) : 0);
   h += list.length ? list.map(s => spotCard(s, a)).join('') : '<div class="empty">ยังไม่มีสถานที่<br><small>วางลิงก์ Google Maps ด้านบนเพื่อเพิ่ม</small></div>';
@@ -1206,7 +1210,7 @@ function sugCard(it, idx) {
   const fit = s.type === 'food' && s.meal && mealMatches(s.meal, slot) ? `<span class="chip ok">เหมาะกับมื้อ${esc(s.meal)}</span>` : '';
   return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic}</div><div class="spot-b"><b>${esc(s.name)}</b><small>${[nice(s.cuisine), s.meal].filter(Boolean).map(esc).join(' · ')}</small>
   <div class="ctx">${ctx}</div><div>${fit}<span class="chip">ช่วง ~${fmtMin(it.m)}${it.est ? ' (ประมาณ)' : ''}</span></div>${s.note ? `<div class="note">${esc(s.note)}</div>` : ''}
-  <div class="spot-a"><button class="tag pri" data-addplan="${idx}">+ เพิ่มเข้าแผน</button><a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.c.lat},${s.c.lng}">นำทาง</a><button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button></div></div></div>`;
+  <div class="spot-a"><a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.c.lat},${s.c.lng}">นำทาง</a><button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button></div></div></div>`;
 }
 function sugHtml() {
   const { items, pending } = spotMatches(), p = data.plan; ui._sug = items;
@@ -1265,12 +1269,26 @@ async function addToPlanDialog(name, idea) {
     ui.day = di; renderPlan(); if (ui.tab === 'spots') renderSpots(); scheduleSave(); toast(`เพิ่ม “${name}” เข้า ${dayTitle(day, di)} แล้ว`, 3500);
   };
 }
+const TIP = { travel: ['🚕', '#2f7bff', 'เดินทาง'], food: ['🍽', '#ff7a45', 'ร้านอาหาร'], cafe: ['☕', '#a06bff', 'คาเฟ่'] };
+function tipsHtml() {
+  const all = data.tips || [], f = ui.tipFilter || 'all';
+  if (!all.length) return '<div class="empty">ยังไม่มีคำแนะนำ<br><small>เพิ่มแท็บ “Tips” ในชีต (Type, Name, Detail, BestTime, Source)</small></div>';
+  const list = all.filter(x => f === 'all' || x.type === f), cnt = t => all.filter(x => x.type === t).length;
+  let h = `<div class="chips">${[['all', 'ทั้งหมด', all.length], ['travel', '🚕 เดินทาง', cnt('travel')], ['food', '🍽 อาหาร', cnt('food')], ['cafe', '☕ คาเฟ่', cnt('cafe')]].map(([k, l, n]) => `<button class="tag ${f === k ? 'on' : ''}" data-tf="${k}">${l} <small>${n}</small></button>`).join('')}</div>`;
+  h += '<div class="mut" style="font-size:.78rem;margin:2px 4px 8px">เวลาที่แนะนำเป็นคำแนะนำทั่วไป ไม่ใช่เวลาเปิด-ปิดร้าน · ข้อมูลรวมจากไกด์/Reddit/Yandex — กดปุ่ม TikTok / Facebook เพื่อดูคลิปและรีวิวจริง</div>';
+  h += list.map(x => {
+    const [ic, col] = TIP[x.type] || TIP.food, q = encodeURIComponent(x.name.replace(/\(.*?\)/g, '').trim() + ' Almaty');
+    const links = x.type === 'travel' ? '' : `<div class="spot-a"><a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${q}">แผนที่</a><a class="tag" target="_blank" rel="noopener" href="https://www.tiktok.com/search?q=${q}">TikTok</a><a class="tag" target="_blank" rel="noopener" href="https://www.facebook.com/search/top?q=${q}">Facebook</a></div>`;
+    return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic}</div><div class="spot-b"><b>${esc(x.name)}</b>${x.detail ? `<div class="note">${esc(x.detail)}</div>` : ''}${x.when ? `<div class="ctx">🕒 ${esc(x.when)}</div>` : ''}${links}${x.src ? `<small class="src">แหล่งข้อมูล: ${esc(x.src)}</small>` : ''}</div></div>`;
+  }).join('');
+  return h;
+}
 function renderSpots() {
   const el = $('#tab-spots'); if (!el) return;
-  const v = ui.spotView === 'list' ? 'list' : 'sug';
-  el.innerHTML = `<div class="seg"><button data-v="sug" class="${v === 'sug' ? 'on' : ''}">แนะนำตามแผน</button><button data-v="list" class="${v === 'list' ? 'on' : ''}">ลิสทั้งหมด</button></div>` + (v === 'sug' ? sugHtml() : listHtml()) + '<button class="fab" id="addSpot" aria-label="เพิ่มสถานที่"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>';
+  const v = ui.spotView === 'list' ? 'list' : ui.spotView === 'tips' ? 'tips' : 'sug';
+  el.innerHTML = `<div class="seg"><button data-v="sug" class="${v === 'sug' ? 'on' : ''}">แนะนำตามแผน</button><button data-v="list" class="${v === 'list' ? 'on' : ''}">ลิสทั้งหมด</button><button data-v="tips" class="${v === 'tips' ? 'on' : ''}">น่าไป</button></div>` + (v === 'sug' ? sugHtml() : v === 'tips' ? tipsHtml() : listHtml());
   $$('[data-v]', el).forEach(b => b.onclick = () => { ui.spotView = b.dataset.v; renderSpots(); });
-  $('#addSpot').onclick = () => spotDialog();
+  $$('[data-tf]', el).forEach(b => b.onclick = () => { ui.tipFilter = b.dataset.tf; renderSpots(); });
   $$('[data-sf]', el).forEach(b => b.onclick = () => { ui.spotFilter = b.dataset.sf; renderSpots(); });
   $$('[data-focus]', el).forEach(b => b.onclick = () => { const x = allSpots().find(y => y.name === b.dataset.focus); if (x && x.c) focusOnMap(x.c); });
   $$('[data-pick]', el).forEach(b => b.onclick = () => {
@@ -1338,9 +1356,7 @@ async function saveSpot(s, dayIdx) {
 function renderMenu() {
   const el = $('#tab-menu'), on = sheetApi.on();
   let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
-  if (me && cfg.pendingPin[me]) h += `<div class="card" style="border-color:#ffb020"><h2>⚠ PIN ของคุณยังอยู่แค่ในเครื่องนี้</h2><div class="mut">ยังไม่ได้บันทึกลงชีต เปลี่ยนเครื่องแล้วจะต้องตั้ง PIN ใหม่ — เข้าสู่ระบบ Google เพื่อบันทึกลงแท็บ Users</div><div class="btns"><button class="btn pri" id="bPinSync">บันทึก PIN ลงชีตตอนนี้</button></div></div>`;
-  const signed = !!auth.email && !!clientId(), cid = clientId();
-  h += `<div class="card"><div class="row2"><h2>บัญชี Google</h2><span class="chip ${signed ? 'ok' : 'bad'}">${signed ? 'เข้าสู่ระบบแล้ว' : cid ? 'ยังไม่ได้เข้าสู่ระบบ' : 'ยังไม่ตั้งค่า'}</span></div><div class="mut">${signed ? `${esc(auth.email)} — จำการเข้าสู่ระบบไว้แล้ว แอปต่ออายุให้เองเบื้องหลัง (ถ้าบัญชีนี้มีสิทธิ์แก้ไขชีต แก้ได้เลย)` : 'เข้าสู่ระบบด้วยบัญชี Google ที่มีสิทธิ์แก้ไขชีต แล้วแก้ได้ทันที ไม่ต้องตั้งค่าอะไรเพิ่ม'}</div><div class="btns">${signed ? '<button class="btn" id="bOut">ออกจากระบบ</button>' : `<button class="btn pri" id="bConn">${cid ? 'เข้าสู่ระบบด้วย Google' : 'ตั้งค่า Google'}</button>`}${cid ? '' : '<button class="btn" id="bCid">ตั้งค่า Client ID</button>'}${signed ? '<button class="btn" id="bChk">ตรวจการเชื่อมต่อ</button>' : ''}${signed && cid && !(data.settings && data.settings.googleClientId === cid) ? '<button class="btn pri" id="bSaveCid">บันทึก Client ID ลงชีต</button>' : ''}</div>${cid ? `<small style="display:block;margin-top:10px">Client ID: ${data.settings && data.settings.googleClientId === cid ? '<b>บันทึกในชีตแล้ว ✓</b> (คนอื่นเข้าสู่ระบบได้เลย)' : '<b>มีเฉพาะในเครื่องนี้</b> — ยังไม่ได้บันทึกลงแท็บ Users'}</small>` : ''}</div>`;
+  const signed = false, cid = '';
   h += notifCard();
   h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
   h += `<div class="card"><h2 style="margin-bottom:4px">ทริป</h2>${cfg.trips.map(t => `<button class="li ${t.id === cfg.active ? 'on' : ''}" data-trip="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b></div></button>`).join('')}<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div></div>`;
