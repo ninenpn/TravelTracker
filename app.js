@@ -361,6 +361,39 @@ async function syncPendingPins(interactive) {
   } catch (e) { if (interactive) toast('PIN ใช้ได้เฉพาะเครื่องนี้ก่อน (' + e.message + ')', 4500); }
   finally { syncingPins = false; }
 }
+const storedPin = name => { const u = users().find(x => x.name === name); return (u && u.pin) || cfg.pendingPin[name] || ''; };
+function pickUser(name) { pinPad(name, storedPin(name) ? 'verify' : 'create'); }   // PIN is asked every time; only a name without a PIN gets to create one
+function pinPad(name, mode) {
+  const box = $('#loginPin'); let digits = '', first = '';
+  $('#loginUsers').hidden = true; $('#loginGuest').hidden = true; $('#loginSub').hidden = true; box.hidden = false;
+  const title = () => mode === 'verify' ? 'ใส่ PIN ของคุณ' : first ? 'ยืนยัน PIN อีกครั้ง' : 'ตั้ง PIN 4 หลัก (ครั้งแรก)';
+  const draw = (msg, bad) => {
+    box.innerHTML = `<div class="pinpad">${avatar(name, 'lg')}<h2>${esc(name)}</h2><p id="pinMsg" class="${bad ? 'bad' : ''}">${esc(msg || title())}</p>
+    <div class="dots ${bad ? 'shake' : ''}">${Array.from({ length: PIN_LEN }, (_, i) => `<i class="${i < digits.length ? 'f' : ''}"></i>`).join('')}</div>
+    <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => `<button data-k="${k}">${k}</button>`).join('')}<button data-k="back" aria-label="ลบ">⌫</button><button data-k="0">0</button><span></span></div>
+    <div class="pin-links"><button class="link" data-a="back">← เปลี่ยนชื่อ</button>${mode === 'verify' ? '<button class="link" data-a="forgot">ลืม PIN?</button>' : ''}</div></div>`;
+    $$('[data-k]', box).forEach(b => b.onclick = () => press(b.dataset.k));
+    $('[data-a=back]', box).onclick = leave; const fg = $('[data-a=forgot]', box); if (fg) fg.onclick = () => resetPin(name);
+  };
+  const leave = () => { box.hidden = true; box.innerHTML = ''; $('#loginUsers').hidden = false; $('#loginSub').hidden = false; renderLogin(); };
+  const press = async k => {
+    if (k === 'back') digits = digits.slice(0, -1); else if (digits.length < PIN_LEN) digits += k;
+    draw();
+    if (digits.length < PIN_LEN) return;
+    const pin = digits; digits = '';
+    if (mode === 'verify') {
+      const h = await hashPin(name, pin);
+      if (storedPin(name) === h) { box.hidden = true; box.innerHTML = ''; return enter(name); }
+      return draw('PIN ไม่ถูกต้อง ลองอีกครั้ง', true);
+    }
+    if (!first) { first = pin; return draw(); }
+    if (first !== pin) { first = ''; return draw('PIN ไม่ตรงกัน ตั้งใหม่อีกครั้ง', true); }
+    const h = await hashPin(name, pin); cfg.pendingPin[name] = h; saveCfg();
+    box.hidden = true; box.innerHTML = ''; enter(name);
+    syncPendingPins(false);
+  };
+  draw();
+}
 async function resetPin(name) {
   if (!confirm(`ล้าง PIN ของ ${name}? (ต้องใช้รหัสแก้ไข)`)) return;
   try { await signIn(); await setPinInSheet(name, ''); delete cfg.pendingPin[name]; saveCfg(); const u = users().find(x => x.name === name); if (u) u.pin = ''; toast('ล้าง PIN แล้ว — ตั้ง PIN ใหม่ได้เลย'); pinPad(name, 'create'); }
