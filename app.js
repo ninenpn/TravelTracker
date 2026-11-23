@@ -541,7 +541,7 @@ function renderPlan() {
   if (!ui.edit && !isPast(d)) { const hits = spotMatches().items.filter(m => m.di === ui.day); if (hits.length) h += `<button class="nudge" id="nudge"><span>🛤</span><div><b>แวะได้ ${hits.length} ที่จากลิสของคุณ</b><small>อยู่ใกล้เส้นทางของวันนี้ — แตะเพื่อดู</small></div></button>`; }
   h += `<div class="tl ${ui.edit ? 'editing' : ''}" id="tl">` + d.steps.map((s, k) => `<div class="step" data-i="${k}"><div class="step-t">${esc(s.time || '')}${s.toTime ? `<small>→ ${esc(s.toTime)}</small>` : ''}</div><div class="step-c"><div class="step-i">${howIcon(s.how, !!s.text)}</div><div class="step-b">
     ${s.text ? `<div>${link(s.text)}</div>` : ''}${(s.from || s.to) ? `<div class="route">${ui.edit ? esc(s.from) : mapLink(s.from)}${s.to ? ' <span class="arrow">→</span> ' + (ui.edit ? esc(s.to) : mapLink(s.to)) : ''}</div>` : ''}
-    ${s.city ? `<span class="chip">${esc(s.city)}</span>` : ''}${s.how ? `<span class="chip">${esc(s.how)}</span>` : ''}${s.tickets ? `<span class="chip">🎫 ${esc(s.tickets)}</span>` : ''}
+    ${s.city ? `<span class="chip">${esc(s.city)}</span>` : ''}${s.how ? `<span class="chip">${esc(s.how)}</span>` : ''}${durChips(d.steps, k)}${s.tickets ? `<span class="chip">🎫 ${esc(s.tickets)}</span>` : ''}
     ${s.note ? `<div class="note">${link(s.note)}</div>` : ''}${s.notice ? `<div class="note">⚠️ ${link(s.notice)}</div>` : ''}</div>
     ${ui.edit ? '' : bell(ui.day, k)}<div class="grip" aria-label="ลากเพื่อจัดลำดับ"><svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></div></div></div>`).join('') + '</div>';
   if (!d.steps.length && !ui.edit) h += '<div class="card empty flat">ยังไม่มีแผนสำหรับวันนี้<br><small>กด “แก้ไข” เพื่อเพิ่มรายการ</small></div>';
@@ -597,6 +597,26 @@ async function savePlan() {
 $('#tripSub').onclick = () => { if (ui.dirty && !ui.saving) savePlan(); };
 
 /* step editor */
+const tmin = x => { const t = tm(x); return t ? t[0] * 60 + t[1] : null; };
+const fmtT = m => `${pad2(((Math.floor(m / 60) % 24) + 24) % 24)}.${pad2(((m % 60) + 60) % 60)}`;
+const gapMin = (a, b) => { if (a == null || b == null) return null; let d = b - a; if (d < 0) d += 1440; return d; };
+const shiftT = (str, delta) => { const t = tm(str); if (!t) return str; const m = (((t[0] * 60 + t[1] + delta) % 1440) + 1440) % 1440; return String(str).replace(/(\d{1,2})[.:](\d{2})/, fmtT(m)); };
+/* travel time (departure -> arrival) and time spent at the place (arrival -> next departure), derived from the sheet times */
+function travelMin(st) { if (howIcon(st.how, false) === '✈️') return null; const g = gapMin(tmin(st.time), tmin(st.toTime)); return g > 0 && g < 1440 ? g : null; }
+function stayMin(steps, k) { const nx = steps[k + 1], g = nx ? gapMin(tmin(steps[k].toTime), tmin(nx.time)) : null; return g > 0 && g < 720 ? g : null; }
+function durChips(steps, k) {
+  const tr = travelMin(steps[k]), sy = stayMin(steps, k);
+  return (tr ? `<span class="chip">⏱ เดินทาง ${fmtDur(tr)}</span>` : '') + (sy ? `<span class="chip">🕒 อยู่ที่นั่น ${fmtDur(sy)}</span>` : '');
+}
+function shiftFrom(day, k0, delta) {
+  const ix = data.plan.cols;
+  for (let k = k0; k < day.steps.length; k++) {
+    const row = day.steps[k]._row.slice();
+    if (ix.st >= 0 && isTime(row[ix.st])) row[ix.st] = shiftT(row[ix.st], delta);
+    if (ix.at >= 0 && tmin(row[ix.at]) != null) row[ix.at] = shiftT(row[ix.at], delta);
+    day.steps[k] = stepFromRow(row, ix, k === 0);
+  }
+}
 /* places / transport already used in the plan (most used first, "ที่พัก" pinned) - to reuse on other days */
 function reuseLists() {
   const pl = {}, hw = {}, add = (o, k) => { k = String(k || '').trim(); if (k) o[k] = (o[k] || 0) + 1; };
@@ -609,13 +629,18 @@ function reuseLists() {
 function stepDialog(i) {
   const p = data.plan, d = p.days[ui.day], s = i == null ? { time: '', text: '', from: '', to: '', toTime: '', how: '', note: '', _row: [] } : d.steps[i];
   const d0 = d.steps[i == null ? d.steps.length - 1 : i - 1];
+  const trav0 = i == null ? null : travelMin(s) ?? gapMin(tmin(s.time), tmin(s.toTime)), stay0 = i == null ? null : stayMin(d.steps, i);
+  if (i == null && d0 && d0.toTime) s.time = d0.toTime;                // a new step starts when the previous one arrives
   const dlgEl = openDlg(`<form method="dialog"><h3>${i == null ? 'เพิ่มรายการ' : 'แก้ไขรายการ'}</h3>
   <label>เวลาเริ่ม (เช่น 10.05) หรือข้อความอิสระ</label><input name="st" value="${esc(s.time || s.text || '')}" placeholder="10.05 หรือ “เดินเล่น + หาข้าว”">
   <label>ต้นทาง / ปลายทาง <small>(แตะเพื่อเติมช่องที่เลือกอยู่)</small></label><div class="chips reuse" id="reusePl">${reuseLists().places.map(n => `<button type="button" class="tag" data-v="${esc(n)}">${esc(n.length > 26 ? n.slice(0, 25) + '…' : n)}</button>`).join('')}</div>
   <label>ต้นทาง</label><input name="from" value="${esc(s.from || (i == null && d0 ? d0.to : ''))}">
   <label>ปลายทาง</label><input name="to" value="${esc(s.to || '')}">
-  <label>เวลาถึง</label><input name="at" value="${esc(s.toTime || '')}">
   <label>วิธีเดินทาง</label><input name="how" value="${esc(s.how || '')}" placeholder="Airplane / Taxi / Walk"><div class="chips reuse" id="reuseHow">${reuseLists().how.map(n => `<button type="button" class="tag" data-v="${esc(n)}">${esc(n)}</button>`).join('')}</div>
+  <label>เวลาเดินทาง (นาที) <small>(พิมพ์แล้วเวลาถึงคำนวณให้)</small></label><input name="trav" type="number" inputmode="numeric" min="0" value="${trav0 ?? ''}"><div class="chips reuse" id="reuseTrav">${[10, 15, 20, 30, 45, 60, 90, 120].map(m => `<button type="button" class="tag" data-m="${m}">${fmtDur(m)}</button>`).join('')}</div>
+  <label>เวลาถึง</label><input name="at" value="${esc(s.toTime || '')}" placeholder="เช่น 10.35">
+  <label>ใช้เวลาที่จุดหมาย (นาที)</label><input name="stay" type="number" inputmode="numeric" min="0" value="${stay0 ?? ''}" placeholder="เช่น 90"><div class="chips reuse" id="reuseStay">${[30, 60, 90, 120, 180, 240].map(m => `<button type="button" class="tag" data-m="${m}">${fmtDur(m)}</button>`).join('')}</div>
+  ${i != null && d.steps[i + 1] ? '<label class="chk"><input type="checkbox" name="shift" checked> เลื่อนรายการถัดไปในวันนี้ตามเวลา</label>' : ''}
   <label>โน้ต</label><input name="note" value="${esc(s.note || '')}">
   <label>ลิงก์ Google Maps ของปลายทาง (ไม่บังคับ — ใช้ปักหมุด)</label><input name="map" inputmode="url" placeholder="วางลิงก์จาก Google Maps">
   <label>ย้ายไปวัน</label><select name="day">${p.days.map((x, k) => `<option value="${k}" ${k === ui.day ? 'selected' : ''}>${esc(dayTitle(x, k))}</option>`).join('')}</select>
@@ -624,6 +649,13 @@ function stepDialog(i) {
   ['from', 'to'].forEach(n => fm.elements[n].addEventListener('focus', () => { tgt = n; }));
   $$('#reusePl .tag', dlgEl).forEach(b => b.onclick = () => { fm.elements[tgt].value = b.dataset.v; if (tgt === 'from') { tgt = 'to'; fm.elements.to.focus(); } });
   $$('#reuseHow .tag', dlgEl).forEach(b => b.onclick = () => { fm.elements.how.value = b.dataset.v; });
+  const F = fm.elements;
+  const syncAt = () => { const a = tmin(F.st.value), t = +F.trav.value; if (a != null && F.trav.value !== '' && t >= 0) F.at.value = fmtT(a + t); };
+  const syncTrav = () => { const g = gapMin(tmin(F.st.value), tmin(F.at.value)); if (g != null) F.trav.value = g; };
+  F.trav.addEventListener('input', syncAt); F.at.addEventListener('input', syncTrav);
+  F.st.addEventListener('input', () => { if (F.trav.value !== '') syncAt(); else syncTrav(); });
+  $$('#reuseTrav .tag', dlgEl).forEach(b => b.onclick = () => { F.trav.value = b.dataset.m; syncAt(); });
+  $$('#reuseStay .tag', dlgEl).forEach(b => b.onclick = () => { F.stay.value = b.dataset.m; });
   $('form', dlgEl).onsubmit = async ev => {
     const v = ev.submitter ? ev.submitter.value : 'ok', f = new FormData(ev.target);
     if (v === 'x') return;
@@ -633,6 +665,11 @@ function stepDialog(i) {
     const ns = stepFromRow(row, ix, i === 0);
     const target = p.days[+f.get('day')];
     if (target === d && i != null) d.steps[i] = ns; else { if (i != null) d.steps.splice(i, 1); target.steps.push(ns); }
+    { const stayV = String(f.get('stay') || '').trim(), atM = tmin(f.get('at'));                      // time spent at the destination moves the next stops
+      if (i != null && target === d && stayV !== '' && atM != null && f.get('shift')) {
+        const nx = d.steps[i + 1], nxM = nx ? tmin(nx.time) : null;
+        if (nxM != null) { const delta = atM + (+stayV) - nxM; if (delta) shiftFrom(d, i + 1, delta); }
+      } }
     const url = f.get('map').trim(); if (url && ns.to) { try { const c = await coordsFromLink(url); if (c) await savePlace(ns.to, c); else toast('อ่านพิกัดจากลิงก์ไม่ได้'); } catch (e) { toast(e.message); } }
     renderPlan(); scheduleSave();
   };
@@ -1243,8 +1280,11 @@ async function addToPlanDialog(name, idea) {
   planDates(p); const cur = ui.day != null && ui.day < p.days.length ? ui.day : 0;
   const d = openDlg(`<form method="dialog"><h3>เพิ่มเข้าแผน</h3><div class="mut" style="margin-bottom:6px"><b>${esc(name)}</b></div>
   <label>วัน</label><select name="day">${p.days.map((x, i) => `<option value="${i}" ${i === cur ? 'selected' : ''}>${esc(dayTitle(x, i))}${x.city ? ' · ' + esc(x.city) : ''}</option>`).join('')}</select>
-  <label>เวลา (ไม่ใส่ = ต่อท้ายวัน)</label><input name="time" type="time">
+  <label>เวลาออกเดินทาง (ไม่ใส่ = ต่อท้ายวัน)</label><input name="time" type="time">
+  <label>วิธีเดินทาง</label><input name="how" placeholder="Walk / Taxi / Metro"><div class="chips reuse" id="reuseHow2">${reuseLists().how.map(n => `<button type="button" class="tag" data-v="${esc(n)}">${esc(n)}</button>`).join('')}</div>
+  <label>เวลาเดินทาง (นาที)</label><input name="trav" type="number" inputmode="numeric" min="0" placeholder="เช่น 20">
   <div class="btns"><button value="ok" class="btn pri">เพิ่มเข้าแผน</button><button value="x" class="btn" formnovalidate>ยกเลิก</button></div></form>`);
+  $$('#reuseHow2 .tag', d).forEach(b => b.onclick = () => { $('form', d).elements.how.value = b.dataset.v; });
   $('form', d).onsubmit = ev => {
     if (ev.submitter && ev.submitter.value !== 'ok') return;
     const f = new FormData(ev.target), di = +f.get('day'), t = String(f.get('time') || '');
@@ -1254,6 +1294,8 @@ async function addToPlanDialog(name, idea) {
     const prev = at > 0 ? day.steps[at - 1] : null, from = prev ? (prev.to || prev.from || '') : '';
     const setCell = (row, c, v) => { if (c >= 0) { while (row.length <= c) row.push(''); row[c] = v; } };
     const row = []; if (t) setCell(row, ix.st, t.replace(':', '.')); setCell(row, ix.sl, from); setCell(row, ix.al, name);
+    if (String(f.get('how') || '').trim()) setCell(row, ix.how, String(f.get('how')).trim());
+    if (t && f.get('trav') !== '' && +f.get('trav') >= 0) setCell(row, ix.at, fmtT(mins + +f.get('trav')));
     day.steps.splice(at, 0, stepFromRow(row, ix, at === 0));
     const nx = day.steps[at + 1];
     if (nx && from && qName(nx.from) === qName(from)) { setCell(nx._row, ix.sl, name); day.steps[at + 1] = stepFromRow(nx._row, ix, false); }

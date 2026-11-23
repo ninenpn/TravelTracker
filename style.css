@@ -285,3 +285,5 @@ html{scroll-padding-top:calc(var(--topH,64px) + var(--dockH,0px) + 10px);scroll-
 .usage{display:flex;justify-content:space-between;gap:10px;align-items:baseline;font-size:.88rem;margin-bottom:4px}
 
 #tripTitle{cursor:pointer}#tripTitle .chev{font-size:.7em;opacity:.55}
+
+label.chk{display:flex;gap:8px;align-items:center;margin-top:10px;font-size:.9rem}label.chk input{width:auto}
