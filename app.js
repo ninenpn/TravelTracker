@@ -49,7 +49,19 @@ function parseCSV(text) {
   if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
   return rows.map(r => r.map(x => x.trim()));
 }
+/* Supabase first (table sheet_rows: tab,row_no,cells); falls back to the Google Sheet if the table is missing/empty/unreachable */
+let sbOk = null;
+async function fetchSb(tab) {
+  const sb = window.TT_CONFIG && window.TT_CONFIG.supabase; if (!sb || !sb.url || sbOk === false) return null;
+  try {
+    const r = await fetch(`${sb.url}/rest/v1/sheet_rows?tab=eq.${encodeURIComponent(tab)}&select=cells&order=row_no`, { headers: { apikey: sb.key } });
+    if (!r.ok) { if (r.status === 404 || r.status === 401 || r.status === 403) sbOk = false; return null; }
+    const j = await r.json(); if (!Array.isArray(j) || !j.length) return null;
+    sbOk = true; return j.map(x => Array.isArray(x.cells) ? x.cells.map(v => v == null ? '' : String(v)) : []);
+  } catch { return null; }
+}
 async function fetchTab(t, { gid, name }) {
+  const fromSb = await fetchSb(gid ? 'plan' : name); if (fromSb) return fromSb;
   const q = gid ? `gid=${encodeURIComponent(gid)}` : `sheet=${encodeURIComponent(name)}`;
   const r = await fetch(`https://docs.google.com/spreadsheets/d/${t.id}/gviz/tq?tqx=out:csv&headers=1&${q}&_=${Date.now()}`);
   if (!r.ok) throw new Error(`โหลดชีตไม่ได้ (HTTP ${r.status}) — ตรวจว่าแชร์เป็น "ทุกคนที่มีลิงก์ดูได้"`);
