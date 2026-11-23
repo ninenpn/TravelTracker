@@ -49,14 +49,13 @@ function parseCSV(text) {
   if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
   return rows.map(r => r.map(x => x.trim()));
 }
-/* Supabase first (table sheet_rows: tab,row_no,cells); falls back to the Google Sheet if the table is missing/empty/unreachable */
 let sbOk = null;
 async function fetchSb(tab) {
-  const sb = window.TT_CONFIG && window.TT_CONFIG.supabase; if (!sb || !sb.url || sbOk === false) return null;
+  const sb = SB(); if (!sb || !sb.url || sbOk === false) return null;
   try {
     const r = await fetch(`${sb.url}/rest/v1/sheet_rows?tab=eq.${encodeURIComponent(tab)}&select=cells&order=row_no`, { headers: { apikey: sb.key } });
     if (!r.ok) { if (r.status === 404 || r.status === 401 || r.status === 403) sbOk = false; return null; }
-    const j = await r.json(); if (!Array.isArray(j) || !j.length) return null;
+    const txt = await r.text(); apiStat.add(txt.length); const j = JSON.parse(txt); if (!Array.isArray(j) || !j.length) return null;
     sbOk = true; return j.map(x => Array.isArray(x.cells) ? x.cells.map(v => v == null ? '' : String(v)) : []);
   } catch { return null; }
 }
@@ -71,113 +70,60 @@ const norm = s => String(s || '').toLowerCase().replace(/[\s_.]/g, '');
 function colIndex(header, names) { const h = header.map(norm); for (const n of names) { const i = h.indexOf(norm(n)); if (i >= 0) return i; } return -1; }
 const num = s => { const m = String(s ?? '').replace(/,/g, '').match(/-?\d+(\.\d+)?/g); return m ? m.map(Number) : []; };
 
-/* ---------- write-back (Apps Script) ---------- */
-/* ---------- Google sign-in (OAuth) + Sheets API: anyone with edit access to the sheet can edit through the app ---------- */
-const clientId = () => (window.TT_CONFIG && window.TT_CONFIG.googleClientId) || (data.settings && data.settings.googleClientId) || cfg.googleClientId || '';
-const auth = { token: '', exp: 0, email: '', name: '' };
-try { const a = JSON.parse(localStorage.getItem('tt.auth') || 'null'); if (a) Object.assign(auth, a); } catch { }
-auth.valid = () => !!auth.token && Date.now() < auth.exp - 60000;
-let gisPromise;
-const loadGis = () => gisPromise = gisPromise || new Promise((res, rej) => {
-  if (window.google && google.accounts && google.accounts.oauth2) return res();
-  const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; sc.onload = res; sc.onerror = () => { gisPromise = null; rej(new Error('โหลด Google Sign-in ไม่ได้ — ตรวจอินเทอร์เน็ต')); }; document.head.appendChild(sc);
-});
-let signInP;
-async function signIn() { if (signInP) return signInP; signInP = signInRaw().finally(() => { signInP = null; }); return signInP; }
-async function signInRaw() {
-  if (!clientId()) throw new Error('ยังไม่ได้ตั้งค่า Google Client ID');
-  await loadGis();
-  return new Promise((resolve, reject) => {
-    const tc = google.accounts.oauth2.initTokenClient({
-      client_id: clientId(), scope: 'https://www.googleapis.com/auth/spreadsheets openid email profile',
-      callback: async resp => {
-        if (resp.error) return reject(new Error(resp.error_description || resp.error));
-        auth.token = resp.access_token; auth.exp = Date.now() + (+resp.expires_in || 3600) * 1000;
-        try { const u = await (await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: 'Bearer ' + auth.token } })).json(); auth.email = u.email || ''; auth.name = u.name || ''; } catch { }
-        try { localStorage.setItem('tt.auth', JSON.stringify({ token: auth.token, exp: auth.exp, email: auth.email, name: auth.name })); } catch { }
-        renewBlockedUntil = 0; cfg.googleDeclined = false; saveCfg(); syncPendingPins(false); saveClientIdToSheet();
-        try { renderMenu(); renderMapStatus(); } catch { }
-        resolve(auth.token);
-      },
-      error_callback: e => reject(new Error(e && e.type === 'popup_closed' ? 'ปิดหน้าต่างเข้าสู่ระบบก่อนเสร็จ' : 'เข้าสู่ระบบไม่สำเร็จ'))
-    });
-    tc.requestAccessToken(auth.email ? { prompt: '', hint: auth.email } : { prompt: 'select_account' });
-  });
-}
-async function signOut() {
-  try { if (auth.token && window.google && google.accounts) google.accounts.oauth2.revoke(auth.token, () => { }); } catch { }
-  auth.token = ''; auth.exp = 0; auth.email = ''; auth.name = ''; try { localStorage.removeItem('tt.auth'); } catch { }
-  ui.edit = false; renderAll();
-}
-async function saveClientIdToSheet() {
-  const id = clientId(); if (!id || (data.settings && data.settings.googleClientId === id)) return true;
-  try { await setColumnForAllUsers('GoogleClientId', id); data.settings = { ...(data.settings || {}), googleClientId: id }; toast('บันทึก Client ID ลงแท็บ Users แล้ว — คนอื่นกดเข้าสู่ระบบได้เลย', 4000); renderMenu(); return true; } catch (e) { toast('บันทึก Client ID ลงชีตไม่สำเร็จ: ' + e.message, 9000); return false; }
-}
-const getToken = async () => auth.valid() ? auth.token : signIn();
-/* Google only hands out 1-hour tokens to browsers, so renew quietly in the background while the app is open */
-let renewBlockedUntil = 0;
-async function silentRenew() {
-  if (!auth.email || !clientId() || Date.now() < renewBlockedUntil) return;
-  if (auth.valid() && auth.exp - Date.now() > 5 * 60000) return;
-  try { await signIn(); } catch { renewBlockedUntil = Date.now() + 10 * 60000; }
-}
-const qa = n => `'${String(n).replace(/'/g, "''")}'`;
-const shApi = {
-  async req(path, opt = {}) {
-    const tok = await getToken();
-    const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${trip().id}${path}`, { ...opt, headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json', ...(opt.headers || {}) } });
-    if (r.status === 401) { auth.token = ''; auth.exp = 0; throw new Error('หมดเวลาเข้าสู่ระบบ — แตะเพื่อเข้าสู่ระบบอีกครั้ง'); }
-    const j = await r.json().catch(() => ({}));
-    if (r.status === 403) {
-      const m = (j.error && j.error.message) || '', raw = JSON.stringify(j);
-      if (/SERVICE_DISABLED|has not been used|is disabled/i.test(raw)) throw new Error('ยังไม่ได้เปิดใช้ Google Sheets API ในโปรเจกต์ Google Cloud — ไปที่ APIs & Services → Library → Google Sheets API → Enable');
-      throw new Error('บัญชี Google นี้ไม่มีสิทธิ์แก้ไขชีต — ขอให้เจ้าของชีตแชร์สิทธิ์ “ผู้แก้ไข” ให้' + (m ? ` (${m.slice(0, 80)})` : ''));
-    }
-    if (r.status === 404) throw new Error('ไม่พบชีตนี้ — ตรวจว่าบัญชีที่เข้าสู่ระบบเข้าถึงชีตได้');
-    if (!r.ok) { const e = new Error((j.error && j.error.message) || ('HTTP ' + r.status)); e.status = r.status; throw e; }
-    return j;
-  },
-  meta: async () => (await shApi.req('?fields=sheets.properties')).sheets.map(x => x.properties),
-  async ensureTab(name, header) {
-    if ((await shApi.meta()).some(x => x.title === name)) return;
-    await shApi.req(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: [{ addSheet: { properties: { title: name } } }] }) });
-    if (header) await shApi.req(`/values/${encodeURIComponent(qa(name) + '!A1')}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: [header] }) });
-  },
-  async inTab(p, fn) { try { return await fn(); } catch (e) { if (e.status === 400 && /Unable to parse range|not found/i.test(e.message)) { await shApi.ensureTab(p.tab, p.header); return fn(); } throw e; } }
+/* ---------- data layer: Supabase (reads: publishable key; writes: RPC functions guarded by an edit code) ---------- */
+const SB = () => (window.TT_CONFIG && window.TT_CONFIG.supabase) || null;
+const apiStat = {
+  add(bytes) { try { const m = new Date().toISOString().slice(0, 7); let st = JSON.parse(localStorage.getItem('tt.api') || '{}'); if (st.m !== m) st = { m, n: 0, b: 0 }; st.n++; st.b += bytes || 0; localStorage.setItem('tt.api', JSON.stringify(st)); } catch { } },
+  get() { try { const m = new Date().toISOString().slice(0, 7), st = JSON.parse(localStorage.getItem('tt.api') || '{}'); return st.m === m ? st : { m, n: 0, b: 0 }; } catch { return { n: 0, b: 0 }; } }
 };
-const lastBackup = () => +(sessionStorage.getItem('tt.bak') || 0);
+async function sbRpc(fn, args) {
+  const sb = SB(); if (!sb) throw new Error('ยังไม่ได้ตั้งค่า Supabase');
+  const r = await fetch(`${sb.url}/rest/v1/rpc/${fn}`, { method: 'POST', headers: { apikey: sb.key, 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
+  const txt = await r.text(); apiStat.add(txt.length + JSON.stringify(args).length);
+  let j; try { j = JSON.parse(txt); } catch { j = txt; }
+  if (!r.ok) {
+    const m = (j && j.message) || String(txt);
+    if (/wrong code/i.test(m)) { cfg.editCode = ''; saveCfg(); throw new Error('รหัสแก้ไขไม่ถูกต้อง'); }
+    if (/Could not find the function|schema cache/i.test(m)) throw new Error('ยังไม่ได้รันสคริปต์ docs/supabase_edit.sql ใน Supabase');
+    throw new Error(m);
+  }
+  return j;
+}
+const auth = { valid: () => !!cfg.editCode, email: '', token: '', name: '' };       // "signed in" = the edit code is known on this device
+const clientId = () => '';
+const silentRenew = () => { };
+let askP = null;
+function askEditCode(reason) {
+  if (askP) return askP;
+  askP = new Promise((resolve, reject) => {
+    const d = openDlg(`<form method="dialog"><h3>รหัสแก้ไข</h3>${reason ? `<div class="mut">${esc(reason)}</div>` : ''}<div class="mut" style="margin:6px 0">ใส่รหัสที่ผู้ดูแลทริปตั้งไว้ ระบบจำไว้ในเครื่องนี้</div><input name="code" type="password" autocomplete="off" autocapitalize="off" placeholder="รหัสแก้ไข"><div class="btns"><button value="ok" class="btn pri">ยืนยัน</button><button value="x" class="btn" formnovalidate>ยกเลิก</button></div></form>`);
+    let pending = false;
+    $('form', d).onsubmit = async ev => {
+      if (ev.submitter && ev.submitter.value !== 'ok') return;
+      pending = true; const code = String(new FormData(ev.target).get('code') || '').trim();
+      try { if (!code || !(await sbRpc('check_code', { code }))) throw new Error('รหัสแก้ไขไม่ถูกต้อง'); cfg.editCode = code; saveCfg(); toast('ปลดล็อกการแก้ไขแล้ว', 2500); resolve(true); }
+      catch (e) { toast(e.message, 4500); reject(e); }
+    };
+    d.addEventListener('close', () => { if (!pending) reject(new Error('ยกเลิก')); }, { once: true });
+  }).finally(() => { askP = null; });
+  return askP;
+}
+const googleDialog = reason => askEditCode(reason).catch(() => { });
+const signIn = () => cfg.editCode ? Promise.resolve(true) : askEditCode();
+const signOut = () => { cfg.editCode = ''; saveCfg(); renderAll(); };
 const sheetApi = {
-  on: () => false,                        // read-only app: no Google sign-in, no writing to the sheet
-  ready: () => auth.valid(),              // signed in right now (no popup needed)
+  on: () => !!SB(),                       // database configured
+  ready: () => !!cfg.editCode,            // edit code known on this device
   async call(action, p) {
+    if (!cfg.editCode) await askEditCode('ต้องใช้รหัสแก้ไขเพื่อบันทึก');
+    const code = cfg.editCode || '', tab = p.gid ? 'plan' : p.tab, str = a => a.map(v => v == null ? '' : String(v));
     switch (action) {
-      case 'append':
-        await shApi.inTab(p, () => shApi.req(`/values/${encodeURIComponent(qa(p.tab) + '!A:A')}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: 'POST', body: JSON.stringify({ values: [p.values] }) }));
-        return { ok: true };
-      case 'upsert': {
-        const col = await shApi.inTab(p, () => shApi.req(`/values/${encodeURIComponent(qa(p.tab) + '!A:A')}`));
-        const key = String(p.key).trim().toLowerCase(), idx = (col.values || []).findIndex((r, i) => i > 0 && String(r[0] || '').trim().toLowerCase() === key);
-        if (idx >= 0) { await shApi.req(`/values/${encodeURIComponent(qa(p.tab) + '!A' + (idx + 1))}?valueInputOption=USER_ENTERED`, { method: 'PUT', body: JSON.stringify({ values: [p.values] }) }); return { ok: true, updated: true }; }
-        return sheetApi.call('append', p);
-      }
+      case 'append': await sbRpc('append_row', { p_tab: tab, p_cells: str(p.values), code }); return { ok: true };
+      case 'upsert': await sbRpc('upsert_row', { p_tab: tab, p_key: String(p.key), p_cells: str(p.values), code }); return { ok: true };
       case 'savePlan': {
-        const props = await shApi.meta(), target = p.gid ? props.find(x => String(x.sheetId) === String(p.gid)) : props[0];
-        if (!target) throw new Error('ไม่พบแท็บแผนในชีต');
-        if (Date.now() - lastBackup() > 10 * 60000) {            // keep one hidden backup, refreshed at most every 10 minutes
-          const old = props.find(x => x.title === '_plan_backup'), newId = Math.floor(Math.random() * 2e9) + 1, reqs = [];
-          if (old) reqs.push({ deleteSheet: { sheetId: old.sheetId } });
-          reqs.push({ duplicateSheet: { sourceSheetId: target.sheetId, newSheetId: newId, newSheetName: '_plan_backup' } }, { updateSheetProperties: { properties: { sheetId: newId, hidden: true }, fields: 'hidden' } });
-          await shApi.req(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: reqs }) }); try { sessionStorage.setItem('tt.bak', String(Date.now())); } catch { }
-        }
-        if (!p.rows || p.rows.length < 2) throw new Error('ไม่บันทึก: ไม่มีข้อมูลแผนให้เขียน (กันชีตว่าง)');
-        const g = target.gridProperties || {}, W = Math.max(...p.rows.map(r => r.length), 1);
-        try { await shApi.req(':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: [{ unmergeCells: { range: { sheetId: target.sheetId, startRowIndex: 0, endRowIndex: g.rowCount || 1000, startColumnIndex: 0, endColumnIndex: g.columnCount || 26 } } }] }) }); } catch { }   // merged cells swallow values
-        const T = qa(target.title), put = await shApi.req(`/values/${encodeURIComponent(T + '!A1')}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: p.rows }) });   // write FIRST ...
-        if (!put.updatedCells) throw new Error('เขียนลงชีตไม่สำเร็จ');
-        const gc = g.columnCount || 26, gr = g.rowCount || 1000;                                                                                                                           // ... then clear only what is left over
-        if (gr > p.rows.length) await shApi.req(`/values/${encodeURIComponent(T + '!A' + (p.rows.length + 1) + ':ZZ')}:clear`, { method: 'POST', body: '{}' });
-        if (gc > W) await shApi.req(`/values/${encodeURIComponent(T + '!' + colLetter(W) + '1:ZZ' + p.rows.length)}:clear`, { method: 'POST', body: '{}' });
-        return { ok: true, rows: p.rows.length };
+        if (!p.rows || p.rows.length < 2) throw new Error('ไม่บันทึก: ไม่มีข้อมูลแผนให้เขียน (กันข้อมูลว่าง)');
+        const rows = p.rows.map(r => { const x = str(r); while (x.length && x[x.length - 1] === '') x.pop(); return x; });
+        await sbRpc('save_tab', { p_tab: 'plan', p_rows: rows, code }); return { ok: true, rows: rows.length };
       }
       default: throw new Error('unknown action ' + action);
     }
@@ -386,8 +332,6 @@ function enter(name) {
   me = name; sess.set('tt.me', name); if (name) { cfg.lastMe = name; saveCfg(); }
   $('#login').hidden = true; $('#app').hidden = false; renderAll();
   if (name) startLocation();
-  if (name && sheetApi.on() && !auth.email && !cfg.googleDeclined && !Object.keys(cfg.pendingPin || {}).length)
-    signIn().catch(() => { cfg.googleDeclined = true; saveCfg(); });          // one tap on the name -> Google account chooser -> Allow
 }
 /* PIN: stored as a salted SHA-256 hash in the sheet's Users tab (column "PIN") so it works on every device; remembered per device after the first success.
    A 4-digit PIN only keeps friends from picking each other's name — anyone who can read the sheet could brute-force it. */
@@ -399,75 +343,26 @@ async function hashPin(name, pin) {
 }
 const colLetter = i => { let t = '', n = i + 1; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = Math.floor((n - 1) / 26); } return t; };
 async function setPinInSheet(name, hash) {
-  const tab = trip().usersTab, enc = r => encodeURIComponent(r);
-  const hdr = (await shApi.req(`/values/${enc(qa(tab) + '!1:1')}`)).values; let hd = (hdr && hdr[0]) || [], ci = hd.findIndex(h => /^pin$/i.test(String(h).trim()));
-  const col = (await shApi.req(`/values/${enc(qa(tab) + '!A:A')}`)).values || [], idx = col.findIndex((r, k) => k > 0 && String(r[0] || '').trim().toLowerCase() === name.trim().toLowerCase());
-  if (idx < 0) throw new Error('ไม่พบชื่อนี้ในแท็บสมาชิกของชีต');
-  if (ci < 0) { ci = hd.length; await shApi.req(`/values/${enc(qa(tab) + '!' + colLetter(ci) + '1')}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: [['PIN']] }) }); }
-  await shApi.req(`/values/${enc(qa(tab) + '!' + colLetter(ci) + (idx + 1))}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: [[hash]] }) });
-}
-async function setColumnForAllUsers(colName, value) {
-  const tab = trip().usersTab, enc = r => encodeURIComponent(r);
-  const hd = (((await shApi.req(`/values/${enc(qa(tab) + '!1:1')}`)).values || [[]])[0]) || [];
-  let ci = hd.findIndex(h => norm(h) === norm(colName));
-  const col = (await shApi.req(`/values/${enc(qa(tab) + '!A:A')}`)).values || [];
-  if (col.length < 2) throw new Error('แท็บสมาชิกยังไม่มีรายชื่อ');
-  if (ci < 0) { ci = hd.length; await shApi.req(`/values/${enc(qa(tab) + '!' + colLetter(ci) + '1')}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: [[colName]] }) }); }
-  const vals = []; for (let r = 1; r < col.length; r++) vals.push([String((col[r] || [])[0] || '').trim() ? value : '']);
-  await shApi.req(`/values/${enc(qa(tab) + '!' + colLetter(ci) + '2:' + colLetter(ci) + col.length)}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values: vals }) });
+  if (hash && !cfg.editCode) { await sbRpc('set_first_pin', { p_name: name, p_hash: hash }); return; }          // first-time PIN needs no code
+  await sbRpc('set_cell', { p_tab: trip().usersTab, p_key: name, p_col: 'PIN', p_val: hash, code: cfg.editCode || '' });
 }
 let syncingPins = false;
 async function syncPendingPins(interactive) {
   const names = Object.keys(cfg.pendingPin); if (!names.length || syncingPins || !sheetApi.on()) return;
   syncingPins = true;
   try {
-    if (!auth.valid()) { if (!interactive) return; await signIn(); }
     for (const n of names) {
       const u = users().find(x => x.name === n);
       if (u && u.pin) { delete cfg.pendingPin[n]; continue; }          // somebody already set a PIN for this name
       try { await setPinInSheet(n, cfg.pendingPin[n]); if (u) u.pin = cfg.pendingPin[n]; delete cfg.pendingPin[n]; }
-      catch (e) { if (interactive) toast('บันทึก PIN ลงชีตไม่สำเร็จ: ' + e.message + ' — PIN ใช้ได้เฉพาะเครื่องนี้', 5000); break; }
+      catch (e) { if (interactive) toast('บันทึก PIN ไม่สำเร็จ: ' + e.message + ' — PIN ใช้ได้เฉพาะเครื่องนี้', 5000); break; }
     }
     saveCfg();
   } catch (e) { if (interactive) toast('PIN ใช้ได้เฉพาะเครื่องนี้ก่อน (' + e.message + ')', 4500); }
   finally { syncingPins = false; }
 }
-const storedPin = name => { const u = users().find(x => x.name === name); return (u && u.pin) || cfg.pendingPin[name] || ''; };
-function pickUser(name) { pinPad(name, storedPin(name) ? 'verify' : 'create'); }   // PIN is asked every time; only a name without a PIN gets to create one
-function pinPad(name, mode) {
-  const box = $('#loginPin'); let digits = '', first = '';
-  $('#loginUsers').hidden = true; $('#loginGuest').hidden = true; $('#loginSub').hidden = true; box.hidden = false;
-  const title = () => mode === 'verify' ? 'ใส่ PIN ของคุณ' : first ? 'ยืนยัน PIN อีกครั้ง' : 'ตั้ง PIN 4 หลัก (ครั้งแรก)';
-  const draw = (msg, bad) => {
-    box.innerHTML = `<div class="pinpad">${avatar(name, 'lg')}<h2>${esc(name)}</h2><p id="pinMsg" class="${bad ? 'bad' : ''}">${esc(msg || title())}</p>${mode === 'create' && !auth.valid() ? '<div class="pinwarn">⚠ PIN จะถูกบันทึกลงชีตเมื่อเข้าสู่ระบบ Google สำเร็จ — ถ้ายังไม่สำเร็จ PIN จะใช้ได้เฉพาะเครื่องนี้ (เปลี่ยนเครื่องต้องตั้งใหม่)</div>' : ''}
-    <div class="dots ${bad ? 'shake' : ''}">${Array.from({ length: PIN_LEN }, (_, i) => `<i class="${i < digits.length ? 'f' : ''}"></i>`).join('')}</div>
-    <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => `<button data-k="${k}">${k}</button>`).join('')}<button data-k="back" aria-label="ลบ">⌫</button><button data-k="0">0</button><span></span></div>
-    <div class="pin-links"><button class="link" data-a="back">← เปลี่ยนชื่อ</button>${mode === 'verify' ? '<button class="link" data-a="forgot">ลืม PIN?</button>' : ''}</div></div>`;
-    $$('[data-k]', box).forEach(b => b.onclick = () => press(b.dataset.k));
-    $('[data-a=back]', box).onclick = leave; const fg = $('[data-a=forgot]', box); if (fg) fg.onclick = () => resetPin(name);
-  };
-  const leave = () => { box.hidden = true; box.innerHTML = ''; $('#loginUsers').hidden = false; $('#loginSub').hidden = false; renderLogin(); };
-  const press = async k => {
-    if (k === 'back') digits = digits.slice(0, -1); else if (digits.length < PIN_LEN) digits += k;
-    draw();
-    if (digits.length < PIN_LEN) return;
-    const pin = digits; digits = '';
-    if (mode === 'verify') {
-      const h = await hashPin(name, pin);
-      if (storedPin(name) === h) { box.hidden = true; box.innerHTML = ''; return enter(name); }
-      return draw('PIN ไม่ถูกต้อง ลองอีกครั้ง', true);
-    }
-    if (!first) { first = pin; return draw(); }
-    if (first !== pin) { first = ''; return draw('PIN ไม่ตรงกัน ตั้งใหม่อีกครั้ง', true); }
-    const h = await hashPin(name, pin); cfg.pendingPin[name] = h; saveCfg();
-    box.hidden = true; box.innerHTML = ''; enter(name);
-    syncPendingPins(true);                                   // still inside the tap, so Google sign-in may open if needed
-  };
-  draw();
-}
 async function resetPin(name) {
-  if (!sheetApi.on()) return toast('รีเซ็ตในแอปต้องตั้งค่า Google ก่อน — หรือให้ผู้มีสิทธิ์แก้ไขชีตลบค่าในคอลัมน์ PIN ของแท็บ Users', 6000);
-  if (!confirm(`ล้าง PIN ของ ${name}? (ต้องเข้าสู่ระบบ Google ด้วยบัญชีที่มีสิทธิ์แก้ไขชีต)`)) return;
+  if (!confirm(`ล้าง PIN ของ ${name}? (ต้องใช้รหัสแก้ไข)`)) return;
   try { await signIn(); await setPinInSheet(name, ''); delete cfg.pendingPin[name]; saveCfg(); const u = users().find(x => x.name === name); if (u) u.pin = ''; toast('ล้าง PIN แล้ว — ตั้ง PIN ใหม่ได้เลย'); pinPad(name, 'create'); }
   catch (e) { toast(e.message, 5000); }
 }
@@ -560,7 +455,7 @@ function renderPlan() {
   if (ui.day == null || ui.day >= p.days.length) { const t = p.days.findIndex(isToday); ui.day = t >= 0 ? t : Math.max(0, p.days.findIndex(d => !isPast(d))); }
   const d = p.days[ui.day], wd = d.dt && !isPast(d) ? d.dt.toLocaleDateString('th-TH', { weekday: 'long' }) : '';
   let h = (ui.edit ? '' : cdCard() + stayCard());
-  h += `<div class="dayh"><div><h2>${esc(dayTitle(d, ui.day))}</h2><small>${[wd, d.city].filter(Boolean).map(esc).join(' · ')}${isToday(d) ? ' <span class="chip">วันนี้</span>' : ''}</small></div></div>`;
+  h += `<div class="dayh"><div><h2>${esc(dayTitle(d, ui.day))}</h2><small>${[wd, d.city].filter(Boolean).map(esc).join(' · ')}${isToday(d) ? ' <span class="chip">วันนี้</span>' : ''}</small></div><button class="edit-btn ${ui.edit ? 'on' : ''}" id="editBtn">${ui.edit ? 'เสร็จ' : '<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>แก้ไข'}</button></div>`;
   if (!ui.edit && !isPast(d)) { const hits = spotMatches().items.filter(m => m.di === ui.day); if (hits.length) h += `<button class="nudge" id="nudge"><span>🛤</span><div><b>แวะได้ ${hits.length} ที่จากลิสของคุณ</b><small>อยู่ใกล้เส้นทางของวันนี้ — แตะเพื่อดู</small></div></button>`; }
   h += `<div class="tl ${ui.edit ? 'editing' : ''}" id="tl">` + d.steps.map((s, k) => `<div class="step" data-i="${k}"><div class="step-t">${esc(s.time || '')}${s.toTime ? `<small>→ ${esc(s.toTime)}</small>` : ''}</div><div class="step-c"><div class="step-i">${howIcon(s.how, !!s.text)}</div><div class="step-b">
     ${s.text ? `<div>${link(s.text)}</div>` : ''}${(s.from || s.to) ? `<div class="route">${ui.edit ? esc(s.from) : mapLink(s.from)}${s.to ? ' <span class="arrow">→</span> ' + (ui.edit ? esc(s.to) : mapLink(s.to)) : ''}</div>` : ''}
@@ -569,11 +464,13 @@ function renderPlan() {
     ${ui.edit ? '' : bell(ui.day, k)}<div class="grip" aria-label="ลากเพื่อจัดลำดับ"><svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></div></div></div>`).join('') + '</div>';
   if (!d.steps.length && !ui.edit) h += '<div class="card empty flat">ยังไม่มีแผนสำหรับวันนี้<br><small>กด “แก้ไข” เพื่อเพิ่มรายการ</small></div>';
   if (ui.edit) h += '<button class="addstep" id="addStep">+ เพิ่มรายการ</button>';
-  if (!ui.edit) p.ideas.forEach((g, gi) => { if (g.items.length) h += `<div class="card flat"><h3>💡 ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map((i, ii) => `<li>${mapLink(i)}</li>`).join('')}</ul></div>`; });
+  if (!ui.edit) p.ideas.forEach((g, gi) => { if (g.items.length) h += `<div class="card flat"><h3>💡 ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map((i, ii) => `<li>${mapLink(i)} <button class="tag sm" data-gi="${gi}" data-ii="${ii}">+ เพิ่มเข้าแผน</button></li>`).join('')}</ul></div>`; });
   el.innerHTML = h;
   dayBar.innerHTML = p.days.map(pill).join('') + (ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : '');
   const sel = $('.pill.sel', dayBar); if (sel) dayBar.scrollLeft = sel.offsetLeft - dayBar.clientWidth / 2 + sel.clientWidth / 2;
+  $$('[data-gi]', el).forEach(b => b.onclick = () => { const g = p.ideas[+b.dataset.gi]; addToPlanDialog(g.items[+b.dataset.ii], { gi: +b.dataset.gi, ii: +b.dataset.ii }); });
   $$('.pill[data-day]', dayBar).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; ui.refit = true; ui.activeStep = null; renderPlan(); });
+  $('#editBtn').onclick = toggleEdit;
   bindBells(el);
   const sc = $('#stCopy'); if (sc) sc.onclick = () => copyText(data.stay.address, 'คัดลอกที่อยู่แล้ว');
   const nd = $('#nudge'); if (nd) nd.onclick = () => { ui.spotView = 'sug'; $('[data-tab=spots]').click(); };
@@ -611,7 +508,7 @@ async function savePlan() {
   if (!sheetApi.on() || !data.plan) return;
   if (ui.saving) { scheduleSave(); return; }
   ui.saving = true;
-  try { await sheetApi.call('savePlan', { gid: trip().planGid || '', rows: planToRows(data.plan) }); ui.dirty = false; setSub('บันทึกลงชีตแล้ว ✓', 2500); }
+  try { await sheetApi.call('savePlan', { gid: trip().planGid || '', rows: planToRows(data.plan) }); ui.dirty = false; setSub('บันทึกแล้ว ✓', 2500); }
   catch (e) { setSub('บันทึกไม่สำเร็จ — แตะเพื่อลองใหม่'); toast('บันทึกไม่สำเร็จ: ' + e.message, 9000); }
   finally { ui.saving = false; }
 }
@@ -730,9 +627,10 @@ function renderExpenses(el) {
 }
 function renderMoney() {
   const el = $('#tab-money'), v = ui.moneyView || 'sum';
-  el.innerHTML = `<div class="seg"><button data-v="sum" class="${v === 'sum' ? 'on' : ''}">สรุป</button><button data-v="list" class="${v === 'list' ? 'on' : ''}">รายการ</button></div><div id="moneyBody"></div>`;
+  el.innerHTML = `<div class="seg"><button data-v="sum" class="${v === 'sum' ? 'on' : ''}">สรุป</button><button data-v="list" class="${v === 'list' ? 'on' : ''}">รายการ</button></div><div id="moneyBody"></div><button class="fab" id="addExp" aria-label="เพิ่มค่าใช้จ่าย"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>`;
   (v === 'list' ? renderExpenses : renderBudget)($('#moneyBody'));
   $$('[data-v]', el).forEach(b => b.onclick = () => { ui.moneyView = b.dataset.v; renderMoney(); });
+  $('#addExp').onclick = expenseDialog;
 }
 async function copyText(t, okMsg) { try { await navigator.clipboard.writeText(t); toast(okMsg); } catch { prompt('คัดลอกข้อความนี้:', t); } }
 function expensePreview(f) {
@@ -757,7 +655,7 @@ function expenseDialog() {
   <div id="whoBox"><label>หารกับใคร (ว่าง = ทุกคนสำหรับส่วนกลาง)</label><div class="checks">${us.map(n => `<label><input type="checkbox" name="w" value="${esc(n)}">${esc(n)}</label>`).join('')}</div></div>
   <label>หมวด</label><input name="cat" placeholder="อาหาร / เดินทาง / ที่พัก">
   <div class="card preview" id="preview"></div>
-  <div class="btns"><button value="ok" class="btn pri">${sheetApi.on() ? 'บันทึกลงชีต' : 'คัดลอกแถว'}</button><button value="x" class="btn" formnovalidate>ยกเลิก</button></div></form>`);
+  <div class="btns"><button value="ok" class="btn pri">${sheetApi.on() ? 'บันทึก' : 'คัดลอกแถว'}</button><button value="x" class="btn" formnovalidate>ยกเลิก</button></div></form>`);
   const form = $('form', d);
   const vals = () => { const f = new FormData(form); return { amount: f.get('amount'), cur: f.get('cur'), payer: f.get('payer'), type: f.get('type'), with: f.getAll('w') }; };
   const upd = () => { const v = vals(); $('#whoBox').hidden = v.type === 'personal'; $('#preview').innerHTML = expensePreview(v); };
@@ -767,7 +665,7 @@ function expenseDialog() {
     if (ev.submitter && ev.submitter.value !== 'ok') return; const f = new FormData(ev.target);
     const row = [new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }), f.get('item'), f.get('cat'), +f.get('amount'), f.get('cur'), f.get('payer'), f.get('type'), f.getAll('w').join(', ')];
     if (!sheetApi.on()) return copyText(row.join('\t'), 'คัดลอกแถวแล้ว — วางต่อท้ายแท็บ ' + trip().expensesTab + ' ในชีต');
-    try { setSub('กำลังบันทึก…'); await sheetApi.call('append', { tab: trip().expensesTab, header: ['Date', 'Item', 'Category', 'Amount', 'Currency', 'PaidBy', 'Type', 'SplitWith'], values: row }); setSub('บันทึกลงชีตแล้ว ✓', 2500); await load(); }
+    try { setSub('กำลังบันทึก…'); await sheetApi.call('append', { tab: trip().expensesTab, header: ['Date', 'Item', 'Category', 'Amount', 'Currency', 'PaidBy', 'Type', 'SplitWith'], values: row }); setSub('บันทึกแล้ว ✓', 2500); await load(); }
     catch (e) { setSub(''); toast(e.message); }
   };
 }
@@ -1145,11 +1043,11 @@ function focusOnMap(c) { $('[data-tab=map]').click(); setTimeout(() => { if (map
 function spotCard(s, a) {
   const [ic, col] = SPOT[s.type], d = a && s.c ? distM(a.c, s.c) : null;
   return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic}</div><div class="spot-b"><b>${esc(s.name)}</b><small>${[nice(s.cuisine), s.meal, d != null ? dist(d) : ''].filter(Boolean).map(esc).join(' · ')}</small>${s.note ? `<div class="note">${esc(s.note)}</div>` : ''}
-  <div class="spot-a">${s.c ? `<a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.c.lat},${s.c.lng}">นำทาง</a><button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button>` : `<button class="tag" data-fix="${esc(s.q || s.name)}">ตั้งพิกัด</button>`}</div></div></div>`;
+  <div class="spot-a">${s.c ? `<a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.c.lat},${s.c.lng}">นำทาง</a><button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button>` : `<button class="tag" data-fix="${esc(s.q || s.name)}">ตั้งพิกัด</button>`}<button class="tag pri" data-pick="${esc(s.name)}">+ เพิ่มเข้าแผน</button></div></div></div>`;
 }
 function listHtml() {
   const a = currentAnchor(), f = ui.spotFilter || 'all', all = allSpots(), cnt = t => all.filter(s => s.type === t).length;
-  let h = '';
+  let h = `<div class="card"><label style="margin-top:0">เพิ่มสถานที่ — วางลิงก์ Google Maps</label><div class="addrow"><input id="linkIn" inputmode="url" placeholder="วางลิงก์ที่นี่ แล้วระบบหาพิกัดให้"><button class="btn pri" id="linkGo">เพิ่ม</button></div></div>`;
   h += `<div class="chips">${[['all', 'ทั้งหมด', all.length], ['food', '🍽 ร้านอาหาร', cnt('food')], ['sight', '🏛 ที่เที่ยว', cnt('sight')], ['other', '📌 อื่นๆ', cnt('other')]].map(([k, l, n]) => `<button class="tag ${f === k ? 'on' : ''}" data-sf="${k}">${l} <small>${n}</small></button>`).join('')}</div>`;
   const list = all.filter(s => f === 'all' || s.type === f).sort((x, y) => (a && x.c && y.c) ? distM(a.c, x.c) - distM(a.c, y.c) : 0);
   h += list.length ? list.map(s => spotCard(s, a)).join('') : '<div class="empty">ยังไม่มีสถานที่<br><small>วางลิงก์ Google Maps ด้านบนเพื่อเพิ่ม</small></div>';
@@ -1222,7 +1120,7 @@ function sugCard(it, idx) {
   const fit = s.type === 'food' && s.meal && mealMatches(s.meal, slot) ? `<span class="chip ok">เหมาะกับมื้อ${esc(s.meal)}</span>` : '';
   return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic}</div><div class="spot-b"><b>${esc(s.name)}</b><small>${[nice(s.cuisine), s.meal].filter(Boolean).map(esc).join(' · ')}</small>
   <div class="ctx">${ctx}</div><div>${fit}<span class="chip">ช่วง ~${fmtMin(it.m)}${it.est ? ' (ประมาณ)' : ''}</span></div>${s.note ? `<div class="note">${esc(s.note)}</div>` : ''}
-  <div class="spot-a"><a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.c.lat},${s.c.lng}">นำทาง</a><button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button></div></div></div>`;
+  <div class="spot-a"><button class="tag pri" data-addplan="${idx}">+ เพิ่มเข้าแผน</button><a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.c.lat},${s.c.lng}">นำทาง</a><button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button></div></div></div>`;
 }
 function sugHtml() {
   const { items, pending } = spotMatches(), p = data.plan; ui._sug = items;
@@ -1284,7 +1182,7 @@ async function addToPlanDialog(name, idea) {
 const TIP = { travel: ['🚕', '#2f7bff', 'เดินทาง'], food: ['🍽', '#ff7a45', 'ร้านอาหาร'], cafe: ['☕', '#a06bff', 'คาเฟ่'] };
 function tipsHtml() {
   const all = data.tips || [], f = ui.tipFilter || 'all';
-  if (!all.length) return '<div class="empty">ยังไม่มีคำแนะนำ<br><small>เพิ่มแท็บ “Tips” ในชีต (Type, Name, Detail, BestTime, Source)</small></div>';
+  if (!all.length) return '<div class="empty">ยังไม่มีคำแนะนำ<br><small>เพิ่มข้อมูลแท็บ “Tips” (Type, Name, Detail, BestTime, Source)</small></div>';
   const list = all.filter(x => f === 'all' || x.type === f), cnt = t => all.filter(x => x.type === t).length;
   let h = `<div class="chips">${[['all', 'ทั้งหมด', all.length], ['travel', '🚕 เดินทาง', cnt('travel')], ['food', '🍽 อาหาร', cnt('food')], ['cafe', '☕ คาเฟ่', cnt('cafe')]].map(([k, l, n]) => `<button class="tag ${f === k ? 'on' : ''}" data-tf="${k}">${l} <small>${n}</small></button>`).join('')}</div>`;
   h += '<div class="mut" style="font-size:.78rem;margin:2px 4px 8px">เวลาที่แนะนำเป็นคำแนะนำทั่วไป ไม่ใช่เวลาเปิด-ปิดร้าน · ข้อมูลรวมจากไกด์/Reddit/Yandex — กดปุ่ม TikTok / Facebook เพื่อดูคลิปและรีวิวจริง</div>';
@@ -1298,8 +1196,9 @@ function tipsHtml() {
 function renderSpots() {
   const el = $('#tab-spots'); if (!el) return;
   const v = ui.spotView === 'list' ? 'list' : ui.spotView === 'tips' ? 'tips' : 'sug';
-  el.innerHTML = `<div class="seg"><button data-v="sug" class="${v === 'sug' ? 'on' : ''}">แนะนำตามแผน</button><button data-v="list" class="${v === 'list' ? 'on' : ''}">ลิสทั้งหมด</button><button data-v="tips" class="${v === 'tips' ? 'on' : ''}">น่าไป</button></div>` + (v === 'sug' ? sugHtml() : v === 'tips' ? tipsHtml() : listHtml());
+  el.innerHTML = `<div class="seg"><button data-v="sug" class="${v === 'sug' ? 'on' : ''}">แนะนำตามแผน</button><button data-v="list" class="${v === 'list' ? 'on' : ''}">ลิสทั้งหมด</button><button data-v="tips" class="${v === 'tips' ? 'on' : ''}">น่าไป</button></div>` + (v === 'sug' ? sugHtml() : v === 'tips' ? tipsHtml() : listHtml()) + '<button class="fab" id="addSpot" aria-label="เพิ่มสถานที่"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>';
   $$('[data-v]', el).forEach(b => b.onclick = () => { ui.spotView = b.dataset.v; renderSpots(); });
+  $('#addSpot').onclick = () => spotDialog();
   $$('[data-tf]', el).forEach(b => b.onclick = () => { ui.tipFilter = b.dataset.tf; renderSpots(); });
   $$('[data-sf]', el).forEach(b => b.onclick = () => { ui.spotFilter = b.dataset.sf; renderSpots(); });
   $$('[data-focus]', el).forEach(b => b.onclick = () => { const x = allSpots().find(y => y.name === b.dataset.focus); if (x && x.c) focusOnMap(x.c); });
@@ -1355,7 +1254,7 @@ async function saveSpot(s, dayIdx) {
   s.c = { lat: s.lat, lng: s.lng }; data.spots = data.spots.filter(x => norm(x.name) !== norm(s.name)); data.spots.push(s); data.places[norm(s.name)] = s.c;
   renderSpots(); renderFilters(); drawMap(false);
   const row = [s.name, +s.lat.toFixed(6), +s.lng.toFixed(6), s.note, s.type, s.meal, s.cuisine];
-  if (sheetApi.on()) { try { await sheetApi.call('upsert', { tab: trip().placesTab || 'Places', header: ['Name', 'Lat', 'Lng', 'Note', 'Type', 'Meal', 'Cuisine'], key: s.name, keyCol: 0, values: row }); toast('บันทึกลงชีตแล้ว ✓'); } catch (e) { toast(e.message); } }
+  if (sheetApi.on()) { try { await sheetApi.call('upsert', { tab: trip().placesTab || 'Places', header: ['Name', 'Lat', 'Lng', 'Note', 'Type', 'Meal', 'Cuisine'], key: s.name, keyCol: 0, values: row }); toast('บันทึกแล้ว ✓'); } catch (e) { toast(e.message); } }
   else copyText(row.join('\t'), 'ยังไม่ได้เชื่อมต่อชีต — คัดลอกแถวแล้ว วางในแท็บ ' + (trip().placesTab || 'Places'));
   if (dayIdx !== '' && dayIdx != null && data.plan) {
     const d = data.plan.days[+dayIdx], ix = data.plan.cols, last = d.steps.length ? d.steps[d.steps.length - 1].to : '', r = [], set = (cc, v) => { if (cc >= 0) { while (r.length <= cc) r.push(''); r[cc] = v; } };
@@ -1368,7 +1267,8 @@ async function saveSpot(s, dayIdx) {
 function renderMenu() {
   const el = $('#tab-menu'), on = sheetApi.on();
   let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
-  const signed = false, cid = '';
+  if (me && cfg.pendingPin[me]) h += `<div class="card" style="border-color:#ffb020"><h2>⚠ PIN ของคุณยังอยู่แค่ในเครื่องนี้</h2><div class="mut">ยังไม่ได้บันทึกลงฐานข้อมูล เปลี่ยนเครื่องแล้วจะต้องตั้ง PIN ใหม่ — กดปุ่มเพื่อบันทึก</div><div class="btns"><button class="btn pri" id="bPinSync">บันทึก PIN ลงชีตตอนนี้</button></div></div>`;
+  h += editCard(); h += usageCard();
   h += notifCard();
   h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
   h += `<div class="card"><h2 style="margin-bottom:4px">ทริป</h2>${cfg.trips.map(t => `<button class="li ${t.id === cfg.active ? 'on' : ''}" data-trip="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b></div></button>`).join('')}<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div></div>`;
@@ -1376,11 +1276,11 @@ function renderMenu() {
   h += data.extra.map(x => tableCard(x.name, x.rows)).join('');
   h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด ${ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '—'} · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
   el.innerHTML = h;
-  $('#bSwitch').onclick = () => $('#btnMe').click(); const bc = $('#bConn'); if (bc) bc.onclick = async () => { if (!clientId()) return googleDialog(); try { cfg.googleDeclined = false; await signIn(); toast('เข้าสู่ระบบแล้ว: ' + auth.email); renderAll(); } catch (e) { toast(e.message, 4500); } };
-  const bo = $('#bOut'); if (bo) bo.onclick = signOut;
-  const bp = $('#bPinSync'); if (bp) bp.onclick = async () => { if (!sheetApi.on()) return googleDialog('ต้องตั้งค่า Google ก่อน PIN ถึงจะบันทึกลงชีตได้'); await syncPendingPins(true); renderMenu(); if (!cfg.pendingPin[me]) toast('บันทึก PIN ลงชีตแล้ว — ใช้ได้ทุกเครื่อง', 3500); };
-  const bk = $('#bChk'); if (bk) bk.onclick = async () => { try { const n = (await shApi.meta()).length; toast(`เชื่อมต่อ Google Sheets ได้ — พบ ${n} แท็บ`, 3500); } catch (e) { toast(e.message, 9000); } };
-  const bs = $('#bSaveCid'); if (bs) bs.onclick = async () => { if (await saveClientIdToSheet()) load(); }; const bi = $('#bCid'); if (bi) bi.onclick = () => googleDialog();
+  $('#bSwitch').onclick = () => $('#btnMe').click();
+  const bp = $('#bPinSync'); if (bp) bp.onclick = async () => { await syncPendingPins(true); renderMenu(); if (!cfg.pendingPin[me]) toast('บันทึก PIN แล้ว — ใช้ได้ทุกเครื่อง', 3500); };
+  const eu = $('#bUnlock'); if (eu) eu.onclick = () => askEditCode().then(() => renderMenu()).catch(() => { });
+  const el2 = $('#bLock'); if (el2) el2.onclick = signOut;
+  fillUsage();
   bindNotif(el);
   $('#bTheme').onclick = () => { cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark'; saveCfg(); applyTheme(); renderMenu(); }; $('#bNew').onclick = newTripDialog; $('#bSet').onclick = settingsDialog;
   $('#bReload').onclick = async () => { toast('กำลังโหลด…', 1000); await load(); toast('อัปเดตแล้ว', 1200); };
@@ -1389,24 +1289,23 @@ function renderMenu() {
 const dlg = $('#dlg');
 function openDlg(html) { dlg.innerHTML = html; dlg.showModal(); return dlg; }
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
-function googleDialog(reason) {
-  const cid = clientId();
-  const d = openDlg(`<form method="dialog"><h3>เข้าสู่ระบบด้วย Google</h3>${reason ? `<div class="mut">${esc(reason)}</div>` : ''}
-  ${cid ? '<div class="mut" style="margin:6px 0 4px">กดปุ่มเดียว เลือกบัญชี แล้วกดอนุญาต — ใครมีสิทธิ์แก้ไขชีตอยู่แล้วก็แก้ได้เลย</div>'
-        : `<div class="mut" style="margin:6px 0 4px">ยังไม่ได้ตั้งค่า (ผู้ดูแลทำครั้งเดียว) — วาง Client ID แล้วกดปุ่ม แอปจะบันทึกลงชีตให้ทุกคนใช้ได้เลย</div>
-           <input name="cid" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" autocapitalize="off" value="${esc(cfg.googleClientId || '')}">`}
-  <div class="btns"><button type="button" class="btn pri block" id="gIn">${cid ? 'เข้าสู่ระบบด้วย Google' : 'บันทึกและเข้าสู่ระบบ'}</button></div>
-  <details><summary>ยังไม่มี Client ID? วิธีสร้าง (ทำครั้งเดียว)</summary>
-  <ol class="steps"><li>เปิด <b>console.cloud.google.com</b> → สร้างโปรเจกต์</li><li><b>APIs &amp; Services → Library</b> → เปิดใช้ <b>Google Sheets API</b></li><li><b>OAuth consent screen</b> → External → ใส่ชื่อแอปและอีเมล → เพิ่มอีเมลเพื่อนๆ ใน <b>Test users</b></li><li><b>Credentials → Create credentials → OAuth client ID</b> → <b>Web application</b> → Authorized JavaScript origins: <code>https://ninenpn.github.io</code></li><li>คัดลอก <b>Client ID</b> มาวางด้านบน</li></ol></details>
-  <div class="btns"><button value="x" class="btn" formnovalidate>ปิด</button></div></form>`);
-  $('#gIn').onclick = async () => {
-    if (!cid) {
-      const v = String(($('[name=cid]', d) || {}).value || '').trim();
-      if (!/\.apps\.googleusercontent\.com$/.test(v)) return toast('Client ID ต้องลงท้าย .apps.googleusercontent.com', 4000);
-      cfg.googleClientId = v; saveCfg();
-    }
-    try { cfg.googleDeclined = false; await signIn(); toast('เข้าสู่ระบบแล้ว: ' + auth.email); dlg.close(); renderAll(); } catch (e) { toast(e.message, 4500); }
-  };
+function editCard() {
+  const on = !!cfg.editCode;
+  return `<div class="card"><div class="row2"><h2>แก้ไขทริป</h2><span class="chip ${on ? 'ok' : ''}">${on ? 'ปลดล็อกแล้ว' : 'ล็อกอยู่'}</span></div><div class="mut">${on ? 'แก้แผน เพิ่มค่าใช้จ่าย และเพิ่มสถานที่ได้ — ข้อมูลบันทึกลงฐานข้อมูล Supabase อัตโนมัติ' : 'ดูอย่างเดียว — ใส่รหัสแก้ไขเพื่อแก้แผน เพิ่มค่าใช้จ่าย/สถานที่'}</div><div class="btns">${on ? '<button class="btn" id="bLock">ล็อกเครื่องนี้</button>' : '<button class="btn pri" id="bUnlock">ใส่รหัสแก้ไข</button>'}</div></div>`;
+}
+const usageCard = () => '<div class="card" id="usageBox"><div class="row2"><h2>โควตาฟรี Supabase</h2></div><div class="mut">กำลังตรวจสอบ…</div></div>';
+const mb = b => b < 102400 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(b < 10485760 ? 1 : 0) + ' MB';
+async function fillUsage() {
+  const box = $('#usageBox'); if (!box) return;
+  const LIM_DB = 500 * 1048576, LIM_EG = 5 * 1073741824, st = apiStat.get();
+  const bar = (v, lim) => { const p = Math.min(100, v / lim * 100); return `<div class="track ${p > 80 ? 'over' : ''}"><i style="width:${Math.max(p, 1)}%"></i></div>`; };
+  let u = null, err = '';
+  try { if (fillUsage.c && Date.now() - fillUsage.c.t < 60000) u = fillUsage.c.u; else { u = await sbRpc('usage_stats', {}); fillUsage.c = { t: Date.now(), u }; } } catch (e) { err = e.message; }
+  const rows = u ? Object.entries(u.tables || {}).map(([k, v]) => `${esc(k)} ${v}`).join(' · ') : '';
+  box.innerHTML = `<div class="row2"><h2>โควตาฟรี Supabase</h2><small>แพ็กเกจ Free</small></div>
+  ${u ? `<div class="usage"><span>ฐานข้อมูล</span><b>${mb(u.db_bytes)} / 500 MB (${(u.db_bytes / LIM_DB * 100).toFixed(1)}%)</b></div>${bar(u.db_bytes, LIM_DB)}<small class="mut">ข้อมูลแอป ${u.total_rows} แถว · ${rows}</small>` : `<div class="mut">วัดขนาดฐานข้อมูลไม่ได้: ${esc(err || '—')}<br><small>รันสคริปต์ docs/supabase_edit.sql เพื่อเปิดการวัดโควตา</small></div>`}
+  <div class="usage" style="margin-top:10px"><span>ทราฟฟิกเดือนนี้ (เครื่องนี้)</span><b>~${mb(st.b)} / 5 GB · ${st.n} คำขอ</b></div>${bar(st.b, LIM_EG)}
+  <small class="mut" style="display:block;margin-top:6px">ขีดจำกัดฟรี: ฐานข้อมูล 500 MB · ทราฟฟิก 5 GB/เดือน · ผู้ใช้ 50,000 คน/เดือน · ไม่มีการใช้งาน 7 วันโปรเจกต์จะถูกพัก (ตัวเลขทราฟฟิกนับเฉพาะเครื่องนี้ ไม่ใช่ยอดรวมทุกคน — ดูยอดจริงที่ Dashboard › Usage)</small>`;
 }
 function tripFields(t) {
   return `<label>ชื่อทริป</label><input name="name" value="${esc(t.name || '')}" required>
@@ -1587,8 +1486,8 @@ setInterval(silentRenew, 60000);
 setInterval(tickCountdown, 1000);
 setInterval(() => { if (document.hidden || !map || !data.plan || ui.edit || (ui.tab !== 'plan' && ui.tab !== 'map')) return; const d = data.plan.days[ui.day]; if (ui.tab === 'plan' && !(d && isToday(d))) return; try { drawMap(false); } catch { } }, 60000);
 setInterval(() => { try { checkReminders(); } catch { } }, 15000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { try { checkReminders(); } catch { } tickCountdown(); silentRenew(); } });
-setTimeout(silentRenew, 2000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { try { checkReminders(); } catch { } tickCountdown();  } });
+
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
 (async function boot() {
   ui.refit = true;
