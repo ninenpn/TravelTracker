@@ -45,7 +45,7 @@ insert into public.sheet_rows (tab, row_no, cells) values
 -- Users: 9 rows
 insert into public.sheet_rows (tab, row_no, cells) values
 ('Users', 0, '["Name", "Budget", "PIN", "GoogleClientId"]'::jsonb),
-('Users', 1, '["Nine", "", "3afe9a7f11886cbf512d927eaca9da56d5f35fb49b8e3c95f0c99bf3902d65fa", "659299412202-9dbo3jilqaav2afrelklur6qr6hr81bk.apps.googleusercontent.com"]'::jsonb),
+('Users', 1, '["Nine", "", "", "659299412202-9dbo3jilqaav2afrelklur6qr6hr81bk.apps.googleusercontent.com"]'::jsonb),
 ('Users', 2, '["Mew", "", "", "659299412202-9dbo3jilqaav2afrelklur6qr6hr81bk.apps.googleusercontent.com"]'::jsonb),
 ('Users', 3, '["Tu", "", "", "659299412202-9dbo3jilqaav2afrelklur6qr6hr81bk.apps.googleusercontent.com"]'::jsonb),
 ('Users', 4, '["Art", "", "", "659299412202-9dbo3jilqaav2afrelklur6qr6hr81bk.apps.googleusercontent.com"]'::jsonb),

@@ -283,3 +283,5 @@ html{scroll-padding-top:calc(var(--topH,64px) + var(--dockH,0px) + 10px);scroll-
 .spot .src{display:block;margin-top:4px;color:var(--mut,#64748b);font-size:.72rem}
 
 .usage{display:flex;justify-content:space-between;gap:10px;align-items:baseline;font-size:.88rem;margin-bottom:4px}
+
+#tripTitle{cursor:pointer}#tripTitle .chev{font-size:.7em;opacity:.55}

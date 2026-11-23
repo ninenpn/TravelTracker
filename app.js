@@ -7,6 +7,14 @@ const COLORS = ['#2f7bff', '#ff6b6b', '#12b886', '#ffb020', '#9b6bff', '#ff6bb5'
 const fmt = n => (Math.round(n * 100) / 100).toLocaleString('th-TH', { maximumFractionDigits: 2 });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const DEFAULT_TRIP = { id: '1PW6xAogCla1lhb4wMwhOQeo2d8g_OXmaRONo1OMSlOw', name: 'Almaty Trip', planGid: '101963523', usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', placesTab: 'Places', costTab: 'ค่าใช้จ่าย', extraTabs: '', currency: 'THB' };
+/* Private trips live in Supabase (tables the public key cannot read); only these members may open them (server-checked with their PIN) */
+const PRIV = { usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', placesTab: 'Places', costTab: 'Cost', currency: 'THB', priv: true, members: ['Mew', 'Nine'], planGid: 'plan' };
+const PRIV_TRIPS = [
+  { ...PRIV, id: 'priv:macau', key: 'macau', name: 'Macau Trip', extraTabs: '' },
+  { ...PRIV, id: 'priv:nagoya', key: 'nagoya', name: 'Nagoya-Osaka Trip', extraTabs: 'Transport Price,JCB-Transport' },
+  { ...PRIV, id: 'priv:kunming', key: 'kunming', name: 'Kunming-Lijiang Trip', extraTabs: 'Chinese Language' },
+  { ...PRIV, id: 'priv:xian', key: 'xian', name: "Xi'an Trip", extraTabs: 'Xian OJC Holiday,Chinese Language,ภาษาจีน' }
+];
 const OLD_PRESETS = ['10SWKXgZ1Tw1YUhZGYkrLdNv_99DYBk9N', '18xlP9LoISk-_Gy3Y0ATXkQM0lWElkvh3', '1ec6Jq7HhUSjsyC50sjyLoFvw-gNXS9gN', '1Lii3MIGLVncBMjXrVBAKZDfxHORD222Z'];
 
 /* ---------- storage ---------- */
@@ -27,11 +35,16 @@ if (cfg.v !== 5) {
   cfg.lastMe = cfg.lastMe || cfg.me || '';
   delete cfg.rates;
 }
+cfg.trips = cfg.trips.filter(t => !t.priv && !t.id.startsWith('priv:')); cfg.trips.push(...PRIV_TRIPS);
+if (cfg.active && cfg.active.startsWith('priv:') && !cfg.trips.some(t => t.id === cfg.active)) cfg.active = DEFAULT_TRIP.id;
 const saveCfg = () => store.set('tt.cfg', cfg);
 function applyTheme() { const d = cfg.theme === 'dark'; document.documentElement.dataset.theme = d ? 'dark' : 'light'; const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = d ? '#0b1220' : '#f3f8ff'; }
 applyTheme();
 const trip = () => cfg.trips.find(t => t.id === cfg.active) || cfg.trips[0];
 let me = sess.get('tt.me') || '';
+const myHash = () => sess.get('tt.ph') || '';
+const canSeePriv = t => !!me && !!myHash() && (t.members || []).some(m => m.toLowerCase() === me.toLowerCase());
+const visibleTrips = () => cfg.trips.filter(t => !t.priv || canSeePriv(t));
 let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: {}, stay: {}, me: null, meLabel: '' };
 const ui = { tab: 'plan', day: null, exFilter: 'all', cur: null, edit: false, dirty: false, saving: false, loaded: false };
 
@@ -59,7 +72,14 @@ async function fetchSb(tab) {
     sbOk = true; return j.map(x => Array.isArray(x.cells) ? x.cells.map(v => v == null ? '' : String(v)) : []);
   } catch { return null; }
 }
+async function fetchPriv(t, tab) {
+  if (!myHash()) throw new Error('ต้องเข้าสู่ระบบด้วย PIN ถึงจะดูทริปนี้ได้');
+  const j = await sbRpc('get_private', { p_trip: t.key, p_tab: tab, p_name: me, p_hash: myHash() });
+  if (j === null) throw new Error('ทริปนี้เข้าถึงได้เฉพาะ ' + t.members.join(' และ '));
+  return j.map(r => Array.isArray(r) ? r.map(v => v == null ? '' : String(v)) : []);
+}
 async function fetchTab(t, { gid, name }) {
+  if (t.priv && (gid || name !== t.usersTab)) return fetchPriv(t, gid ? 'plan' : name);
   const fromSb = await fetchSb(gid ? 'plan' : name); if (fromSb) return fromSb;
   const q = gid ? `gid=${encodeURIComponent(gid)}` : `sheet=${encodeURIComponent(name)}`;
   const r = await fetch(`https://docs.google.com/spreadsheets/d/${t.id}/gviz/tq?tqx=out:csv&headers=1&${q}&_=${Date.now()}`);
@@ -84,12 +104,12 @@ async function sbRpc(fn, args) {
   if (!r.ok) {
     const m = (j && j.message) || String(txt);
     if (/wrong code/i.test(m)) { cfg.editCode = ''; saveCfg(); throw new Error('รหัสแก้ไขไม่ถูกต้อง'); }
-    if (/Could not find the function|schema cache/i.test(m)) throw new Error('ยังไม่ได้รันสคริปต์ docs/supabase_edit.sql ใน Supabase');
+    if (/Could not find the function|schema cache/i.test(m)) throw new Error(/private|verify_pin|pin_status|reset_pin/.test(fn) ? 'ยังไม่ได้รันสคริปต์ docs/supabase_trips.sql ใน Supabase' : 'ยังไม่ได้รันสคริปต์ docs/supabase_edit.sql ใน Supabase');
     throw new Error(m);
   }
   return j;
 }
-const auth = { valid: () => !!cfg.editCode, email: '', token: '', name: '' };       // "signed in" = the edit code is known on this device
+const auth = { valid: () => trip().priv ? !!myHash() : !!cfg.editCode, email: '', token: '', name: '' };       // "signed in" = the edit code is known on this device
 const clientId = () => '';
 const silentRenew = () => { };
 let askP = null;
@@ -113,8 +133,22 @@ const signIn = () => cfg.editCode ? Promise.resolve(true) : askEditCode();
 const signOut = () => { cfg.editCode = ''; saveCfg(); renderAll(); };
 const sheetApi = {
   on: () => !!SB(),                       // database configured
-  ready: () => !!cfg.editCode,            // edit code known on this device
+  ready: () => trip().priv ? !!myHash() : !!cfg.editCode,            // edit code (public trip) or PIN session (private trip)
   async call(action, p) {
+    const T = trip();
+    if (T.priv) {                                   // private trip: identity = the member's PIN session, no edit code needed
+      if (!myHash()) throw new Error('ต้องเข้าสู่ระบบด้วย PIN');
+      const pt = p.gid ? 'plan' : p.tab, pstr = a => a.map(v => v == null ? '' : String(v));
+      const W = async (op, payload) => { const n = await sbRpc('private_write', { p_trip: T.key, p_tab: pt, p_op: op, p_payload: payload, p_name: me, p_hash: myHash() }); if (n === -1) throw new Error('ไม่มีสิทธิ์แก้ไขทริปนี้'); return n; };
+      if (action === 'append') { await W('append', pstr(p.values)); return { ok: true }; }
+      if (action === 'upsert') { await W('upsert', { key: String(p.key), cells: pstr(p.values) }); return { ok: true }; }
+      if (action === 'savePlan') {
+        if (!p.rows || p.rows.length < 2) throw new Error('ไม่บันทึก: ไม่มีข้อมูลแผนให้เขียน (กันข้อมูลว่าง)');
+        const rows = p.rows.map(r => { const x = pstr(r); while (x.length && x[x.length - 1] === '') x.pop(); return x; });
+        await W('save', rows); return { ok: true, rows: rows.length };
+      }
+      throw new Error('unknown action ' + action);
+    }
     if (!cfg.editCode) await askEditCode('ต้องใช้รหัสแก้ไขเพื่อบันทึก');
     const code = cfg.editCode || '', tab = p.gid ? 'plan' : p.tab, str = a => a.map(v => v == null ? '' : String(v));
     switch (action) {
@@ -138,7 +172,8 @@ function parseDayLabel(s) {
   const m = String(s).match(/(\d{1,2})\s*[-/ ]\s*(.+)/); if (!m) return null;
   const ms = m[2].replace(/\./g, ''); let mi = TH_M.findIndex(x => ms.includes(x.replace(/\./g, '')));
   if (mi < 0) mi = EN_M.findIndex(x => m[2].toLowerCase().includes(x));
-  return mi < 0 ? null : { d: +m[1], m: mi };
+  const ym = String(m[2]).match(/(?:^|\D)(20\d{2})(?:\D|$)/);
+  return mi < 0 ? null : { d: +m[1], m: mi, y: ym ? +ym[1] : null };
 }
 const cleanT = s => String(s || '').replace(/\s*น\.?\s*$/, '').trim();
 const isTime = s => /^\d{1,2}[.:]\d{2}$/.test(cleanT(s));
@@ -293,12 +328,16 @@ function showErr(m) { const e = $('#error'); e.hidden = !m; e.textContent = m ||
 let rawPlanHead = '';
 const sameAsPlan = r => rawPlanHead && (r[0] || []).join('|') === rawPlanHead;
 async function load() {
-  const t = trip(); $('#tripTitle').textContent = t.name;
+  let t = trip();
+  if (t.priv && !canSeePriv(t)) { cfg.active = DEFAULT_TRIP.id; saveCfg(); t = trip(); }          // not allowed (or not logged in with PIN) -> back to the public trip
+  $('#tripTitle').innerHTML = esc(t.name) + (visibleTrips().length > 1 ? ' <span class="chev">▾</span>' : '');
   const keep = { me: data.me, meLabel: data.meLabel };
-  const next = { tips: data.tips || [], plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: data.settings || {}, stay: data.stay || {}, ...keep };
+  const same = data._trip === t.id;
+  const next = { _trip: t.id, tips: same ? (data.tips || []) : [], plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: same ? (data.settings || {}) : {}, stay: same ? (data.stay || {}) : {}, ...keep };
   const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r);; });
   await Promise.allSettled([planP]);
   const rest = [
+    async () => { try { pinSet = new Set((await sbRpc('pin_status', {})).map(lc)); } catch { pinSet = null; } },
     async () => { try { next.tips = parseTips(await fetchTab(t, { name: t.tipsTab || 'Tips' })); } catch { } },
     async () => { try { next.stay = parseStay(await fetchTab(t, { name: 'Stay' })); } catch { } },
     async () => { next.users = parseUsers(await fetchTab(t, { name: t.usersTab })) || []; },
@@ -309,12 +348,12 @@ async function load() {
     async () => { for (const n of String(t.extraTabs || '').split(',').map(x => x.trim()).filter(Boolean)) { try { const r = await fetchTab(t, { name: n }); if (!sameAsPlan(r)) next.extra.push({ name: n, rows: parseTable(r) }); } catch { } } }
   ];
   await Promise.allSettled(rest.map(f => f()));
-  if (!next.plan && data.plan) next.plan = data.plan;
+  if (!next.plan && data.plan && same) next.plan = data.plan;
   { const cu = next.users.find(u => u.cid); if (cu) next.settings = { googleClientId: cu.cid }; }
   data = next;
   showErr(!data.plan ? 'โหลดแผนไม่ได้ — ตรวจว่าชีตแชร์เป็น "ทุกคนที่มีลิงก์ดูได้" แล้วลองโหลดใหม่' : '');
   ui.loaded = true; ui.updated = new Date();
-  if (me && users().length && !users().some(u => u.name === me)) { me = ''; sess.set('tt.me', null); }
+  if (me && users().length && !users().some(u => u.name === me)) { me = ''; sess.set('tt.me', null); sess.set('tt.ph', null); }
   if (!me && !$('#login').hidden) renderLogin();
   renderAll();
   if (me && geo.state === 'idle') startLocation();
@@ -343,7 +382,8 @@ async function hashPin(name, pin) {
 }
 const colLetter = i => { let t = '', n = i + 1; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = Math.floor((n - 1) / 26); } return t; };
 async function setPinInSheet(name, hash) {
-  if (hash && !cfg.editCode) { await sbRpc('set_first_pin', { p_name: name, p_hash: hash }); return; }          // first-time PIN needs no code
+  if (hash && !cfg.editCode) { await sbRpc('set_first_pin', { p_name: name, p_hash: hash }); if (pinSet) pinSet.add(lc(name)); return; }          // first-time PIN needs no code
+  if (!hash && pinSet) { await sbRpc('reset_pin', { p_name: name, code: cfg.editCode || '' }); pinSet.delete(lc(name)); return; }
   await sbRpc('set_cell', { p_tab: trip().usersTab, p_key: name, p_col: 'PIN', p_val: hash, code: cfg.editCode || '' });
 }
 let syncingPins = false;
@@ -353,7 +393,7 @@ async function syncPendingPins(interactive) {
   try {
     for (const n of names) {
       const u = users().find(x => x.name === n);
-      if (u && u.pin) { delete cfg.pendingPin[n]; continue; }          // somebody already set a PIN for this name
+      if ((u && u.pin) || (pinSet && pinSet.has(lc(n)))) { delete cfg.pendingPin[n]; continue; }          // somebody already set a PIN for this name
       try { await setPinInSheet(n, cfg.pendingPin[n]); if (u) u.pin = cfg.pendingPin[n]; delete cfg.pendingPin[n]; }
       catch (e) { if (interactive) toast('บันทึก PIN ไม่สำเร็จ: ' + e.message + ' — PIN ใช้ได้เฉพาะเครื่องนี้', 5000); break; }
     }
@@ -361,8 +401,11 @@ async function syncPendingPins(interactive) {
   } catch (e) { if (interactive) toast('PIN ใช้ได้เฉพาะเครื่องนี้ก่อน (' + e.message + ')', 4500); }
   finally { syncingPins = false; }
 }
+let pinSet = null;                       // names that have a PIN on the server; null = unknown (older schema)
+const lc = x => String(x || '').trim().toLowerCase();
+const hasPin = name => pinSet ? (pinSet.has(lc(name)) || !!cfg.pendingPin[name]) : !!storedPin(name);
 const storedPin = name => { const u = users().find(x => x.name === name); return (u && u.pin) || cfg.pendingPin[name] || ''; };
-function pickUser(name) { pinPad(name, storedPin(name) ? 'verify' : 'create'); }   // PIN is asked every time; only a name without a PIN gets to create one
+function pickUser(name) { pinPad(name, hasPin(name) ? 'verify' : 'create'); }   // PIN is asked every time; only a name without a PIN gets to create one
 function pinPad(name, mode) {
   const box = $('#loginPin'); let digits = '', first = '';
   $('#loginUsers').hidden = true; $('#loginGuest').hidden = true; $('#loginSub').hidden = true; box.hidden = false;
@@ -383,12 +426,17 @@ function pinPad(name, mode) {
     const pin = digits; digits = '';
     if (mode === 'verify') {
       const h = await hashPin(name, pin);
-      if (storedPin(name) === h) { box.hidden = true; box.innerHTML = ''; return enter(name); }
+      let ok;
+      if (pinSet && cfg.pendingPin[name] !== h) {
+        try { ok = await sbRpc('verify_pin', { p_name: name, p_hash: h }); }
+        catch (e) { return draw(/too many/i.test(e.message) ? 'ลองผิดหลายครั้ง รอ 10 นาทีแล้วลองใหม่' : 'ตรวจ PIN ไม่ได้: ' + e.message, true); }
+      } else ok = pinSet ? true : storedPin(name) === h;
+      if (ok) { sess.set('tt.ph', h); box.hidden = true; box.innerHTML = ''; return enter(name); }
       return draw('PIN ไม่ถูกต้อง ลองอีกครั้ง', true);
     }
     if (!first) { first = pin; return draw(); }
     if (first !== pin) { first = ''; return draw('PIN ไม่ตรงกัน ตั้งใหม่อีกครั้ง', true); }
-    const h = await hashPin(name, pin); cfg.pendingPin[name] = h; saveCfg();
+    const h = await hashPin(name, pin); cfg.pendingPin[name] = h; saveCfg(); sess.set('tt.ph', h);
     box.hidden = true; box.innerHTML = ''; enter(name);
     syncPendingPins(false);
   };
@@ -420,9 +468,10 @@ function howIcon(h, hasText) {
 function planDates(p) {
   const now = new Date(), first = p.days.find(d => d.date); if (!first) return false;
   let y = now.getFullYear();
-  if (new Date(y, first.date.m, first.date.d) < new Date(y, now.getMonth(), now.getDate()) - 60 * 864e5) y++;
+  if (first.date.y) y = first.date.y;
+  else if (new Date(y, first.date.m, first.date.d) < new Date(y, now.getMonth(), now.getDate()) - 60 * 864e5) y++;
   let prev = null;
-  p.days.forEach(d => { if (!d.date) { d.dt = null; return; } if (prev !== null && d.date.m < prev) y++; prev = d.date.m; d.dt = new Date(y, d.date.m, d.date.d); });
+  p.days.forEach(d => { if (!d.date) { d.dt = null; return; } if (d.date.y) y = d.date.y; else if (prev !== null && d.date.m < prev) y++; prev = d.date.m; d.dt = new Date(y, d.date.m, d.date.d); });
   return true;
 }
 const todayStart = () => { const t = new Date(); t.setHours(0, 0, 0, 0); return t; };
@@ -974,7 +1023,7 @@ const arrowIcon = (deg, color) => L.divIcon({ className: '', iconSize: [20, 20],
 /* stops whose activity is over (today: we have left / passed the time; earlier days: all) are not drawn */
 function stillAhead(di, seq) {
   const d = data.plan.days[di]; if (!d || !d.dt) return seq;
-  if (isPast(d)) return [];
+  if (isPast(d)) return data.plan.days.every(x => !x.dt || isPast(x)) ? seq : [];
   if (!isToday(d)) return seq;
   const now = new Date().getHours() * 60 + new Date().getMinutes();
   return seq.filter((w, k) => { const nx = seq[k + 1], end = nx ? (wpMin(nx.ts) ?? wpMin(nx.time)) : wpMin(w.time); return end == null || end >= now; });
@@ -1228,8 +1277,8 @@ function tipsHtml() {
 }
 function renderSpots() {
   const el = $('#tab-spots'); if (!el) return;
-  const v = ui.spotView === 'list' ? 'list' : ui.spotView === 'tips' ? 'tips' : 'sug';
-  el.innerHTML = `<div class="seg"><button data-v="sug" class="${v === 'sug' ? 'on' : ''}">แนะนำตามแผน</button><button data-v="list" class="${v === 'list' ? 'on' : ''}">ลิสทั้งหมด</button><button data-v="tips" class="${v === 'tips' ? 'on' : ''}">น่าไป</button></div>` + (v === 'sug' ? sugHtml() : v === 'tips' ? tipsHtml() : listHtml()) + '<button class="fab" id="addSpot" aria-label="เพิ่มสถานที่"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>';
+  const v = ui.spotView === 'list' ? 'list' : ui.spotView === 'tips' && (data.tips || []).length ? 'tips' : 'sug';
+  el.innerHTML = `<div class="seg"><button data-v="sug" class="${v === 'sug' ? 'on' : ''}">แนะนำตามแผน</button><button data-v="list" class="${v === 'list' ? 'on' : ''}">ลิสทั้งหมด</button>${(data.tips || []).length ? `<button data-v="tips" class="${v === 'tips' ? 'on' : ''}">น่าไป</button>` : ''}</div>` + (v === 'sug' ? sugHtml() : v === 'tips' ? tipsHtml() : listHtml()) + '<button class="fab" id="addSpot" aria-label="เพิ่มสถานที่"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>';
   $$('[data-v]', el).forEach(b => b.onclick = () => { ui.spotView = b.dataset.v; renderSpots(); });
   $('#addSpot').onclick = () => spotDialog();
   $$('[data-tf]', el).forEach(b => b.onclick = () => { ui.tipFilter = b.dataset.tf; renderSpots(); });
@@ -1304,7 +1353,7 @@ function renderMenu() {
   h += editCard(); h += usageCard();
   h += notifCard();
   h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
-  h += `<div class="card"><h2 style="margin-bottom:4px">ทริป</h2>${cfg.trips.map(t => `<button class="li ${t.id === cfg.active ? 'on' : ''}" data-trip="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b></div></button>`).join('')}<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div></div>`;
+  h += `<div class="card"><h2 style="margin-bottom:4px">ทริป</h2>${visibleTrips().map(t => `<button class="li ${t.id === cfg.active ? 'on' : ''}" data-trip="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b></div></button>`).join('')}${trip().priv ? '<div class="mut" style="font-size:.8rem">ทริปส่วนตัว — เห็นเฉพาะ ' + esc(trip().members.join(' และ ')) + '</div>' : '<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div>'}</div>`;
   h += `<div class="card"><h2 style="margin-bottom:4px">สมาชิก</h2>${users().map(u => `<div class="row">${avatar(u.name, 'sm')}<div><b>${esc(u.name)}</b></div><div class="amt mut">${Object.entries(u.budgets || {}).map(([k, v]) => fmt(v) + ' ' + k).join(' · ') || '—'}</div></div>`).join('') || '<span class="mut">ยังไม่มี — เพิ่มในแท็บ ' + esc(trip().usersTab) + '</span>'}</div>`;
   h += data.extra.map(x => tableCard(x.name, x.rows)).join('');
   h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด ${ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '—'} · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
@@ -1315,14 +1364,22 @@ function renderMenu() {
   const el2 = $('#bLock'); if (el2) el2.onclick = signOut;
   fillUsage();
   bindNotif(el);
-  $('#bTheme').onclick = () => { cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark'; saveCfg(); applyTheme(); renderMenu(); }; $('#bNew').onclick = newTripDialog; $('#bSet').onclick = settingsDialog;
+  $('#bTheme').onclick = () => { cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark'; saveCfg(); applyTheme(); renderMenu(); }; { const bn = $('#bNew'); if (bn) bn.onclick = newTripDialog; const bs2 = $('#bSet'); if (bs2) bs2.onclick = settingsDialog; }
   $('#bReload').onclick = async () => { toast('กำลังโหลด…', 1000); await load(); toast('อัปเดตแล้ว', 1200); };
-  $$('[data-trip]', el).forEach(b => b.onclick = () => { cfg.active = b.dataset.trip; saveCfg(); ui.day = null; ui.edit = false; load(); });
+  $$('[data-trip]', el).forEach(b => b.onclick = () => { if (b.dataset.trip !== cfg.active) switchTrip(b.dataset.trip); });
 }
+function switchTrip(id) { cfg.active = id; saveCfg(); ui.day = null; ui.edit = false; ui.centered = false; data = { ...data, plan: null, _trip: '' }; renderAll(); load(); }
+function tripPicker() {
+  const vt = visibleTrips(); if (vt.length < 2) return;
+  const d = openDlg(`<form method="dialog"><h3>เลือกทริป</h3>${vt.map(t => `<button type="button" class="li ${t.id === cfg.active ? 'on' : ''}" data-tp="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b>${t.priv ? '<small style="display:block">ส่วนตัว · ' + esc(t.members.join(' & ')) + '</small>' : ''}</div></button>`).join('')}<div class="btns"><button value="x" class="btn">ปิด</button></div></form>`);
+  $$('[data-tp]', d).forEach(b => b.onclick = () => { d.close(); if (b.dataset.tp !== cfg.active) switchTrip(b.dataset.tp); });
+}
+$('#tripTitle').onclick = tripPicker;
 const dlg = $('#dlg');
 function openDlg(html) { dlg.innerHTML = html; dlg.showModal(); return dlg; }
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 function editCard() {
+  if (trip().priv) return `<div class="card"><div class="row2"><h2>ทริปส่วนตัว</h2><span class="chip ok">เฉพาะ ${esc(trip().members.join(' และ '))}</span></div><div class="mut">แก้แผนและบันทึกได้ด้วย PIN ของคุณ — คนอื่นเปิดทริปนี้ไม่ได้</div></div>`;
   const on = !!cfg.editCode;
   return `<div class="card"><div class="row2"><h2>แก้ไขทริป</h2><span class="chip ${on ? 'ok' : ''}">${on ? 'ปลดล็อกแล้ว' : 'ล็อกอยู่'}</span></div><div class="mut">${on ? 'แก้แผน เพิ่มค่าใช้จ่าย และเพิ่มสถานที่ได้ — ข้อมูลบันทึกลงฐานข้อมูล Supabase อัตโนมัติ' : 'ดูอย่างเดียว — ใส่รหัสแก้ไขเพื่อแก้แผน เพิ่มค่าใช้จ่าย/สถานที่'}</div><div class="btns">${on ? '<button class="btn" id="bLock">ล็อกเครื่องนี้</button>' : '<button class="btn pri" id="bUnlock">ใส่รหัสแก้ไข</button>'}</div></div>`;
 }
