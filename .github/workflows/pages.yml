@@ -11,18 +11,26 @@ concurrency:
   group: pages
   cancel-in-progress: true
 jobs:
+  # Two jobs (GitHub's recommended layout): the artifact is registered when the build job ends,
+  # so deploy-pages no longer races it ("Found 0 artifact(s)" -> "Deployment failed, try again later").
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stamp build id (cache busting)
+        run: sed -i "s/__BUILD__/${GITHUB_SHA::7}/g" index.html
+      - name: Keep only what the site needs
+        run: rm -rf tests tools docs CLAUDE.md README.md .claude
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
   deploy:
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Stamp build id (cache busting)
-        run: sed -i "s/__BUILD__/${GITHUB_SHA::7}/g" index.html
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: .
       - id: deployment
         uses: actions/deploy-pages@v4

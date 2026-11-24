@@ -17,7 +17,7 @@ SQL Editor → run in order: `docs/supabase.sql` → `docs/supabase_edit.sql` �
 | Restore an older plan | `sheet_history` (rows = JSON snapshot per save ≥10 min apart, last 30): read the snapshot you want and write it back with `save_tab` / the secret key |
 
 ## Deploy
-Push to `main` → GitHub Actions "Deploy to GitHub Pages" → live in ~30 s. Check with `skill deploy-and-verify`. If the deploy step says **"Deployment failed, try again later"** while build/upload are green it is a transient Pages error: start a **new** run (`workflow_dispatch` on `pages.yml`), do **not** "re-run" (artifact gone) and do not push empty commits.
+Push to `main` → GitHub Actions "Deploy to GitHub Pages" (two jobs: `build` uploads the site without tests/docs/tools, `deploy` publishes) → live in ~30 s. Check with `skill deploy-and-verify`. If the deploy step says **"Deployment failed, try again later"** while build/upload are green it is a transient Pages error: start a **new** run (`workflow_dispatch` on `pages.yml`), do **not** "re-run" (artifact gone) and do not push empty commits.
 
 ## Secrets
 - Publishable key: public (in `config.js`).
