@@ -92,5 +92,12 @@ eq  "limit is per member (Bob can add)" t "$(asanon "select public.doc_put('Bob'
 $P -c "insert into member_docs(scope,title,mime,created_by,chunks) select 'shared','s'||g,'image/png','ann',1 from generate_series(1,60) g;" >/dev/null
 eq  "61st shared doc refused => -4"   -4 "$(asanon "select public.doc_put('Bob','hB','shared','','Over','other','image/png','','[\"a\"]'::jsonb)")"
 eq  "re-running supabase_docs.sql kept data" t "$(val "select count(*) > 60 from member_docs")"
+# --- regression (found on the live DB): docs must work even when the OLD `_member` (trip_members based, pre-v2) is installed
+$P -c "create or replace function public._member(p_trip text, p_name text, p_hash text) returns boolean language plpgsql security definer set search_path = public as \$\$ begin if not exists (select 1 from public.trip_members where trip = p_trip and name = lower(trim(p_name))) then return false; end if; return public._pin_ok(p_name, p_hash); end \$\$;" >/dev/null
+asanon "select public.set_first_pin('Mew','hM')" >/dev/null
+OLDM=$(asanon "select public.doc_put('Mew','hM','person','','Old _member check','other','image/png','','[\"QUJD\"]'::jsonb)")
+[ "${#OLDM}" -gt 20 ] && ok "doc_put works with the pre-v2 _member installed (no trip_members row needed)" || bad "doc_put with pre-v2 _member" "(got '$OLDM')"
+eq  "pre-v2 _member: a stranger is still refused" -1 "$(asanon "select public.doc_put('Stranger','x','person','','T','other','image/png','','[\"a\"]'::jsonb)")"
+$P -f "$ROOT/docs/supabase_trips_v2.sql" 2>&1 | grep -v NOTICE        # restore v2 for any later checks
 [ $fail -eq 0 ] && echo "SQL RESULT: all passed" || echo "SQL RESULT: FAILURES"
 exit $fail

@@ -23,7 +23,12 @@ alter table public.member_doc_chunks enable row level security;
 revoke all on public.member_docs, public.member_doc_chunks from anon, authenticated;
 
 create or replace function public._doc_auth(p_name text, p_hash text) returns boolean
-language sql security definer set search_path = public as $$ select public._member('', p_name, p_hash); $$;
+language sql security definer set search_path = public as $$
+  -- self-contained (does not depend on which version of _member is installed): the name must be a member listed in the
+  -- public Users tab AND the PIN must be right (throttled by _pin_ok like every other PIN check)
+  select exists (select 1 from public.sheet_rows where tab = 'Users' and row_no > 0 and lower(trim(cells ->> 0)) = lower(trim(p_name)))
+         and public._pin_ok(p_name, p_hash);
+$$;
 revoke all on function public._doc_auth(text, text) from public, anon, authenticated;
 
 create or replace function public.doc_list(p_name text, p_hash text) returns jsonb
