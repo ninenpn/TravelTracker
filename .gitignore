@@ -1,0 +1,10 @@
+# private data & secrets - NEVER commit (repo is public)
+private/
+*.xlsx
+!docs/sheet-templates/*.xlsx
+.env
+.env.*
+# local tooling
+node_modules/
+.claude/handoff/*.md
+.claude/settings.local.json

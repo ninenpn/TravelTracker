@@ -4,6 +4,11 @@
 
 https://ninenpn.github.io/TravelTracker/
 
+## เอกสารและเครื่องมือสำหรับทำงานต่อ
+- `CLAUDE.md` กฎและภาพรวมของโปรเจกต์ · `docs/ARCHITECTURE.md` · `docs/QA.md` · `docs/RUNBOOK.md` · `docs/AGENTS.md`
+- ทดสอบทั้งหมด: `bash tests/run.sh --sql --live`
+- Claude: agent `developer` + `qa`, สกิล `/dev-qa-loop` (Developer → QA → แก้ → QA … จน PASS), `run-qa`, `deploy-and-verify`, `supabase-ops`, `import-trip` ใน `.claude/`
+
 ## โครงสร้าง
 - หน้าเว็บอ่านข้อมูลผ่าน REST ของ Supabase ด้วย **publishable key** (ใส่ใน `config.js` ได้ ไม่ใช่ความลับ) — **ห้ามใส่ secret key (`sb_secret_…`) ในรีโปนี้**
 - ข้อมูลเก็บเป็นแถว/เซลล์ เหมือนชีต: ตาราง `sheet_rows (tab, row_no, cells)` สำหรับทริปสาธารณะ (Almaty) และ `private_rows (trip, tab, row_no, cells)` สำหรับทริปอื่น
