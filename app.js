@@ -7,13 +7,13 @@ const COLORS = ['#2f7bff', '#ff6b6b', '#12b886', '#ffb020', '#9b6bff', '#ff6bb5'
 const fmt = n => (Math.round(n * 100) / 100).toLocaleString('th-TH', { maximumFractionDigits: 2 });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const DEFAULT_TRIP = { id: '1PW6xAogCla1lhb4wMwhOQeo2d8g_OXmaRONo1OMSlOw', name: 'Almaty Trip', planGid: '101963523', usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', placesTab: 'Places', costTab: 'ค่าใช้จ่าย', extraTabs: '', currency: 'THB' };
-/* Private trips live in Supabase (tables the public key cannot read); only these members may open them (server-checked with their PIN) */
-const PRIV = { usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', placesTab: 'Places', costTab: 'Cost', currency: 'THB', priv: true, members: ['Mew', 'Nine'], planGid: 'plan' };
+/* Extra trips live in Supabase tables the public key cannot read; any member who is signed in with a verified PIN may open them (checked on the server) */
+const PRIV = { usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', placesTab: 'Places', costTab: 'Cost', currency: 'THB', priv: true, planGid: 'plan' };
 const PRIV_TRIPS = [
-  { ...PRIV, id: 'priv:macau', key: 'macau', name: 'Macau Trip', extraTabs: '' },
-  { ...PRIV, id: 'priv:nagoya', key: 'nagoya', name: 'Nagoya-Osaka Trip', extraTabs: 'Transport Price,JCB-Transport' },
-  { ...PRIV, id: 'priv:kunming', key: 'kunming', name: 'Kunming-Lijiang Trip', extraTabs: 'Chinese Language' },
-  { ...PRIV, id: 'priv:xian', key: 'xian', name: "Xi'an Trip", extraTabs: 'Xian OJC Holiday,Chinese Language,ภาษาจีน' }
+  { ...PRIV, id: 'priv:macau', key: 'macau', name: 'Macau Trip', extraTabs: '', start: '2026-07-11', end: '2026-07-14' },
+  { ...PRIV, id: 'priv:nagoya', key: 'nagoya', name: 'Nagoya-Osaka Trip', extraTabs: 'Transport Price,JCB-Transport', start: '2025-12-05', end: '2025-12-11' },
+  { ...PRIV, id: 'priv:kunming', key: 'kunming', name: 'Kunming-Lijiang Trip', extraTabs: 'Chinese Language', start: '2024-12-20', end: '2024-12-24' },
+  { ...PRIV, id: 'priv:xian', key: 'xian', name: "Xi'an Trip", extraTabs: 'Xian OJC Holiday,Chinese Language,ภาษาจีน', start: '2025-04-30', end: '2025-05-04' }
 ];
 const OLD_PRESETS = ['10SWKXgZ1Tw1YUhZGYkrLdNv_99DYBk9N', '18xlP9LoISk-_Gy3Y0ATXkQM0lWElkvh3', '1ec6Jq7HhUSjsyC50sjyLoFvw-gNXS9gN', '1Lii3MIGLVncBMjXrVBAKZDfxHORD222Z'];
 
@@ -43,8 +43,35 @@ applyTheme();
 const trip = () => cfg.trips.find(t => t.id === cfg.active) || cfg.trips[0];
 let me = sess.get('tt.me') || '';
 const myHash = () => sess.get('tt.ph') || '';
-const canSeePriv = t => !!me && !!myHash() && (t.members || []).some(m => m.toLowerCase() === me.toLowerCase());
+const canSeePriv = t => !!me && !!myHash();
 const visibleTrips = () => cfg.trips.filter(t => !t.priv || canSeePriv(t));
+/* trip status from its dates: Current (today is inside), Upcoming (starts later), Past (already ended) */
+const ymd = x => { const [y, m, d] = x.split('-').map(Number); return new Date(y, m - 1, d); };
+const isoD = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function tripRange(t) {
+  const c = cfg.dates && cfg.dates[t.id], r = c || (t.start ? { s: t.start, e: t.end } : t.id === DEFAULT_TRIP.id ? { s: '2027-02-13', e: '2027-02-18' } : null);
+  return r ? { s: ymd(r.s), e: ymd(r.e) } : null;
+}
+function tripStatus(t) { const r = tripRange(t); if (!r) return 'upcoming'; const n = new Date(); n.setHours(0, 0, 0, 0); return r.e < n ? 'past' : r.s > n ? 'upcoming' : 'current'; }
+const STAT = { current: ['Current', 'cur'], upcoming: ['Upcoming', 'up'], past: ['Past', 'past'] };
+function tripRangeText(t) {
+  const r = tripRange(t); if (!r) return ''; const a = r.s, b = r.e, M = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+  return a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear() ? `${a.getDate()}–${b.getDate()} ${M[a.getMonth()]} ${b.getFullYear()}` : `${a.getDate()} ${M[a.getMonth()]} ${a.getFullYear()} – ${b.getDate()} ${M[b.getMonth()]} ${b.getFullYear()}`;
+}
+/* default view = Current + Upcoming only; Past trips are one tap away */
+function tripList(filter) {
+  const rank = { current: 0, upcoming: 1, past: 2 }, f = filter || ui.tripFilter || 'now';
+  return visibleTrips().filter(t => f === 'all' || (f === 'past' ? tripStatus(t) === 'past' : tripStatus(t) !== 'past'))
+    .sort((a, b) => rank[tripStatus(a)] - rank[tripStatus(b)] || (tripStatus(a) === 'past' ? tripRange(b).s - tripRange(a).s : (tripRange(a) && tripRange(b) ? tripRange(a).s - tripRange(b).s : 0)));
+}
+function tripFilterBar(attr) {
+  const vt = visibleTrips(), f = ui.tripFilter || 'now', n = vt.filter(t => tripStatus(t) !== 'past').length, p = vt.length - n;
+  return `<div class="chips">${[['now', 'Current + Upcoming', n], ['past', 'Past', p], ['all', 'ทั้งหมด', vt.length]].map(([k, l, c]) => `<button type="button" class="tag ${f === k ? 'on' : ''}" ${attr}="${k}">${l} <small>${c}</small></button>`).join('')}</div>`;
+}
+function tripItems(attr) {
+  const list = tripList(); if (!list.length) return '<div class="mut" style="padding:8px 2px">ไม่มีทริปในหมวดนี้</div>';
+  return list.map(t => { const st = tripStatus(t), [lb, cl] = STAT[st]; return `<button type="button" class="li ${t.id === cfg.active ? 'on' : ''}" ${attr}="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b><small style="display:block">${esc(tripRangeText(t))}</small></div><span class="chip ${cl}">${lb}</span></button>`; }).join('');
+}
 let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: {}, stay: {}, me: null, meLabel: '' };
 const ui = { tab: 'plan', day: null, exFilter: 'all', cur: null, edit: false, dirty: false, saving: false, loaded: false };
 
@@ -75,7 +102,7 @@ async function fetchSb(tab) {
 async function fetchPriv(t, tab) {
   if (!myHash()) throw new Error('ต้องเข้าสู่ระบบด้วย PIN ถึงจะดูทริปนี้ได้');
   const j = await sbRpc('get_private', { p_trip: t.key, p_tab: tab, p_name: me, p_hash: myHash() });
-  if (j === null) throw new Error('ทริปนี้เข้าถึงได้เฉพาะ ' + t.members.join(' และ '));
+  if (j === null) throw new Error('เปิดทริปนี้ไม่ได้ — ต้องเป็นสมาชิกและเข้าสู่ระบบด้วย PIN ที่ถูกต้อง');
   return j.map(r => Array.isArray(r) ? r.map(v => v == null ? '' : String(v)) : []);
 }
 async function fetchTab(t, { gid, name }) {
@@ -351,6 +378,7 @@ async function load() {
   if (!next.plan && data.plan && same) next.plan = data.plan;
   { const cu = next.users.find(u => u.cid); if (cu) next.settings = { googleClientId: cu.cid }; }
   data = next;
+  try { if (data.plan && data.plan.days.length) { planDates(data.plan); const ds = data.plan.days.filter(d => d.dt); if (ds.length) { cfg.dates = cfg.dates || {}; const r = { s: isoD(ds[0].dt), e: isoD(ds[ds.length - 1].dt) }, o = cfg.dates[t.id]; if (!o || o.s !== r.s || o.e !== r.e) { cfg.dates[t.id] = r; saveCfg(); } } } } catch { }
   showErr(!data.plan ? 'โหลดแผนไม่ได้ — ตรวจว่าชีตแชร์เป็น "ทุกคนที่มีลิงก์ดูได้" แล้วลองโหลดใหม่' : '');
   ui.loaded = true; ui.updated = new Date();
   if (me && users().length && !users().some(u => u.name === me)) { me = ''; sess.set('tt.me', null); sess.set('tt.ph', null); }
@@ -371,6 +399,7 @@ function enter(name) {
   me = name; sess.set('tt.me', name); if (name) { cfg.lastMe = name; saveCfg(); }
   $('#login').hidden = true; $('#app').hidden = false; renderAll();
   if (name) startLocation();
+  if (name && !sess.get('tt.picked') && tripStatus(trip()) === 'past') { const best = tripList('now')[0]; if (best && best.id !== cfg.active && tripStatus(best) !== 'past') switchTrip(best.id, true); }
 }
 /* PIN: stored as a salted SHA-256 hash in the sheet's Users tab (column "PIN") so it works on every device; remembered per device after the first success.
    A 4-digit PIN only keeps friends from picking each other's name — anyone who can read the sheet could brute-force it. */
@@ -493,7 +522,10 @@ function mountMap(holder) {
 }
 function updateDock() {
   const dock = $('#homeDock'), show = ui.tab === 'plan'; dock.hidden = !show; if (!show) { document.documentElement.style.setProperty('--dockH', '0px'); return; }
-  dock.className = 'dock ' + (ui.dockSize || 'm') + (ui.edit ? ' edit' : '');
+  if (!show || ui.edit || ui.dockSize === 'l' || ui.dockSize === 's') ui.dockAway = false;
+  dock.className = 'dock ' + (ui.dockSize || 'm') + (ui.edit ? ' edit' : '') + (ui.dockAway === 'hide' ? ' away' : ui.dockAway === 'peek' ? ' peek' : '');
+  { const mh = $('.dock-map', dock), dh = $('#homeDays'); if (mh && dh) document.documentElement.style.setProperty('--peekY', Math.max(0, dock.offsetHeight - dh.offsetHeight - 8) + 'px'); }
+  document.documentElement.classList.toggle('dockaway', ui.dockAway === 'hide'); document.documentElement.classList.toggle('dockpeek', ui.dockAway === 'peek');
   $('#dockShow').hidden = ui.dockSize !== 's';
   $('#dockSize').innerHTML = ui.dockSize === 'l' ? '<svg viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
   document.documentElement.style.setProperty('--topH', $('.top').offsetHeight + 'px');
@@ -504,8 +536,21 @@ function drawHome(fit) {
   if (ui.tab !== 'plan') return; updateDock();
   if (ui.dockSize !== 's') { drawMap(fit); runGeocode(); }
 }
+let lastY = 0;
+window.addEventListener('scroll', () => {
+  const y = window.scrollY, dy = y - lastY; lastY = y;
+  if (Date.now() - (ui.dockLockAt || 0) < 800) return;                      // just opened by the map button: leave it alone
+  if (ui.tab !== 'plan' || ui.edit || ui.dockSize === 'l' || ui.dockSize === 's') return;
+  const st = y < 60 ? false : dy > 6 && y > 140 ? 'hide' : dy < -6 ? 'peek' : null;
+  if (st === null || st === (ui.dockAway || false)) return;
+  const dock = $('#homeDock');
+  if (st === 'peek') { const dh = $('#homeDays'); document.documentElement.style.setProperty('--peekY', Math.max(0, dock.offsetHeight - dh.offsetHeight - 8) + 'px'); }
+  ui.dockAway = st; dock.classList.toggle('away', st === 'hide'); dock.classList.toggle('peek', st === 'peek');
+  document.documentElement.classList.toggle('dockaway', st === 'hide'); document.documentElement.classList.toggle('dockpeek', st === 'peek');
+}, { passive: true });
 function setDock(v) { ui.dockSize = v; store.set('tt.dock', v); updateDock(); if (v !== 's' && map) setTimeout(() => { map.invalidateSize(); drawMap(true); }, 100); }
 function focusStep(k) {
+  if (ui.dockAway) { ui.dockAway = false; updateDock(); }                       // the map must be on screen to show the stop
   const d = data.plan && data.plan.days[ui.day], s = d && d.steps[k]; if (!s) return;
   ui.activeStep = k; $$('#tab-plan .step').forEach(n => n.classList.toggle('active', +n.dataset.i === k));
   const m = wpMark[ui.day + '|' + qName(s.to || s.from || '')];
@@ -541,14 +586,15 @@ function renderPlan() {
   if (!ui.edit && !isPast(d)) { const hits = spotMatches().items.filter(m => m.di === ui.day); if (hits.length) h += `<button class="nudge" id="nudge"><span>🛤</span><div><b>แวะได้ ${hits.length} ที่จากลิสของคุณ</b><small>อยู่ใกล้เส้นทางของวันนี้ — แตะเพื่อดู</small></div></button>`; }
   h += `<div class="tl ${ui.edit ? 'editing' : ''}" id="tl">` + d.steps.map((s, k) => `<div class="step" data-i="${k}"><div class="step-t">${esc(s.time || '')}${s.toTime ? `<small>→ ${esc(s.toTime)}</small>` : ''}</div><div class="step-c"><div class="step-i">${howIcon(s.how, !!s.text)}</div><div class="step-b">
     ${s.text ? `<div>${link(s.text)}</div>` : ''}${(s.from || s.to) ? `<div class="route">${ui.edit ? esc(s.from) : mapLink(s.from)}${s.to ? ' <span class="arrow">→</span> ' + (ui.edit ? esc(s.to) : mapLink(s.to)) : ''}</div>` : ''}
-    ${s.city ? `<span class="chip">${esc(s.city)}</span>` : ''}${s.how ? `<span class="chip">${esc(s.how)}</span>` : ''}${durChips(d.steps, k)}${s.tickets ? `<span class="chip">🎫 ${esc(s.tickets)}</span>` : ''}
+    ${s.city ? `<span class="chip">${esc(s.city)}</span>` : ''}${s.how ? `<span class="chip">${esc(s.how)}</span>` : ''}${durChips(d.steps, k)}${s.tickets ? `<span class="chip">🎫 ${link(s.tickets)}</span>` : ''}
     ${s.note ? `<div class="note">${link(s.note)}</div>` : ''}${s.notice ? `<div class="note">⚠️ ${link(s.notice)}</div>` : ''}</div>
     ${ui.edit ? '' : bell(ui.day, k)}<div class="grip" aria-label="ลากเพื่อจัดลำดับ"><svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></div></div></div>`).join('') + '</div>';
   if (!d.steps.length && !ui.edit) h += '<div class="card empty flat">ยังไม่มีแผนสำหรับวันนี้<br><small>กด “แก้ไข” เพื่อเพิ่มรายการ</small></div>';
   if (ui.edit) h += '<button class="addstep" id="addStep">+ เพิ่มรายการ</button>';
   if (!ui.edit) p.ideas.forEach((g, gi) => { if (g.items.length) h += `<div class="card flat"><h3>💡 ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map((i, ii) => `<li>${mapLink(i)} <button class="tag sm" data-gi="${gi}" data-ii="${ii}">+ เพิ่มเข้าแผน</button></li>`).join('')}</ul></div>`; });
   el.innerHTML = h;
-  dayBar.innerHTML = p.days.map(pill).join('') + (ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : '');
+  dayBar.innerHTML = '<button class="pill mapbtn" id="peekMap" aria-label="แสดงแผนที่">🗺</button>' + p.days.map(pill).join('') + (ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : '');
+  { const pm = $('#peekMap', dayBar); if (pm) pm.onclick = () => { ui.dockLockAt = Date.now(); ui.dockAway = false; updateDock(); }; }
   const sel = $('.pill.sel', dayBar); if (sel) dayBar.scrollLeft = sel.offsetLeft - dayBar.clientWidth / 2 + sel.clientWidth / 2;
   $$('[data-gi]', el).forEach(b => b.onclick = () => { const g = p.ideas[+b.dataset.gi]; addToPlanDialog(g.items[+b.dataset.ii], { gi: +b.dataset.gi, ii: +b.dataset.ii }); });
   $$('.pill[data-day]', dayBar).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; ui.refit = true; ui.activeStep = null; renderPlan(); });
@@ -603,7 +649,8 @@ const gapMin = (a, b) => { if (a == null || b == null) return null; let d = b - 
 const shiftT = (str, delta) => { const t = tm(str); if (!t) return str; const m = (((t[0] * 60 + t[1] + delta) % 1440) + 1440) % 1440; return String(str).replace(/(\d{1,2})[.:](\d{2})/, fmtT(m)); };
 /* travel time (departure -> arrival) and time spent at the place (arrival -> next departure), derived from the sheet times */
 function travelMin(st) { if (howIcon(st.how, false) === '✈️') return null; const g = gapMin(tmin(st.time), tmin(st.toTime)); return g > 0 && g < 1440 ? g : null; }
-function stayMin(steps, k) { const nx = steps[k + 1], g = nx ? gapMin(tmin(steps[k].toTime), tmin(nx.time)) : null; return g > 0 && g < 720 ? g : null; }
+const nextTimed = (steps, k) => { for (let j = k + 1; j < steps.length; j++) if (tmin(steps[j].time) != null && isTime(steps[j].time)) return steps[j]; return null; };   // skips free-text rows like "lunch nearby"
+function stayMin(steps, k) { const nx = nextTimed(steps, k), g = nx ? gapMin(tmin(steps[k].toTime), tmin(nx.time)) : null; return g > 0 && g < 720 ? g : null; }
 function durChips(steps, k) {
   const tr = travelMin(steps[k]), sy = stayMin(steps, k);
   return (tr ? `<span class="chip">⏱ เดินทาง ${fmtDur(tr)}</span>` : '') + (sy ? `<span class="chip">🕒 อยู่ที่นั่น ${fmtDur(sy)}</span>` : '');
@@ -667,7 +714,7 @@ function stepDialog(i) {
     if (target === d && i != null) d.steps[i] = ns; else { if (i != null) d.steps.splice(i, 1); target.steps.push(ns); }
     { const stayV = String(f.get('stay') || '').trim(), atM = tmin(f.get('at'));                      // time spent at the destination moves the next stops
       if (i != null && target === d && stayV !== '' && atM != null && f.get('shift')) {
-        const nx = d.steps[i + 1], nxM = nx ? tmin(nx.time) : null;
+        const nx = nextTimed(d.steps, i), nxM = nx ? tmin(nx.time) : null;
         if (nxM != null) { const delta = atM + (+stayV) - nxM; if (delta) shiftFrom(d, i + 1, delta); }
       } }
     const url = f.get('map').trim(); if (url && ns.to) { try { const c = await coordsFromLink(url); if (c) await savePlace(ns.to, c); else toast('อ่านพิกัดจากลิงก์ไม่ได้'); } catch (e) { toast(e.message); } }
@@ -1395,7 +1442,7 @@ function renderMenu() {
   h += editCard(); h += usageCard();
   h += notifCard();
   h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
-  h += `<div class="card"><h2 style="margin-bottom:4px">ทริป</h2>${visibleTrips().map(t => `<button class="li ${t.id === cfg.active ? 'on' : ''}" data-trip="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b></div></button>`).join('')}${trip().priv ? '<div class="mut" style="font-size:.8rem">ทริปส่วนตัว — เห็นเฉพาะ ' + esc(trip().members.join(' และ ')) + '</div>' : '<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div>'}</div>`;
+  h += `<div class="card"><h2 style="margin-bottom:6px">ทริป</h2>${tripFilterBar('data-tfm')}${tripItems('data-trip')}${trip().priv ? '' : '<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div>'}</div>`;
   h += `<div class="card"><h2 style="margin-bottom:4px">สมาชิก</h2>${users().map(u => `<div class="row">${avatar(u.name, 'sm')}<div><b>${esc(u.name)}</b></div><div class="amt mut">${Object.entries(u.budgets || {}).map(([k, v]) => fmt(v) + ' ' + k).join(' · ') || '—'}</div></div>`).join('') || '<span class="mut">ยังไม่มี — เพิ่มในแท็บ ' + esc(trip().usersTab) + '</span>'}</div>`;
   h += data.extra.map(x => tableCard(x.name, x.rows)).join('');
   h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด ${ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '—'} · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
@@ -1408,20 +1455,26 @@ function renderMenu() {
   bindNotif(el);
   $('#bTheme').onclick = () => { cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark'; saveCfg(); applyTheme(); renderMenu(); }; { const bn = $('#bNew'); if (bn) bn.onclick = newTripDialog; const bs2 = $('#bSet'); if (bs2) bs2.onclick = settingsDialog; }
   $('#bReload').onclick = async () => { toast('กำลังโหลด…', 1000); await load(); toast('อัปเดตแล้ว', 1200); };
+  $$('[data-tfm]', el).forEach(b => b.onclick = () => { ui.tripFilter = b.dataset.tfm; renderMenu(); });
   $$('[data-trip]', el).forEach(b => b.onclick = () => { if (b.dataset.trip !== cfg.active) switchTrip(b.dataset.trip); });
 }
-function switchTrip(id) { cfg.active = id; saveCfg(); ui.day = null; ui.edit = false; ui.centered = false; data = { ...data, plan: null, _trip: '' }; renderAll(); load(); }
+function switchTrip(id, auto) { if (!auto) sess.set('tt.picked', '1'); cfg.active = id; saveCfg(); ui.day = null; ui.edit = false; ui.centered = false; data = { ...data, plan: null, _trip: '' }; renderAll(); load(); }
 function tripPicker() {
-  const vt = visibleTrips(); if (vt.length < 2) return;
-  const d = openDlg(`<form method="dialog"><h3>เลือกทริป</h3>${vt.map(t => `<button type="button" class="li ${t.id === cfg.active ? 'on' : ''}" data-tp="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b>${t.priv ? '<small style="display:block">ส่วนตัว · ' + esc(t.members.join(' & ')) + '</small>' : ''}</div></button>`).join('')}<div class="btns"><button value="x" class="btn">ปิด</button></div></form>`);
-  $$('[data-tp]', d).forEach(b => b.onclick = () => { d.close(); if (b.dataset.tp !== cfg.active) switchTrip(b.dataset.tp); });
+  if (visibleTrips().length < 2) return;
+  const draw = () => {
+    const d = dlg.open ? dlg : null; if (!d) return;
+    d.innerHTML = `<form method="dialog"><h3>เลือกทริป</h3>${tripFilterBar('data-tf2')}<div id="tpList">${tripItems('data-tp')}</div><div class="btns"><button value="x" class="btn">ปิด</button></div></form>`;
+    $$('[data-tf2]', d).forEach(b => b.onclick = () => { ui.tripFilter = b.dataset.tf2; draw(); });
+    $$('[data-tp]', d).forEach(b => b.onclick = () => { d.close(); if (b.dataset.tp !== cfg.active) switchTrip(b.dataset.tp); });
+  };
+  openDlg(''); draw();
 }
 $('#tripTitle').onclick = tripPicker;
 const dlg = $('#dlg');
 function openDlg(html) { dlg.innerHTML = html; dlg.showModal(); return dlg; }
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 function editCard() {
-  if (trip().priv) return `<div class="card"><div class="row2"><h2>ทริปส่วนตัว</h2><span class="chip ok">เฉพาะ ${esc(trip().members.join(' และ '))}</span></div><div class="mut">แก้แผนและบันทึกได้ด้วย PIN ของคุณ — คนอื่นเปิดทริปนี้ไม่ได้</div></div>`;
+  if (trip().priv) return `<div class="card"><div class="row2"><h2>แก้ไขทริป</h2><span class="chip ok">ใช้ PIN ของคุณ</span></div><div class="mut">สมาชิกที่เข้าสู่ระบบด้วย PIN แก้แผนและบันทึกได้เลย ไม่ต้องใช้รหัสแก้ไข</div></div>`;
   const on = !!cfg.editCode;
   return `<div class="card"><div class="row2"><h2>แก้ไขทริป</h2><span class="chip ${on ? 'ok' : ''}">${on ? 'ปลดล็อกแล้ว' : 'ล็อกอยู่'}</span></div><div class="mut">${on ? 'แก้แผน เพิ่มค่าใช้จ่าย และเพิ่มสถานที่ได้ — ข้อมูลบันทึกลงฐานข้อมูล Supabase อัตโนมัติ' : 'ดูอย่างเดียว — ใส่รหัสแก้ไขเพื่อแก้แผน เพิ่มค่าใช้จ่าย/สถานที่'}</div><div class="btns">${on ? '<button class="btn" id="bLock">ล็อกเครื่องนี้</button>' : '<button class="btn pri" id="bUnlock">ใส่รหัสแก้ไข</button>'}</div></div>`;
 }

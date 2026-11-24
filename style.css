@@ -287,3 +287,17 @@ html{scroll-padding-top:calc(var(--topH,64px) + var(--dockH,0px) + 10px);scroll-
 #tripTitle{cursor:pointer}#tripTitle .chev{font-size:.7em;opacity:.55}
 
 label.chk{display:flex;gap:8px;align-items:center;margin-top:10px;font-size:.9rem}label.chk input{width:auto}
+
+.chip.cur{background:#16c47a26;color:#0a8a55}.chip.up{background:var(--priSoft);color:var(--pri)}.chip.past{background:#94a3b826;color:#64748b}
+.li .chip{margin-left:auto;flex:none}
+
+.dock{transition:transform .28s ease}
+.dock.away{transform:translateY(calc(-100% - var(--topH,64px) - 12px));pointer-events:none}
+html.dockaway{scroll-padding-top:calc(var(--topH,64px) + 10px)}
+@media (max-height:760px){.dock-map{height:clamp(120px,24dvh,320px)}}
+
+.dock.peek{transform:translateY(calc(-1 * var(--peekY,150px)));box-shadow:0 8px 18px -12px #0006}
+.dock.peek,.dock.peek .days{pointer-events:auto}.dock.peek .dock-map{pointer-events:none}
+html.dockpeek{scroll-padding-top:calc(var(--topH,64px) + 72px)}
+.pill.mapbtn{display:none;flex:none;font-size:1.1rem;align-items:center;justify-content:center}
+.dock.peek .pill.mapbtn{display:flex}

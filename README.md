@@ -1,31 +1,40 @@
 # Travel Tracker
 
-เว็บแอปท่องเที่ยวสำหรับมือถือ (static, deploy บน GitHub Pages) — แผนเที่ยว งบ/ค่าใช้จ่ายหลายสกุลเงิน และแผนที่ ข้อมูลทั้งหมดอยู่ใน Google Sheet
+เว็บแอปท่องเที่ยวสำหรับมือถือ (static, deploy บน GitHub Pages) ใช้ Supabase เป็นฐานข้อมูล — แผนเที่ยว, ค่าใช้จ่าย/หนี้, แผนที่ + เวลาเดินทาง, ที่พัก, สถานที่แนะนำ, นับถอยหลัง/แจ้งเตือน
 
 https://ninenpn.github.io/TravelTracker/
 
-## Google Sheet (แชร์: ทุกคนที่มีลิงก์ดูได้)
-| แท็บ | คอลัมน์ |
-|---|---|
-| แผน (ระบุด้วย gid) | `Day, Start time, Start Location, Arrive time, Arrive Location, How to Travel, Note` |
-| Users | `Name, Budget` (หลายสกุล: `Budget KZT`, `Budget USD`) |
-| Expenses | `Date, Item, Category, Amount, Currency, PaidBy, Type, SplitWith` — Type: `shared` / `personal` / `split` |
-| Locations | `Name, Lat, Lng, Label, Updated` |
-| Stay | `Key, Value` — `Name, Platform, Address, Lat, Lng, CheckIn, Rules (หลายบรรทัด), Note` = ที่พักที่จองแล้ว (แสดงเป็นการ์ดในแท็บแผน และใช้เป็นพิกัดของ “ที่พัก” ในเส้นทาง) |
-| Places | `Name, Lat, Lng, Note, Type, Meal, Cuisine` — `Type` ว่าง = ใช้เป็นพิกัดของสถานที่ในแผนเท่านั้น; `Type` = `food` / `sight` / `other` = แสดงในแท็บสถานที่และฟิลเตอร์บนแผนที่ (`Meal`: เช้า/กลางวัน/เย็น/คาเฟ่/ของหวาน/ดึก) |
+## โครงสร้าง
+- หน้าเว็บอ่านข้อมูลผ่าน REST ของ Supabase ด้วย **publishable key** (ใส่ใน `config.js` ได้ ไม่ใช่ความลับ) — **ห้ามใส่ secret key (`sb_secret_…`) ในรีโปนี้**
+- ข้อมูลเก็บเป็นแถว/เซลล์ เหมือนชีต: ตาราง `sheet_rows (tab, row_no, cells)` สำหรับทริปสาธารณะ (Almaty) และ `private_rows (trip, tab, row_no, cells)` สำหรับทริปอื่น
+- ถ้า Supabase เข้าไม่ได้/ยังไม่มีตาราง แอปถอยไปอ่านจาก Google Sheet (ทริป Almaty) ให้อัตโนมัติ
 
-## แก้ไขและบันทึกลงชีต (เข้าสู่ระบบด้วย Google)
-ไม่ใช้ Apps Script — ผู้ใช้เข้าสู่ระบบด้วยบัญชี Google (เมนู → บัญชี Google) แล้วแอปเรียก Google Sheets API ด้วยสิทธิ์ของบัญชีนั้นโดยตรง
-ใครมีสิทธิ์ “ผู้แก้ไข” ในชีตอยู่แล้วก็แก้ผ่านแอปได้ ใครไม่มีสิทธิ์ Google จะไม่อนุญาต
-ทำได้: แก้/ลากวางแผน, เพิ่มค่าใช้จ่าย, บันทึกสถานที่/พิกัดจากลิงก์ Google Maps, แชร์ตำแหน่ง (ก่อนเขียนทับแผนจะสำรองไว้ที่แท็บซ่อน `_plan_backup`)
+## ตั้งค่า Supabase (รันใน SQL Editor ตามลำดับ)
+1. `docs/supabase.sql` — ตาราง `sheet_rows` + ข้อมูลตั้งต้นของ Almaty (อ่านได้อย่างเดียว)
+2. `docs/supabase_edit.sql` — ฟังก์ชันเขียนข้อมูล (ตรวจ "รหัสแก้ไข"), ประวัติแผน, ตัววัดโควตา แล้วตั้งรหัส: `select public.set_edit_code('รหัสของคุณ');`
+3. `docs/supabase_trips.sql` — ตารางส่วนตัว, PIN แบบเก็บฝั่งเซิร์ฟเวอร์ (anon อ่านไม่ได้), ฟังก์ชันตรวจสิทธิ์
+4. `docs/supabase_trips_v2.sql` — ให้สมาชิกที่ยืนยัน PIN ทุกคนเปิดได้ทุกทริป + เพิ่มแท็บ "ค่าใช้จ่าย"
+5. ข้อมูลทริปส่วนตัว (`trips_data.sql`) **ไม่เก็บใน GitHub** (รีโปเป็นสาธารณะ) — รันแยกใน SQL Editor
 
-**ตั้งค่าครั้งเดียวโดยเจ้าของแอป** — สร้าง OAuth Client ID ใน Google Cloud (Sheets API + OAuth consent + Web client, origin `https://ninenpn.github.io`) แล้ววางในแอป (เมนู → บัญชี Google) กดเข้าสู่ระบบ — แอปบันทึก Client ID ลงแท็บ `Users` คอลัมน์ `GoogleClientId` (ทุกแถว) ให้อัตโนมัติ คนอื่นแค่เลือกชื่อ Google ก็เด้งให้เลือกบัญชีและกดอนุญาต (Client ID ไม่ใช่ความลับ)
+## การเข้าถึง
+- เลือกชื่อ + PIN 4 หลัก (ตั้งครั้งแรกเอง; ตรวจที่เซิร์ฟเวอร์ เดาผิดเกิน 8 ครั้ง/10 นาทีจะถูกล็อกชั่วคราว)
+- ผู้ที่ล็อกอินแล้วเห็นทุกทริป มีป้าย **Current / Upcoming / Past** ตามวันที่ของทริป ค่าเริ่มต้นแสดงเฉพาะ Current + Upcoming
+- Almaty (สาธารณะ): แก้ไขด้วย "รหัสแก้ไข" · ทริปอื่น: แก้ไขด้วย PIN ของผู้ใช้
+- ทุกการเขียนผ่านฟังก์ชัน RPC เท่านั้น (ตารางเขียนตรงๆ ไม่ได้)
+
+## รูปแบบข้อมูลของแผน
+`Day, Start time, Start Location, Arrive time, Arrive Location, How to Travel, Note` (+ `Notice`, `Tickets`, `Location` ได้)
+- วันที่ใส่ปีได้ เช่น `5-ธ.ค. 2025` (ไม่ใส่ปี = ปีที่ใกล้ที่สุด)
+- เวลาเดินทาง = เวลาออก → เวลาถึง · เวลาที่ใช้ที่จุดหมาย = เวลาถึง → เวลาออกของรายการถัดไป (แอปคำนวณและแสดงให้)
+
+## แท็บอื่นๆ (`sheet_rows.tab`)
+`Users` (`Name, Budget …`) · `Expenses` (`Date, Item, Category, Amount, Currency, PaidBy, Type, SplitWith`; Type = shared/personal/split) · `Locations` · `Stay` (`Key, Value`) · `Places` · `Tips` (`Type, Name, Detail, BestTime, Source`) · `ค่าใช้จ่าย` (ตารางประมาณการ)
 
 ## ตำแหน่ง
-ขอสิทธิ์ตำแหน่งเฉพาะช่วงตั้งแต่เที่ยวบินแรกลงจอดจนถึงเที่ยวบินสุดท้ายออก (คำนวณจากแผนในชีต)
+ขอสิทธิ์ตำแหน่งเฉพาะช่วงตั้งแต่เที่ยวบินแรกลงจอดจนถึงเที่ยวบินสุดท้ายออก
 
-## สถานที่ & แนะนำใกล้ๆ
-- แท็บ **สถานที่**: ลิสร้านอาหาร/ที่เที่ยว/อื่นๆ — วางลิงก์ Google Maps แล้วแอปดึงพิกัดและชื่อให้ (ลิงก์สั้นต้องเชื่อมต่อชีต)
-- **แนะนำใกล้ๆ**: ค้นร้านอาหาร/คาเฟ่/ที่เที่ยวรอบตำแหน่งของคุณหรือรอบจุดในแผน ตามช่วงเวลาตอนนี้ (ข้อมูลจาก OpenStreetMap ผ่าน Nominatim พร้อมเวลาเปิดถ้ามี)
-- **เวลาเดินทาง**: ระหว่างจุดในแผนแสดงเวลาและระยะทาง (เดิน = เส้นทางจริง, แท็กซี/รถ/ขนส่ง = ประมาณ), รวมต่อวัน, เตือนถ้าเวลาตามแผนไม่พอ
-- **แผนที่**: ฟิลเตอร์ แผน / ร้านอาหาร / ที่เที่ยว / อื่นๆ / เพื่อน และเส้นทางตามลำดับด้วยเส้นประพร้อมลูกศร
+## โควตาฟรีของ Supabase
+เมนู → การ์ด "โควตาฟรี Supabase" แสดงขนาดฐานข้อมูลจริงเทียบ 500 MB (ทราฟฟิกนับเฉพาะเครื่องที่เปิดดู)
+
+## พัฒนา
+ไม่มี build step: `python3 -m http.server` แล้วเปิด `index.html` — workflow ใน `.github/workflows/pages.yml` ใส่เลข build ลง `index.html` ตอน deploy
