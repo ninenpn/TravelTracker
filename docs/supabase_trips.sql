@@ -1,10 +1,11 @@
--- Travel Tracker: ทริปส่วนตัว (Mew & Nine) + PIN เก็บฝั่งเซิร์ฟเวอร์
+-- Travel Tracker: ทริปส่วนตัว (ต้องล็อกอินด้วย PIN) + PIN เก็บฝั่งเซิร์ฟเวอร์
 -- รันทั้งไฟล์ใน Supabase SQL Editor (หลังรัน supabase.sql และ supabase_edit.sql แล้ว) รันซ้ำได้
 -- ทำอะไรบ้าง:
 --   1) ย้าย PIN (แฮช) ออกจากตารางสาธารณะ ไปตารางลับ member_pins (anon อ่านไม่ได้)
 --   2) สร้างตารางส่วนตัว private_rows / trip_members (anon อ่านไม่ได้)
 --   3) ฟังก์ชันตรวจสิทธิ์: ทริปส่วนตัวอ่าน/เขียนได้เฉพาะสมาชิกที่ยืนยัน PIN ผ่านแล้ว (จำกัดการเดาผิดไม่เกิน 8 ครั้ง/10 นาที)
---   4) (แยกไฟล์ trips_data.sql) ข้อมูล 4 ทริป: Macau, Nagoya-Osaka, Kunming-Lijiang, Xi'an (เฉพาะ Mew และ Nine เข้าถึงได้)
+--      (ไฟล์ supabase_trips_v2.sql ปรับให้สมาชิกทุกคนในแท็บ Users เปิดได้ทุกทริป)
+--   4) (แยกไฟล์ trips_data.sql) ข้อมูล 4 ทริป: Macau, Nagoya-Osaka, Kunming-Lijiang, Xi'an (ทุกคนที่ล็อกอินด้วย PIN เข้าถึงได้)
 --   Almaty Trip ยังเป็นสาธารณะเหมือนเดิม
 
 create table if not exists public.private_rows (

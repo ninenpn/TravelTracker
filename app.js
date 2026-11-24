@@ -259,6 +259,32 @@ function parseTips(rows) {
   const g = (r, i) => i >= 0 ? String(r[i] || '').trim() : '';
   return rows.slice(1).filter(r => g(r, ix.n)).map(r => ({ type: (g(r, ix.t) || 'food').toLowerCase(), name: g(r, ix.n), detail: g(r, ix.d), when: g(r, ix.w), src: g(r, ix.s) }));
 }
+function parseMedia(rows) {
+  const h = rows[0] || [], ix = { id: colIndex(h, ['id']), tab: colIndex(h, ['tab']), row: colIndex(h, ['row']), cap: colIndex(h, ['caption']), w: colIndex(h, ['w']), h: colIndex(h, ['h']) };
+  if (ix.id < 0) return [];
+  return rows.slice(1).filter(r => r[ix.id]).map(r => ({ id: r[ix.id], tab: r[ix.tab] || '', row: +r[ix.row] || 0, cap: r[ix.cap] || '', w: +r[ix.w] || 0, h: +r[ix.h] || 0 }));
+}
+/* trip pictures (from the Excel files): stored in chunks, fetched on demand and cached for the session */
+const mediaCache = {};
+async function mediaUrl(m) {
+  const k = trip().id + '|' + m.id; if (mediaCache[k]) return mediaCache[k];
+  const rows = await fetchPriv(trip(), 'media:' + m.id);
+  return (mediaCache[k] = 'data:image/jpeg;base64,' + rows.map(r => r[0] || '').join(''));
+}
+const TAB_TH = { plan: 'แผนการเดินทาง', Cost: 'ค่าใช้จ่าย' };
+function openGallery() {
+  const list = data.media || []; if (!list.length) return;
+  const groups = {}; list.forEach(m => (groups[m.tab] = groups[m.tab] || []).push(m));
+  const d = openDlg(`<form method="dialog"><h3>🖼 รูปภาพของทริป <small>(${list.length})</small></h3>${Object.entries(groups).map(([tab, arr]) => `<div class="dgroup" style="margin:10px 0 4px!important">${esc(TAB_TH[tab] || tab)}</div>${arr.map((m, i) => `${i === 0 || arr[i - 1].cap !== m.cap ? `<div class="mut" style="font-size:.78rem;margin:8px 2px 4px">${esc(m.cap || '')}</div>` : ''}${i === 0 || arr[i - 1].cap !== m.cap ? '<div class="gal">' : ''}<button type="button" class="gimg" data-g="${esc(m.id)}" aria-label="${esc(m.cap)}"></button>${i === arr.length - 1 || arr[i + 1].cap !== m.cap ? '</div>' : ''}`).join('')}`).join('')}<div class="btns"><button value="x" class="btn">ปิด</button></div></form>`);
+  const load1 = async b => { const m = list.find(x => x.id === b.dataset.g); if (!m || b.dataset.done) return; b.dataset.done = '1'; try { const u = await mediaUrl(m); b.style.backgroundImage = `url(${u})`; b.onclick = () => lightbox(u, m.cap); } catch (e) { b.textContent = '⚠'; b.title = e.message; } };
+  const io = 'IntersectionObserver' in window ? new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { io.unobserve(e.target); load1(e.target); } }), { root: d, rootMargin: '200px' }) : null;
+  $$('.gimg', d).forEach(b => io ? io.observe(b) : load1(b));
+}
+function lightbox(url, cap) {
+  const el = document.createElement('div'); el.className = 'glb'; el.innerHTML = `<div><img src="${url}" alt=""><small>${esc(cap || '')}</small></div>`;
+  el.onclick = () => el.remove(); document.body.appendChild(el);
+}
+const mediaCard = () => (data.media || []).length ? `<div class="card"><div class="row2"><div><h2>🖼 รูปภาพของทริป</h2><small>${data.media.length} รูป จากไฟล์ Excel (ภาษาจีน/ตั๋ว/แผนที่)</small></div><button class="btn" id="bGallery">เปิดดู</button></div></div>` : '';
 function parseStay(rows) {
   const h = rows[0] || [], ki = colIndex(h, ['key', 'คีย์']), vi = colIndex(h, ['value', 'ค่า']); if (ki < 0 || vi < 0) return {};
   const o = {}; rows.slice(1).forEach(r => { if (r[ki]) o[norm(r[ki])] = String(r[vi] || '').trim(); });
@@ -360,10 +386,11 @@ async function load() {
   $('#tripTitle').innerHTML = esc(t.name) + (visibleTrips().length > 1 ? ' <span class="chev">▾</span>' : '');
   const keep = { me: data.me, meLabel: data.meLabel };
   const same = data._trip === t.id;
-  const next = { _trip: t.id, tips: same ? (data.tips || []) : [], plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: same ? (data.settings || {}) : {}, stay: same ? (data.stay || {}) : {}, ...keep };
+  const next = { media: [], _trip: t.id, tips: same ? (data.tips || []) : [], plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: same ? (data.settings || {}) : {}, stay: same ? (data.stay || {}) : {}, ...keep };
   const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r);; });
   await Promise.allSettled([planP]);
   const rest = [
+    async () => { if (t.priv) { try { next.media = parseMedia(await fetchTab(t, { name: 'media' })); } catch { } } },
     async () => { try { pinSet = new Set((await sbRpc('pin_status', {})).map(lc)); } catch { pinSet = null; } },
     async () => { try { next.tips = parseTips(await fetchTab(t, { name: t.tipsTab || 'Tips' })); } catch { } },
     async () => { try { next.stay = parseStay(await fetchTab(t, { name: 'Stay' })); } catch { } },
@@ -592,6 +619,7 @@ function renderPlan() {
   if (!d.steps.length && !ui.edit) h += '<div class="card empty flat">ยังไม่มีแผนสำหรับวันนี้<br><small>กด “แก้ไข” เพื่อเพิ่มรายการ</small></div>';
   if (ui.edit) h += '<button class="addstep" id="addStep">+ เพิ่มรายการ</button>';
   if (!ui.edit) p.ideas.forEach((g, gi) => { if (g.items.length) h += `<div class="card flat"><h3>💡 ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map((i, ii) => `<li>${mapLink(i)} <button class="tag sm" data-gi="${gi}" data-ii="${ii}">+ เพิ่มเข้าแผน</button></li>`).join('')}</ul></div>`; });
+  if (!ui.edit && (data.media || []).length) h += `<button class="nudge" id="planGallery"><span>🖼</span><div><b>รูปภาพของทริป (${data.media.length})</b><small>ภาพประกอบจากไฟล์ Excel — แตะเพื่อดู</small></div></button>`;
   el.innerHTML = h;
   dayBar.innerHTML = '<button class="pill mapbtn" id="peekMap" aria-label="แสดงแผนที่">🗺</button>' + p.days.map(pill).join('') + (ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : '');
   { const pm = $('#peekMap', dayBar); if (pm) pm.onclick = () => { ui.dockLockAt = Date.now(); ui.dockAway = false; updateDock(); }; }
@@ -601,6 +629,7 @@ function renderPlan() {
   $('#editBtn').onclick = toggleEdit;
   bindBells(el);
   const sc = $('#stCopy'); if (sc) sc.onclick = () => copyText(data.stay.address, 'คัดลอกที่อยู่แล้ว');
+  const pg = $('#planGallery'); if (pg) pg.onclick = openGallery;
   const nd = $('#nudge'); if (nd) nd.onclick = () => { ui.spotView = 'sug'; $('[data-tab=spots]').click(); };
   if (ui.edit) {
     $('#addStep').onclick = () => stepDialog(null);
@@ -1439,7 +1468,7 @@ function renderMenu() {
   const el = $('#tab-menu'), on = sheetApi.on();
   let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
   if (me && cfg.pendingPin[me]) h += `<div class="card" style="border-color:#ffb020"><h2>⚠ PIN ของคุณยังอยู่แค่ในเครื่องนี้</h2><div class="mut">ยังไม่ได้บันทึกลงฐานข้อมูล เปลี่ยนเครื่องแล้วจะต้องตั้ง PIN ใหม่ — กดปุ่มเพื่อบันทึก</div><div class="btns"><button class="btn pri" id="bPinSync">บันทึก PIN ลงชีตตอนนี้</button></div></div>`;
-  h += editCard(); h += usageCard();
+  h += editCard(); h += mediaCard(); h += usageCard();
   h += notifCard();
   h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
   h += `<div class="card"><h2 style="margin-bottom:6px">ทริป</h2>${tripFilterBar('data-tfm')}${tripItems('data-trip')}${trip().priv ? '' : '<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div>'}</div>`;
@@ -1449,6 +1478,7 @@ function renderMenu() {
   el.innerHTML = h;
   $('#bSwitch').onclick = () => $('#btnMe').click();
   const bp = $('#bPinSync'); if (bp) bp.onclick = async () => { await syncPendingPins(true); renderMenu(); if (!cfg.pendingPin[me]) toast('บันทึก PIN แล้ว — ใช้ได้ทุกเครื่อง', 3500); };
+  const bg = $('#bGallery'); if (bg) bg.onclick = openGallery;
   const eu = $('#bUnlock'); if (eu) eu.onclick = () => askEditCode().then(() => renderMenu()).catch(() => { });
   const el2 = $('#bLock'); if (el2) el2.onclick = signOut;
   fillUsage();

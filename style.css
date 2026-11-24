@@ -301,3 +301,8 @@ html.dockaway{scroll-padding-top:calc(var(--topH,64px) + 10px)}
 html.dockpeek{scroll-padding-top:calc(var(--topH,64px) + 72px)}
 .pill.mapbtn{display:none;flex:none;font-size:1.1rem;align-items:center;justify-content:center}
 .dock.peek .pill.mapbtn{display:flex}
+
+.gal{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.gimg{aspect-ratio:1;border-radius:12px;border:1px solid var(--line);background:var(--priSoft) center/cover no-repeat;padding:0;min-height:0}
+.glb{position:fixed;inset:0;background:#000d;z-index:9999;display:grid;place-items:center;padding:14px}
+.glb>div{max-width:100%;display:grid;gap:8px;justify-items:center}.glb img{max-width:100%;max-height:80vh;border-radius:12px;background:#fff}.glb small{color:#fff;text-align:center}
