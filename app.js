@@ -72,8 +72,8 @@ function tripItems(attr) {
   const list = tripList(); if (!list.length) return '<div class="mut" style="padding:8px 2px">ไม่มีทริปในหมวดนี้</div>';
   return list.map(t => { const st = tripStatus(t), [lb, cl] = STAT[st]; return `<button type="button" class="li ${t.id === cfg.active ? 'on' : ''}" ${attr}="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b><small style="display:block">${esc(tripRangeText(t))}</small></div><span class="chip ${cl}">${lb}</span></button>`; }).join('');
 }
-let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: {}, stay: {}, me: null, meLabel: '' };
-const ui = { tab: 'plan', day: null, exFilter: 'all', cur: null, edit: false, dirty: false, saving: false, loaded: false };
+let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: {}, stay: {}, info: [], me: null, meLabel: '' };
+const ui = { tab: 'plan', day: null, exFilter: 'all', cur: null, edit: false, dirty: false, saving: false, loaded: false, ver: 0, tabVer: {}, scroll: {}, sync: '', sig: null };
 
 /* ---------- CSV / Sheets ---------- */
 function parseCSV(text) {
@@ -99,15 +99,17 @@ async function fetchSb(tab) {
     sbOk = true; return j.map(x => Array.isArray(x.cells) ? x.cells.map(v => v == null ? '' : String(v)) : []);
   } catch { return null; }
 }
+let staleSess = false;          // get_private returned null for a signed-in member = saved PIN hash no longer valid
 async function fetchPriv(t, tab) {
   if (!myHash()) throw new Error('ต้องเข้าสู่ระบบด้วย PIN ถึงจะดูทริปนี้ได้');
   const j = await sbRpc('get_private', { p_trip: t.key, p_tab: tab, p_name: me, p_hash: myHash() });
-  if (j === null) throw new Error('เปิดทริปนี้ไม่ได้ — ต้องเป็นสมาชิกและเข้าสู่ระบบด้วย PIN ที่ถูกต้อง');
+  if (j === null) { staleSess = true; throw new Error('เปิดทริปนี้ไม่ได้ — ต้องเป็นสมาชิกและเข้าสู่ระบบด้วย PIN ที่ถูกต้อง'); }
   return j.map(r => Array.isArray(r) ? r.map(v => v == null ? '' : String(v)) : []);
 }
-async function fetchTab(t, { gid, name }) {
+async function fetchTab(t, { gid, name, noSheet }) {
   if (t.priv && (gid || name !== t.usersTab)) return fetchPriv(t, gid ? 'plan' : name);
   const fromSb = await fetchSb(gid ? 'plan' : name); if (fromSb) return fromSb;
+  if (noSheet) return [];          // optional tab (Info): never fall back to the Google Sheet
   const q = gid ? `gid=${encodeURIComponent(gid)}` : `sheet=${encodeURIComponent(name)}`;
   const r = await fetch(`https://docs.google.com/spreadsheets/d/${t.id}/gviz/tq?tqx=out:csv&headers=1&${q}&_=${Date.now()}`);
   if (!r.ok) throw new Error(`โหลดชีตไม่ได้ (HTTP ${r.status}) — ตรวจว่าแชร์เป็น "ทุกคนที่มีลิงก์ดูได้"`);
@@ -131,6 +133,7 @@ async function sbRpc(fn, args) {
   if (!r.ok) {
     const m = (j && j.message) || String(txt);
     if (/wrong code/i.test(m)) { cfg.editCode = ''; saveCfg(); throw new Error('รหัสแก้ไขไม่ถูกต้อง'); }
+    if (/^doc_/.test(fn) && /Could not find the function|schema cache/i.test(m)) throw Object.assign(new Error('docs sql missing'), { nosql: true });
     if (/Could not find the function|schema cache/i.test(m)) throw new Error(/private|verify_pin|pin_status|reset_pin/.test(fn) ? 'ยังไม่ได้รันสคริปต์ docs/supabase_trips.sql ใน Supabase' : 'ยังไม่ได้รันสคริปต์ docs/supabase_edit.sql ใน Supabase');
     throw new Error(m);
   }
@@ -292,6 +295,10 @@ function parseStay(rows) {
   const la = num(o.lat)[0], lo = num(o.lng)[0];
   return { name: o.name || '', platform: o.platform || '', address: o.address || '', lat: la != null ? la : null, lng: lo != null ? lo : null, checkin: o.checkin || '', rules: o.rules || '', note: o.note || '' };
 }
+function parseInfo(rows) {          // optional public tab `Info` (Key,Value): emergency numbers, embassy, Wi-Fi …
+  const h = rows[0] || [], ki = colIndex(h, ['key', 'คีย์']), vi = colIndex(h, ['value', 'ค่า']); if (ki < 0 || vi < 0) return [];
+  return rows.slice(1).filter(r => r[ki] && r[vi]).map(r => ({ k: String(r[ki]).trim(), v: String(r[vi]).trim() }));
+}
 function parseUsers(rows) {
   const h = rows[0] || []; const ni = colIndex(h, ['name', 'ชื่อ', 'user']);
   if (ni < 0) return null;
@@ -341,7 +348,6 @@ const users = () => data.users;
 const colorOf = n => { const i = users().findIndex(u => u.name === n); return COLORS[(i < 0 ? String(n).length : i) % COLORS.length]; };
 const initial = n => (String(n).trim()[0] || '?').toUpperCase();
 const avatar = (n, cls = '') => `<span class="avatar ${cls}" style="--c:${colorOf(n)}">${esc(initial(n))}</span>`;
-const ago = s => { const t = Date.parse(s); if (!t) return s || ''; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'เมื่อสักครู่' : m < 60 ? `${m} นาทีที่แล้ว` : m < 1440 ? `${Math.round(m / 60)} ชม.ที่แล้ว` : new Date(t).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }); };
 
 /* ---------- expenses math (per currency, no FX) ---------- */
 const participants = (e, names) => { const ps = e.type === 'shared' ? (e.with.length ? e.with : names) : e.type === 'personal' ? [e.payer] : (e.with.length ? e.with : [e.payer]); return ps.length ? ps : [e.payer]; };
@@ -375,20 +381,75 @@ function calcAll() {
   return { out, order };
 }
 
+/* ---------- cache (stale-while-revalidate) + calm re-rendering ---------- */
+const CK = 'tt.cache.', CACHE_MAX = 1.5e6;
+const SNAP = ['plan', 'costs', 'extra', 'users', 'expenses', 'locs', 'places', 'spots', 'settings', 'stay', 'tips', 'media', 'info'];
+const snapOf = d => JSON.stringify(Object.fromEntries(SNAP.map(k => [k, d[k]])), (k, v) => k === 'dt' ? undefined : v);      // `dt` is derived from today's date, not data
+function writeCache(id, snap) { try { if (snap.length > CACHE_MAX) localStorage.removeItem(CK + id); else localStorage.setItem(CK + id, Date.now() + '\n' + snap); } catch { } }
+function readCache(id) { try { const v = localStorage.getItem(CK + id), i = v ? v.indexOf('\n') : -1; return i < 0 ? null : { t: +v.slice(0, i), snap: v.slice(i + 1), d: JSON.parse(v.slice(i + 1)) }; } catch { return null; } }
+const clearPrivCaches = () => { try { docsWipe(); } catch { } try { Object.keys(localStorage).filter(k => k.startsWith(CK + 'priv:')).forEach(k => localStorage.removeItem(k)); } catch { } };
+const blankData = () => ({ plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: {}, stay: {}, tips: [], media: [], info: [] });
+const dataFromCache = (id, c) => { const d = { ...blankData(), ...c.d, _trip: id, me: data.me, meLabel: data.meLabel }; if (d.plan) planDates(d.plan); return d; };
+const dim = on => $('main').classList.toggle('busy', on);
+const busy = () => dlg.open || !!$('.glb') || /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '');
+/* run a re-render without moving what the reader is looking at: anchor on the first visible step */
+function keepScroll(fn, top) {
+  const y0 = scrollY, dock = $('#homeDock'), lim = Math.max($('.top').getBoundingClientRect().bottom, dock.hidden ? 0 : dock.getBoundingClientRect().bottom);
+  const a = ui.tab === 'plan' ? $$('#tl .step').find(n => n.getBoundingClientRect().bottom > lim + 1) : null, ai = a && a.dataset.i, ay = a && a.getBoundingClientRect().top, day = ui.day;
+  fn();
+  scrollTo(0, top && ui.tab === 'plan' ? 0 : y0);          // a different trip starts at the top of the plan
+  if (top) return;
+  const b = a && ui.day === day && $(`#tl .step[data-i="${ai}"]`); if (b) scrollBy(0, b.getBoundingClientRect().top - ay);
+}
+
 /* ---------- load ---------- */
 const toast = (m, ms = 2400) => { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, ms); };
 function showErr(m) { const e = $('#error'); e.hidden = !m; e.textContent = m || ''; }
 let rawPlanHead = '';
 const sameAsPlan = r => rawPlanHead && (r[0] || []).join('|') === rawPlanHead;
-async function load() {
+function allowedTrip() {
   let t = trip();
   if (t.priv && !canSeePriv(t)) { cfg.active = DEFAULT_TRIP.id; saveCfg(); t = trip(); }          // not allowed (or not logged in with PIN) -> back to the public trip
+  return t;
+}
+function applyData(nd, snap, top) {
+  keepScroll(() => {
+    data = nd; ui.sig = snap; dim(false);
+    try { if (data.plan && data.plan.days.length) { planDates(data.plan); const ds = data.plan.days.filter(d => d.dt); if (ds.length) { cfg.dates = cfg.dates || {}; const r = { s: isoD(ds[0].dt), e: isoD(ds[ds.length - 1].dt) }, o = cfg.dates[nd._trip]; if (!o || o.s !== r.s || o.e !== r.e) { cfg.dates[nd._trip] = r; saveCfg(); } } } } catch { }
+    showErr(!data.plan ? 'โหลดแผนไม่ได้ — ตรวจว่าชีตแชร์เป็น "ทุกคนที่มีลิงก์ดูได้" แล้วลองโหลดใหม่' : '');
+    ui.loaded = true;
+    if (me && users().length && !users().some(u => u.name === me)) { me = ''; sess.set('tt.me', null); sess.set('tt.ph', null); }
+    if (!me && !$('#login').hidden) renderLogin();
+    renderAll();
+  }, top);
+}
+/* network/RPC failed: keep what is on screen (or the last good copy) and say so in the sub-title instead of an error box */
+function loadFailed(t, next) {
+  ui.sync = 'offline'; dim(false);
+  if (data._trip !== t.id) {
+    const c = readCache(t.id);
+    if (c) { ui.updated = new Date(c.t); applyData(dataFromCache(t.id, c), c.snap, true); } else { ui.updated = null; applyData(next, null, true); }
+  } else showErr('');
+  renderSub();
+}
+async function load() {
+  const t = allowedTrip();
   $('#tripTitle').innerHTML = esc(t.name) + (visibleTrips().length > 1 ? ' <span class="chev">▾</span>' : '');
-  const keep = { me: data.me, meLabel: data.meLabel };
-  const same = data._trip === t.id;
-  const next = { media: [], _trip: t.id, tips: same ? (data.tips || []) : [], plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: same ? (data.settings || {}) : {}, stay: same ? (data.stay || {}) : {}, ...keep };
-  const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r);; });
-  await Promise.allSettled([planP]);
+  const tripChanged = data._trip !== t.id;
+  ui.sync = tripChanged ? 'switch' : 'loading'; renderSub();
+  const same = !tripChanged, next = { media: same ? (data.media || []) : [], _trip: t.id, tips: same ? (data.tips || []) : [], plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: same ? (data.settings || {}) : {}, stay: same ? (data.stay || {}) : {}, info: same ? (data.info || []) : [], me: data.me, meLabel: data.meLabel };
+  let planErr = null;
+  const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r); }).catch(e => { planErr = e; });
+  staleSess = false;
+  await planP;
+  if (trip().id !== t.id) return;                    // the trip was switched while loading
+  if (staleSess && t.priv && me) {          // PIN was reset/deleted on the server -> sign out cleanly
+    staleSess = false; me = ''; sess.set('tt.me', null); sess.set('tt.ph', null); cfg.active = DEFAULT_TRIP.id; saveCfg(); ui.day = null; clearPrivCaches();
+    showErr(''); toast('PIN ของคุณใช้ไม่ได้แล้ว (อาจถูกรีเซ็ต) — กรุณาเข้าสู่ระบบใหม่อีกครั้ง', 5000);
+    $('#login').hidden = false; $('#loginPin').hidden = true; $('#loginPin').innerHTML = ''; $('#loginUsers').hidden = false; $('#loginSub').hidden = false; renderLogin();
+    return load();
+  }
+  if (planErr) return loadFailed(t, next);
   const rest = [
     async () => { if (t.priv) { try { next.media = parseMedia(await fetchTab(t, { name: 'media' })); } catch { } } },
     async () => { try { pinSet = new Set((await sbRpc('pin_status', {})).map(lc)); } catch { pinSet = null; } },
@@ -399,18 +460,17 @@ async function load() {
     async () => { next.locs = parseLocations(await fetchTab(t, { name: t.locationsTab || 'Locations' })) || {}; },
     async () => { const pl = parsePlaces(await fetchTab(t, { name: t.placesTab || 'Places' })) || { over: {}, spots: [] }; next.places = pl.over; next.spots = pl.spots; },
     async () => { if (t.costTab) { const r = await fetchTab(t, { name: t.costTab }); next.costs = sameAsPlan(r) ? null : parseTable(r); } },
+    async () => { try { next.info = parseInfo(await fetchTab(t, { name: 'Info', noSheet: true })); } catch { } },
     async () => { for (const n of String(t.extraTabs || '').split(',').map(x => x.trim()).filter(Boolean)) { try { const r = await fetchTab(t, { name: n }); if (!sameAsPlan(r)) next.extra.push({ name: n, rows: parseTable(r) }); } catch { } } }
   ];
-  await Promise.allSettled(rest.map(f => f()));
-  if (!next.plan && data.plan && same) next.plan = data.plan;
+  const res = await Promise.allSettled(rest.map(f => f()));
+  if (trip().id !== t.id) return;
+  if (same) [[4, 'users'], [5, 'expenses'], [6, 'locs'], [7, 'places'], [7, 'spots'], [8, 'costs']].forEach(([i, k]) => { if (res[i].status === 'rejected') next[k] = data[k]; });          // a tab that failed to load keeps its last good copy
   { const cu = next.users.find(u => u.cid); if (cu) next.settings = { googleClientId: cu.cid }; }
-  data = next;
-  try { if (data.plan && data.plan.days.length) { planDates(data.plan); const ds = data.plan.days.filter(d => d.dt); if (ds.length) { cfg.dates = cfg.dates || {}; const r = { s: isoD(ds[0].dt), e: isoD(ds[ds.length - 1].dt) }, o = cfg.dates[t.id]; if (!o || o.s !== r.s || o.e !== r.e) { cfg.dates[t.id] = r; saveCfg(); } } } } catch { }
-  showErr(!data.plan ? 'โหลดแผนไม่ได้ — ตรวจว่าชีตแชร์เป็น "ทุกคนที่มีลิงก์ดูได้" แล้วลองโหลดใหม่' : '');
-  ui.loaded = true; ui.updated = new Date();
-  if (me && users().length && !users().some(u => u.name === me)) { me = ''; sess.set('tt.me', null); sess.set('tt.ph', null); }
-  if (!me && !$('#login').hidden) renderLogin();
-  renderAll();
+  const snap = snapOf(next); ui.sync = ''; ui.updated = new Date();
+  if (!tripChanged && ui.loaded && snap === ui.sig) { dim(false); showErr(''); renderSub(); renderUpd(); return; }          // identical data: touch nothing
+  if (busy()) { ui.stale = true; dim(false); renderSub(); return; }          // never re-render under an open dialog / text field / picture; retried when it closes
+  ui.stale = false; applyData(next, snap, tripChanged); writeCache(t.id, snap);
   if (me && geo.state === 'idle') startLocation();
 }
 
@@ -424,6 +484,7 @@ function renderLogin() {
 }
 function enter(name) {
   me = name; sess.set('tt.me', name); if (name) { cfg.lastMe = name; saveCfg(); }
+  if (cfg.cacheOwner !== name) { clearPrivCaches(); cfg.cacheOwner = name; saveCfg(); }          // another person on this phone must not see the previous person's cached trips
   $('#login').hidden = true; $('#app').hidden = false; renderAll();
   if (name) startLocation();
   if (name && !sess.get('tt.picked') && tripStatus(trip()) === 'past') { const best = tripList('now')[0]; if (best && best.id !== cfg.active && tripStatus(best) !== 'past') switchTrip(best.id, true); }
@@ -505,7 +566,7 @@ async function resetPin(name) {
 }
 $('#loginUsers').onclick = e => { const b = e.target.closest('[data-u]'); if (b) pickUser(b.dataset.u); };
 $('#loginGuest').onclick = () => enter('');
-$('#btnMe').onclick = () => { $('#login').hidden = false; $('#loginPin').hidden = true; $('#loginUsers').hidden = false; $('#loginSub').hidden = false; renderLogin(); };
+$('#btnMe').onclick = () => { clearPrivCaches(); $('#login').hidden = false; $('#loginPin').hidden = true; $('#loginUsers').hidden = false; $('#loginSub').hidden = false; renderLogin(); };
 
 /* ---------- plan view ---------- */
 const link = s => esc(s).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">เปิดลิงก์</a>');
@@ -539,7 +600,7 @@ function pill(d, i) {
   const past = isPast(d), top = past || !d.dt ? (i + 1) : d.dt.getDate(), sub = past ? 'Day' : d.dt ? TH_M[d.dt.getMonth()] : '';
   return `<button class="pill ${i === ui.day ? 'sel' : ''} ${isToday(d) ? 'now' : ''}" data-day="${i}"><b>${top}</b><small>${sub}</small></button>`;
 }
-/* ---------- home: sticky map dock (the same Leaflet map is moved between the home tab and the full map tab) ---------- */
+/* ---------- home: sticky map dock (the same Leaflet map is moved between the dock and the full-screen overlay) ---------- */
 const wpMark = {};
 ui.dockSize = store.get('tt.dock', 'm');
 function mountMap(holder) {
@@ -563,17 +624,22 @@ function drawHome(fit) {
   if (ui.tab !== 'plan') return; updateDock();
   if (ui.dockSize !== 's') { drawMap(fit); runGeocode(); }
 }
-let lastY = 0;
-window.addEventListener('scroll', () => {
-  const y = window.scrollY, dy = y - lastY; lastY = y;
-  if (Date.now() - (ui.dockLockAt || 0) < 800) return;                      // just opened by the map button: leave it alone
-  if (ui.tab !== 'plan' || ui.edit || ui.dockSize === 'l' || ui.dockSize === 's') return;
-  const st = y < 60 ? false : dy > 6 && y > 140 ? 'hide' : dy < -6 ? 'peek' : null;
-  if (st === null || st === (ui.dockAway || false)) return;
+/* the dock hides / peeks only after >= 28 px of sustained movement in one direction; small reversals restart the count */
+let lastY = 0, acc = 0;
+function setAway(st) {
+  if (st === (ui.dockAway || false)) return;
   const dock = $('#homeDock');
   if (st === 'peek') { const dh = $('#homeDays'); document.documentElement.style.setProperty('--peekY', Math.max(0, dock.offsetHeight - dh.offsetHeight - 8) + 'px'); }
   ui.dockAway = st; dock.classList.toggle('away', st === 'hide'); dock.classList.toggle('peek', st === 'peek');
   document.documentElement.classList.toggle('dockaway', st === 'hide'); document.documentElement.classList.toggle('dockpeek', st === 'peek');
+}
+window.addEventListener('scroll', () => {
+  const y = window.scrollY, dy = y - lastY; lastY = y;
+  if (Date.now() - (ui.dockLockAt || 0) < 800 || ui.tab !== 'plan' || ui.edit || ui.dockSize === 'l' || ui.dockSize === 's') { acc = 0; return; }   // just opened / tab switched: leave it alone
+  if (y < 60) { acc = 0; return setAway(false); }
+  if (dy * acc < 0) acc = 0;
+  acc += dy;
+  if (acc > 28 && y > 140) setAway('hide'); else if (acc < -28 && ui.dockAway === 'hide') setAway('peek');
 }, { passive: true });
 function setDock(v) { ui.dockSize = v; store.set('tt.dock', v); updateDock(); if (v !== 's' && map) setTimeout(() => { map.invalidateSize(); drawMap(true); }, 100); }
 function focusStep(k) {
@@ -583,22 +649,30 @@ function focusStep(k) {
   const m = wpMark[ui.day + '|' + qName(s.to || s.from || '')];
   if (m && map && ui.dockSize !== 's') { map.setView(m.getLatLng(), Math.max(map.getZoom(), 15)); m.openPopup(); }
   else if (ui.dockSize === 's') toast('แผนที่ถูกซ่อนอยู่ — กด “แสดงแผนที่”');
-  else toast('ยังไม่มีพิกัดของจุดนี้ — ตั้งพิกัดในแท็บแผนที่หรือวางลิงก์ Google Maps');
+  else toast('ยังไม่มีพิกัดของจุดนี้ — ตั้งพิกัดได้ในหน้าแก้ไขรายการ (วางลิงก์ Google Maps)');
 }
 $('#dockSize').onclick = () => setDock(ui.dockSize === 'l' ? 'm' : 'l');
 $('#dockHide').onclick = () => setDock('s');
 $('#dockShow').onclick = () => setDock('m');
-$('#dockLoc').onclick = () => { if (data.me && map) map.setView([data.me.lat, data.me.lng], 16); else { ui.centered = false; startLocation(); } };
-$('#dockFull').onclick = () => $('[data-tab=map]').click();
-function stayCard() {
-  const st = data.stay; if (!st || (!st.name && !st.address)) return '';
-  const nav = st.lat != null ? `https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(st.address)}`;
+const locateMe = () => { if (data.me && map) map.setView([data.me.lat, data.me.lng], 16); else { ui.centered = false; startLocation(); } };
+$('#dockLoc').onclick = locateMe;
+$('#dockFull').onclick = openMapOv;
+/* one slim row: what is next + the stay (details collapsed, one tap away) */
+function stayPanel() {
+  const st = data.stay, nav = st.lat != null ? `https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(st.address)}`;
   const rules = String(st.rules || '').split('\n').map(x => x.trim()).filter(Boolean);
-  return `<details class="card stay"><summary><span class="stay-n">🏠 <b>${esc(st.name || 'ที่พัก')}</b></span><a class="btn pri sm" target="_blank" rel="noopener" href="${nav}">นำทาง</a></summary>
-  ${st.address ? `<div class="note" style="margin-top:8px">${esc(st.address)}</div>` : ''}
+  return `<div class="card stay" id="stayPn" ${ui.stayOpen ? '' : 'hidden'}><div class="row2"><b>🏠 ${esc(st.name || 'ที่พัก')}</b><a class="btn pri sm" target="_blank" rel="noopener" href="${nav}">นำทาง</a></div>
+  ${st.address ? `<div class="note">${esc(st.address)}</div>` : ''}
   ${st.checkin ? `<div class="stay-ci">📩 ${esc(st.checkin)}</div>` : ''}
   ${st.address ? '<div class="btns" style="margin-top:8px"><button class="btn" id="stCopy">คัดลอกที่อยู่</button></div>' : ''}
-  ${rules.length ? `<div class="stay-r"><b>กฎของที่พัก</b><ul class="ideas">${rules.map(r => `<li>${esc(r)}</li>`).join('')}</ul></div>` : ''}</details>`;
+  ${rules.length ? `<div class="stay-r"><b>กฎของที่พัก</b><ul class="ideas">${rules.map(r => `<li>${esc(r)}</li>`).join('')}</ul></div>` : ''}</div>`;
+}
+function nextCard() {
+  const e = nextEvent(), st = data.stay, hasStay = !!st && !!(st.name || st.address); if (!e && !hasStay) return '';
+  const on = e && remOn(e);
+  return `<div class="cd" id="cd" data-key="${e ? esc(e.key) : ''}"><div class="cd-b"><small>${e ? `ถัดไป · อีก <span id="cdTime">${fmtCd(e.dt - Date.now())}</span>` : 'ที่พัก'}</small><b>${esc(e ? e.title : st.name || st.address)}</b></div>`
+    + (e ? `<button class="bellbtn ${on ? 'on' : ''}" data-bell="${esc(e.key)}" aria-label="เตือน">${on ? '🔔' : '🔕'}</button>` : '')
+    + (hasStay ? `<button class="cd-stay" id="stayBtn" aria-expanded="${!!ui.stayOpen}">🏠 ที่พัก</button>` : '') + '</div>' + (hasStay ? stayPanel() : '');
 }
 function renderPlan() {
   const el = $('#tab-plan'), p = data.plan, dayBar = $('#homeDays');
@@ -608,7 +682,7 @@ function renderPlan() {
   if (!p.days.length) { dayBar.innerHTML = ''; el.innerHTML = '<div class="empty">ยังไม่มีแผนในชีต</div>'; return; }
   if (ui.day == null || ui.day >= p.days.length) { const t = p.days.findIndex(isToday); ui.day = t >= 0 ? t : Math.max(0, p.days.findIndex(d => !isPast(d))); }
   const d = p.days[ui.day], wd = d.dt && !isPast(d) ? d.dt.toLocaleDateString('th-TH', { weekday: 'long' }) : '';
-  let h = (ui.edit ? '' : cdCard() + stayCard());
+  let h = (ui.edit ? '' : nextCard());
   h += `<div class="dayh"><div><h2>${esc(dayTitle(d, ui.day))}</h2><small>${[wd, d.city].filter(Boolean).map(esc).join(' · ')}${isToday(d) ? ' <span class="chip">วันนี้</span>' : ''}</small></div><button class="edit-btn ${ui.edit ? 'on' : ''}" id="editBtn">${ui.edit ? 'เสร็จ' : '<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>แก้ไข'}</button></div>`;
   if (!ui.edit && !isPast(d)) { const hits = spotMatches().items.filter(m => m.di === ui.day); if (hits.length) h += `<button class="nudge" id="nudge"><span>🛤</span><div><b>แวะได้ ${hits.length} ที่จากลิสของคุณ</b><small>อยู่ใกล้เส้นทางของวันนี้ — แตะเพื่อดู</small></div></button>`; }
   h += `<div class="tl ${ui.edit ? 'editing' : ''}" id="tl">` + d.steps.map((s, k) => `<div class="step" data-i="${k}"><div class="step-t">${esc(s.time || '')}${s.toTime ? `<small>→ ${esc(s.toTime)}</small>` : ''}</div><div class="step-c"><div class="step-i">${howIcon(s.how, !!s.text)}</div><div class="step-b">
@@ -625,9 +699,10 @@ function renderPlan() {
   { const pm = $('#peekMap', dayBar); if (pm) pm.onclick = () => { ui.dockLockAt = Date.now(); ui.dockAway = false; updateDock(); }; }
   const sel = $('.pill.sel', dayBar); if (sel) dayBar.scrollLeft = sel.offsetLeft - dayBar.clientWidth / 2 + sel.clientWidth / 2;
   $$('[data-gi]', el).forEach(b => b.onclick = () => { const g = p.ideas[+b.dataset.gi]; addToPlanDialog(g.items[+b.dataset.ii], { gi: +b.dataset.gi, ii: +b.dataset.ii }); });
-  $$('.pill[data-day]', dayBar).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; ui.refit = true; ui.activeStep = null; renderPlan(); });
+  $$('.pill[data-day]', dayBar).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; ui.refit = true; ui.activeStep = null; ui.ver++; renderPlan(); });
   $('#editBtn').onclick = toggleEdit;
   bindBells(el);
+  const sb = $('#stayBtn'); if (sb) sb.onclick = () => { ui.stayOpen = !ui.stayOpen; $('#stayPn').hidden = !ui.stayOpen; sb.setAttribute('aria-expanded', ui.stayOpen); };
   const sc = $('#stCopy'); if (sc) sc.onclick = () => copyText(data.stay.address, 'คัดลอกที่อยู่แล้ว');
   const pg = $('#planGallery'); if (pg) pg.onclick = openGallery;
   const nd = $('#nudge'); if (nd) nd.onclick = () => { ui.spotView = 'sug'; $('[data-tab=spots]').click(); };
@@ -650,8 +725,11 @@ async function toggleEdit() {
   }
   ui.edit = !ui.edit; renderPlan();
 }
+const hhmm = d => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 function renderSub() {
   const p = data.plan; let s = ui.subMsg || '';
+  if (!s && ui.sync === 'offline') s = 'ออฟไลน์ — แสดงข้อมูลล่าสุด' + (ui.updated ? ' ' + hhmm(ui.updated) : '');
+  else if (!s && ui.sync) s = ui.sync === 'switch' ? 'กำลังโหลด…' : 'กำลังอัปเดต…';
   if (!s && p && p.days.length) {
     planDates(p); const first = p.days.find(d => d.dt), last = [...p.days].reverse().find(d => d.dt), t0 = todayStart();
     if (first && last) { const diff = Math.round((first.dt - t0) / 864e5); s = diff > 0 ? `อีก ${diff} วันถึงวันเดินทาง` : last.dt < t0 ? `จบทริปแล้ว · ${p.days.length} วัน` : `กำลังเดินทาง · ${p.days.length} วัน`; }
@@ -660,7 +738,7 @@ function renderSub() {
 }
 /* auto-save plan to the sheet */
 let saveTimer;
-function scheduleSave() { ui.dirty = true; setSub('กำลังบันทึก…'); clearTimeout(saveTimer); saveTimer = setTimeout(savePlan, 900); }
+function scheduleSave() { ui.ver++; ui.dirty = true; setSub('กำลังบันทึก…'); clearTimeout(saveTimer); saveTimer = setTimeout(savePlan, 900); }
 async function savePlan() {
   if (!sheetApi.on() || !data.plan) return;
   if (ui.saving) { scheduleSave(); return; }
@@ -769,7 +847,7 @@ async function coordsFromLink(url) {
 async function savePlace(name, c) {
   data.places[norm(qName(name))] = c; data.places[norm(name)] = c;
   if (sheetApi.on()) { try { await sheetApi.call('upsert', { tab: trip().placesTab || 'Places', header: ['Name', 'Lat', 'Lng', 'Note'], key: qName(name), keyCol: 0, values: [qName(name), +c.lat.toFixed(6), +c.lng.toFixed(6), ''] }); toast('บันทึกพิกัดลงชีตแล้ว'); } catch (e) { toast(e.message); } }
-  if (typeof drawPlaces === 'function') { drawPlaces(); renderPlaces(); }
+  ui.ver++; drawMap(false);
 }
 function placeDialog(name) {
   const d = openDlg(`<form method="dialog"><h3>ตั้งตำแหน่ง</h3><div class="mut">${esc(name)}</div>
@@ -919,7 +997,7 @@ async function reverse(lat, lng) {
     if (!r.ok) return; const j = await r.json(), a = j.address || {};
     const parts = [j.name || a.road || a.pedestrian, a.suburb || a.neighbourhood || a.quarter, a.city || a.town || a.village || a.county || a.state].filter(Boolean);
     data.meLabel = [...new Set(parts)].slice(0, 3).join(', ') || (j.display_name || '').split(',').slice(0, 3).join(',');
-    renderMapStatus(); renderMapPeople();
+    renderMapStatus();
   } catch { }
 }
 
@@ -942,7 +1020,7 @@ function ensureMap() {
   return true;
 }
 function drawMap(fit) {
-  if ((ui.tab !== 'map' && ui.tab !== 'plan') || !ensureMap()) return;
+  if ((ui.tab !== 'plan' && !ui.ov) || !ensureMap()) return;
   layer.clearLayers(); const pts = [];
   const all = { ...data.locs }; if (data.me && me) all[me] = { ...data.me, label: data.meLabel || '' };
   for (const [n, p] of Object.entries(all)) {
@@ -969,57 +1047,37 @@ const GEO_MSG = {
   before: ['🛫', 'ยังไม่ถึงเวลาเปิดตำแหน่ง', ''],
   after: ['🏠', 'ทริปจบแล้ว', 'ปิดการติดตามตำแหน่งแล้ว']
 };
+/* location status line of the full-screen map; the permission button only shows when there is something to ask */
 function renderMapStatus() {
-  const el = $('#mapStatus'); if (!el) return; renderNext();
-  if (geo.state === 'ok' && data.me) {
-    const m = data.me;
-    el.innerHTML = `<div class="status"><div class="ico">📍</div><div><b>${esc(me || 'คุณ')} อยู่ที่นี่</b><div>${esc(data.meLabel || 'กำลังระบุชื่อสถานที่…')}</div><small>แม่นยำ ±${Math.round(m.acc)} ม.${sheetApi.ready() ? ' · แชร์ให้เพื่อนผ่านชีตอัตโนมัติ' : ''}</small></div></div>${sheetApi.ready() ? '' : '<div class="btns"><button class="btn" id="bShare">เข้าสู่ระบบ Google เพื่อแชร์ตำแหน่งให้เพื่อน</button></div>'}`;
-    const b = $('#bShare'); if (b) b.onclick = async () => { if (!sheetApi.on()) return googleDialog('เจ้าของแอปต้องตั้งค่า Google Client ID ก่อน'); try { await signIn(); renderMapStatus(); } catch (e) { toast(e.message, 4500); } };
-  } else {
-    let [ico, t, s] = GEO_MSG[geo.state] || GEO_MSG.idle;
-    if (geo.state === 'before') { const w = gate().w; s = w ? `ระบบจะขอสิทธิ์อัตโนมัติเมื่อบินถึง${w.where ? ' ' + w.where : ''} (${dtTh(w.start)}) และปิดเมื่อออกเดินทางกลับ (${dtTh(w.end)})` : ''; }
-    el.innerHTML = `<div class="status"><div class="ico">${ico}</div><div><b>${t}</b><div class="mut">${s}</div></div></div>${['asking', 'unsupported', 'before', 'after'].includes(geo.state) ? '' : '<div class="btns"><button class="btn pri" id="bAsk">เปิด / ลองหาตำแหน่งอีกครั้ง</button></div>'}`;
-    const b = $('#bAsk'); if (b) b.onclick = () => { stopLocation(); ui.centered = false; startLocation(); };
-  }
-}
-const gmDir = (to, mode) => `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(to)}${data.me ? `&origin=${data.me.lat},${data.me.lng}` : ''}${mode ? '&travelmode=' + mode : ''}`;
-function nextStop() {
-  const p = planWindowDates(); if (!p) return null;
-  const d = p.days.find(isToday); if (!d) return null;
-  const nowM = new Date().getHours() * 60 + new Date().getMinutes();
-  return d.steps.find(st => st.to && (!tm(st.time) || tm(st.time)[0] * 60 + tm(st.time)[1] >= nowM - 30)) || null;
-}
-function renderNext() {
-  const el = $('#mapNext'); if (!el) return;
-  const n = geo.state === 'ok' ? nextStop() : null;
-  el.innerHTML = n ? `<div class="card"><small>จุดหมายถัดไป</small><div class="route">${esc(n.to)}</div><div class="btns"><a class="btn pri" target="_blank" rel="noopener" href="${gmDir(n.to)}">นำทางด้วย Google Maps</a><a class="btn" target="_blank" rel="noopener" href="${gmDir(n.to, 'transit')}">ขนส่งสาธารณะ</a></div></div>` : '';
+  const el = $('#ovStatus'); if (!el) return;
+  let [ico, t, sub] = GEO_MSG[geo.state] || GEO_MSG.idle;
+  if (geo.state === 'ok' && data.me) { ico = '📍'; t = data.meLabel || (me || 'คุณ') + ' อยู่ที่นี่'; sub = `แม่นยำ ±${Math.round(data.me.acc)} ม.`; }
+  else if (geo.state === 'before') { const w = gate().w; sub = w ? `จะขอสิทธิ์เมื่อบินถึง${w.where ? ' ' + w.where : ''} (${dtTh(w.start)})` : ''; }
+  el.innerHTML = `<span>${ico} <b>${esc(t)}</b>${sub ? `<br><small>${esc(sub)}</small>` : ''}</span>${['idle', 'denied', 'error'].includes(geo.state) ? '<button class="btn pri sm" id="bAsk">ขอสิทธิ์ตำแหน่ง</button>' : ''}`;
+  const b = $('#bAsk'); if (b) b.onclick = () => { stopLocation(); ui.centered = false; startLocation(); };
 }
 function renderFilters() {
-  const el = $('#mapFilters'); if (!el) return;
+  const el = $('#ovFilters'); if (!el) return;
   const cnt = t => allSpots().filter(s => s.type === t).length;
   const chip = (k, ic, lb, n) => `<button class="tag ${ui.f[k] ? 'on' : ''}" data-f="${k}">${ic} ${lb}${n != null ? ` <small>${n}</small>` : ''}</button>`;
-  el.innerHTML = chip('route', '🧭', 'แผน') + chip('food', '🍽', 'ร้านอาหาร', cnt('food')) + chip('sight', '🏛', 'ที่เที่ยว', cnt('sight')) + chip('other', '📌', 'อื่นๆ', cnt('other')) + chip('friends', '👥', 'เพื่อน')
+  el.innerHTML = chip('route', '🧭', 'เส้นทาง') + chip('food', '🍽', 'ร้านอาหาร', cnt('food')) + chip('sight', '🏛', 'ที่เที่ยว', cnt('sight')) + chip('other', '📌', 'อื่นๆ', cnt('other')) + chip('friends', '👥', 'เพื่อน')
     + (ui.sugPins && ui.sugPins.length ? `<button class="tag on" id="clrSug">✨ แนะนำ ${ui.sugPins.length} ✕</button>` : '');
-  $$('[data-f]', el).forEach(b => b.onclick = () => { const k = b.dataset.f; ui.f[k] = !ui.f[k]; store.set('tt.f', ui.f); renderFilters(); drawMap(false); renderPlaces(); if (k === 'sight' && ui.f.sight) runGeocode(); });
+  $$('[data-f]', el).forEach(b => b.onclick = () => { const k = b.dataset.f; ui.f[k] = !ui.f[k]; store.set('tt.f', ui.f); renderFilters(); drawMap(false); if (k === 'sight' && ui.f.sight) runGeocode(); });
   const c = $('#clrSug'); if (c) c.onclick = () => { ui.sugPins = []; renderFilters(); drawMap(false); };
 }
-function renderMap() {
-  const el = $('#tab-map');
-  if (!el.dataset.init) {
-    el.dataset.init = 1;
-    el.innerHTML = `<div class="card" id="mapStatus"></div><div id="mapNext"></div><div class="chips" id="mapFilters"></div><div class="mapwrap" id="mapHolder"><button class="locate" id="bLocate" aria-label="ไปที่ตำแหน่งฉัน"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button></div><div id="placesBox"></div><div id="mapPeople"></div>`;
-    $('#bLocate').onclick = () => { if (data.me) map.setView([data.me.lat, data.me.lng], 17); else { ui.centered = false; startLocation(); } };
-  }
-  mountMap($('#mapHolder')); ui.refit = true; renderMapStatus(); renderFilters(); renderPlaces(); renderMapPeople(); drawMap(true); runGeocode();
+/* full-screen map: the one Leaflet instance is moved into the overlay and back (same view, no re-fit); Back / Esc / ✕ close it */
+function openMapOv() {
+  if (ui.ov) return; ui.ov = true; $('#mapOv').hidden = false; history.pushState({ ov: 1 }, '');
+  mountMap($('#ovHolder')); renderFilters(); renderMapStatus(); drawMap(false);
 }
-function renderMapPeople() {
-  const el = $('#mapPeople'); if (!el) return;
-  const all = { ...data.locs }; if (data.me && me) all[me] = { ...data.me, label: data.meLabel || '', at: data.me.at.toISOString() };
-  const names = users().map(u => u.name); if (me && !names.includes(me)) names.push(me);
-  if (names.length < 2) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div class="people">${names.map(n => { const p = all[n]; return `<button class="pcard" data-n="${esc(n)}"><div class="pr">${avatar(n, 'sm')}<b>${esc(n)}</b></div><small>${p ? esc(p.label || `${(+p.lat).toFixed(3)}, ${(+p.lng).toFixed(3)}`) : 'ยังไม่มีตำแหน่ง'}</small>${p && p.at ? `<small>${esc(ago(p.at))}</small>` : ''}</button>`; }).join('')}</div>`;
-  $$('.pcard', el).forEach(b => b.onclick = () => { const p = all[b.dataset.n]; if (!p) return toast('ยังไม่มีตำแหน่งของ ' + b.dataset.n); if (map) map.setView([p.lat, p.lng], 16); });
+function closeMapOv(fromPop) {
+  if (!ui.ov) return; ui.ov = false; $('#mapOv').hidden = true; mountMap($('#homeMapHolder'));
+  if (!fromPop) history.back();
 }
+$('#ovClose').onclick = () => closeMapOv();
+$('#ovLoc').onclick = locateMe;
+addEventListener('popstate', () => closeMapOv(true));
+addEventListener('keydown', e => { if (e.key === 'Escape' && ui.ov && !dlg.open) closeMapOv(); });
 
 /* ---------- plan route on the map (waypoints in order, dashed line + arrows) ---------- */
 const gc = { cache: store.get('tt.gc2', {}), running: false, center: null };
@@ -1043,11 +1101,8 @@ function dayWaypoints(di) {
 }
 function scopeDays() {
   const p = data.plan; if (!p) return [];
-  if (ui.tab === 'plan') return p.days[ui.day] ? [ui.day] : [];
   if (ui.tab === 'spots') return p.days.map((_, i) => i).filter(i => !isPast(p.days[i]));
-  if (ui.placeDay === 'none') return [];
-  const di = ui.placeDay === 'all' ? 'all' : (ui.placeDay != null ? ui.placeDay : (ui.day || 0));
-  return di === 'all' ? p.days.map((_, i) => i) : (p.days[di] ? [di] : []);
+  return p.days[ui.day] ? [ui.day] : [];
 }
 const scopeStops = () => scopeDays().flatMap(dayWaypoints);
 const ideaSpots = () => data.plan ? data.plan.ideas.flatMap(g => g.items.map(it => ({ name: it, q: qName(it), type: 'sight', src: 'idea' }))).filter(x => x.q && !GENERIC.test(x.q)) : [];
@@ -1076,9 +1131,9 @@ async function runGeocode() {
     if (!gc.center) { const w = tripWindow(), name = w && qName(w.where); if (name) { const c = await geocode(name, true); if (c) { gc.center = c; gc.cache[gKey('__center')] = c; store.set('tt.gc2', gc.cache); } } }
     for (; ;) {
       const need = [...(ui.f.route ? scopeStops() : []), ...(ui.f.sight ? ideaSpots() : [])].find(x => !knownQ(x.q)); if (!need) break;
-      await geocode(need.q); drawMap(false); renderPlaces(); if (ui.tab === 'spots') renderSpots(); await sleep(1100);
+      await geocode(need.q); drawMap(false); if (ui.tab === 'spots') renderSpots(); await sleep(1100);
     }
-  } catch { } finally { gc.running = false; const rf = ui.refit; ui.refit = false; drawMap(rf); renderPlaces(); }
+  } catch { } finally { gc.running = false; const rf = ui.refit; ui.refit = false; drawMap(rf); }
 }
 /* ---------- travel time between stops: OSM routing (foot/car); transit & taxi are estimates; flights use the plan's own times ---------- */
 const trv = { cache: store.get('tt.trv', {}), memo: {}, pending: {}, q: Promise.resolve(), t: 0 };
@@ -1095,7 +1150,7 @@ const fmtDur = m => { m = Math.max(1, Math.round(m)); return m < 60 ? `${m} น�
 const fmtKm = m => m < 1000 ? `${Math.max(10, Math.round(m / 10) * 10)} ม.` : `${(m / 1000).toLocaleString('th-TH', { maximumFractionDigits: 1 })} กม.`;
 const planMin = w => { const a = tm(w.ts), b = tm(w.te); if (!a || !b) return null; let m = b[0] * 60 + b[1] - (a[0] * 60 + a[1]); if (m <= 0) m += 1440; return m; };
 const legKey = (a, b, mode) => { const f = x => x.toFixed(4); return `${f(a.lat)},${f(a.lng)}|${f(b.lat)},${f(b.lng)}|${mode}`; };
-function legsChanged() { clearTimeout(trv.t); trv.t = setTimeout(() => { if (ui.tab === 'map' || ui.tab === 'plan') { drawMap(false); if (ui.tab === 'map') renderPlaces(); } }, 150); }
+function legsChanged() { clearTimeout(trv.t); trv.t = setTimeout(() => drawMap(false), 150); }
 function legInfo(a, b, how) {
   const d = distM(a, b), mode = legMode(how, d);
   if (mode === 'air') return { mode, air: true, m: d };
@@ -1124,12 +1179,6 @@ const legText = (info, w) => {
   return `${info.est ? '~' : ''}${fmtDur(info.min)} · ${fmtKm(info.m)}`;
 };
 const tight = (info, w) => { if (info.air || info.skip || info.loading) return null; const pm = planMin(w); return pm != null && info.min > pm * 1.15 + 5 ? pm : null; };
-function dayTravel(di) {
-  const seq = dayWaypoints(di).map(w => ({ ...w, c: coordOf(w.q) })).filter(w => w.c); let min = 0, m = 0, loading = false, warn = 0;
-  for (let i = 1; i < seq.length; i++) { const info = legInfo(seq[i - 1].c, seq[i].c, seq[i].how); if (info.air || info.skip) continue; if (info.loading) { loading = true; continue; } min += info.min; m += info.m; if (tight(info, seq[i]) != null) warn++; }
-  return { min, m, loading, warn, legs: Math.max(0, seq.length - 1) };
-}
-const travelSum = t => t.legs ? (t.loading ? '⏳ กำลังคำนวณเวลาเดินทาง…' : `🧭 รวมเดินทาง ~${fmtDur(t.min)} · ${fmtKm(t.m)}${t.warn ? ` · ⚠ ${t.warn} ช่วงเวลาตามแผนอาจไม่พอ` : ''}`) : '';
 const bearing = (a, b) => Math.atan2(-(b.lat - a.lat), (b.lng - a.lng) * Math.cos(a.lat * Math.PI / 180)) * 180 / Math.PI;
 const legIcon = (how, color, timeTxt, warn, mode) => L.divIcon({ className: '', iconSize: [0, 0], iconAnchor: [0, 0], html: `<div class="seglbl ${warn ? 'warn' : ''}" style="--c:${color}">${how ? howIcon(how, false) + ' ' + esc(String(how).length > 14 ? String(how).slice(0, 14) + '…' : how) : (MODE_ICON[mode] || '')}${timeTxt ? ` · ${esc(timeTxt)}` : ''}${warn ? ' ⚠' : ''}</div>` });
 const arrowIcon = (deg, color) => L.divIcon({ className: '', iconSize: [20, 20], iconAnchor: [10, 10], html: `<svg viewBox="0 0 24 24" width="20" height="20" style="transform:rotate(${deg}deg);display:block"><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>` });
@@ -1144,11 +1193,11 @@ function stillAhead(di, seq) {
 function drawPlaces() {
   if (!map || !plLayer) return []; plLayer.clearLayers(); Object.keys(wpMark).forEach(k => delete wpMark[k]);
   if (!ui.f.route) return [];
-  const all = []; let counter = 0; const continuous = ui.tab === 'map' && ui.placeDay === 'all';
+  const all = [];
   for (const di of scopeDays()) {
     const color = COLORS[di % 8], seq = stillAhead(di, dayWaypoints(di).map(w => ({ ...w, c: coordOf(w.q) })).filter(w => w.c));
     const groups = [];                                            // visits to the same place (<40 m) share ONE pin
-    seq.forEach((w, k) => { w.num = continuous ? ++counter : k + 1; let g = groups.find(x => distM(x.c, w.c) < 40); if (!g) groups.push(g = { c: w.c, v: [] }); w.g = g; g.v.push(w); });
+    seq.forEach((w, k) => { w.num = k + 1; let g = groups.find(x => distM(x.c, w.c) < 40); if (!g) groups.push(g = { c: w.c, v: [] }); w.g = g; g.v.push(w); });
     all.push(...groups.map(g => [g.c.lat, g.c.lng]));
     const pairN = {}, dirN = {}, pk = (A, B) => [groups.indexOf(A), groups.indexOf(B)].sort().join('-');
     for (let i = 0; i < seq.length - 1; i++) if (seq[i].g !== seq[i + 1].g) pairN[pk(seq[i].g, seq[i + 1].g)] = (pairN[pk(seq[i].g, seq[i + 1].g)] || 0) + 1;
@@ -1186,36 +1235,6 @@ function drawSpots() {
   (ui.sugPins || []).forEach(x => { L.marker([x.lat, x.lng], { icon: sugIcon(x.kind) }).addTo(sgLayer).bindPopup(`<b>${esc(x.name)}</b><br>${esc(x.sub || '')}<br><a href="https://www.google.com/maps/dir/?api=1&destination=${x.lat},${x.lng}" target="_blank" rel="noopener">นำทางด้วย Google Maps</a>`); pts.push([x.lat, x.lng]); });
   return pts;
 }
-function renderPlaces() {
-  const el = $('#placesBox'); if (!el) return;
-  const p = data.plan; if (!p || !p.days.length) { el.innerHTML = ''; return; }
-  planDates(p);
-  const cur = ui.placeDay != null ? ui.placeDay : (ui.day || 0), days = scopeDays();
-  const needHotel = !ovr('ที่พัก') && p.days.some(d => d.steps.some(s => /^ที่พัก$/.test((s.from || '').trim()) || /^ที่พัก$/.test((s.to || '').trim())));
-  let h = `<div class="card"><div class="row2"><h3>เส้นทางตามแผน</h3><select class="dropdown" id="placeSel"><option value="none" ${cur === 'none' ? 'selected' : ''}>ซ่อน</option><option value="all" ${cur === 'all' ? 'selected' : ''}>ทั้งทริป</option>${p.days.map((d, i) => `<option value="${i}" ${cur === i ? 'selected' : ''}>${esc(dayTitle(d, i))}</option>`).join('')}</select></div>`;
-  let n = 0, counter = 0; const continuous = ui.placeDay === 'all';
-  if (ui.f.route && days.length) { const tot = days.map(dayTravel).reduce((a, t) => ({ min: a.min + t.min, m: a.m + t.m, loading: a.loading || t.loading, warn: a.warn + t.warn, legs: a.legs + t.legs }), { min: 0, m: 0, loading: false, warn: 0, legs: 0 }); h += `<div class="trvsum">${esc(travelSum(tot))}</div>`; }
-  for (const di of days) {
-    const wps = dayWaypoints(di), dt = ui.f.route ? dayTravel(di) : null;
-    if (days.length > 1 && wps.length) h += `<div class="dgroup" style="margin:10px 0 2px!important">${esc(dayTitle(p.days[di], di))}${dt && dt.legs && !dt.loading ? ` <small style="text-transform:none;letter-spacing:0">~${esc(fmtDur(dt.min))} · ${esc(fmtKm(dt.m))}</small>` : ''}</div>`;
-    let seq = 0, prev = null;
-    wps.forEach((x, k) => {
-      const c = coordOf(x.q), st = !knownQ(x.q) ? '⏳' : c ? '' : 'ตั้งพิกัด'; if (!knownQ(x.q)) n++;
-      if (c) { seq++; counter++; }
-      const num = continuous ? counter : seq;
-      let lt = '', wn = null; if (c && prev && ui.f.route) { const info = legInfo(prev, c, x.how); lt = legText(info, x); wn = tight(info, x); }
-      if (c) prev = c;
-      h += `<button class="pl" data-d="${di}" data-k="${k}"><span class="plc sm" style="--c:${c ? COLORS[di % 8] : '#94a3b8'}">${c ? num : '–'}</span><div><b>${esc(x.name)}</b><small>${[x.time, x.how ? howIcon(x.how, false) + ' ' + x.how : ''].filter(Boolean).map(esc).join(' · ')}</small>${lt ? `<small class="leg">↳ ${esc(lt)}${wn != null ? ` <span class="chip bad">⚠ แผนให้ ${fmtDur(wn)}</span>` : ''}</small>` : ''}</div>${st ? `<span class="chip">${st}</span>` : ''}</button>`;
-    });
-  }
-  if (n) h += `<small>กำลังค้นหาพิกัด…</small>`;
-  if (needHotel) h += `<div class="btns"><button class="btn" id="bHotel">📍 ตั้งตำแหน่งที่พัก (ให้เส้นทางต่อกัน)</button></div>`;
-  el.innerHTML = h + '</div>';
-  $('#placeSel').onchange = e => { ui.placeDay = e.target.value === 'all' || e.target.value === 'none' ? e.target.value : +e.target.value; ui.refit = true; drawMap(true); renderPlaces(); runGeocode(); };
-  const hb = $('#bHotel'); if (hb) hb.onclick = () => placeDialog('ที่พัก');
-  $$('.pl', el).forEach(b => b.onclick = () => { const x = dayWaypoints(+b.dataset.d)[+b.dataset.k], c = coordOf(x.q); if (!c) return placeDialog(x.q); scrollTo({ top: 0, behavior: 'smooth' }); if (map) map.setView([c.lat, c.lng], 16); });
-}
-
 /* ---------- spots: restaurants / sights saved in the Places tab + nearby suggestions ---------- */
 function allSpots() {
   const sheet = data.spots.map(s => ({ ...s, c: { lat: s.lat, lng: s.lng } }));
@@ -1234,7 +1253,7 @@ function anchorOptions() {
   return o;
 }
 const currentAnchor = () => { const o = anchorOptions(); return o.find(x => x.id === ui.anchor) || o[0] || null; };
-function focusOnMap(c) { $('[data-tab=map]').click(); setTimeout(() => { if (map) map.setView([c.lat, c.lng], 17); }, 500); }
+function focusOnMap(c) { openMapOv(); setTimeout(() => { if (map) map.setView([c.lat, c.lng], 17); }, 300); }
 function spotCard(s, a) {
   const [ic, col] = SPOT[s.type], d = a && s.c ? distM(a.c, s.c) : null;
   return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic}</div><div class="spot-b"><b>${esc(s.name)}</b><small>${[nice(s.cuisine), s.meal, d != null ? dist(d) : ''].filter(Boolean).map(esc).join(' · ')}</small>${s.note ? `<div class="note">${esc(s.note)}</div>` : ''}
@@ -1452,7 +1471,7 @@ function spotDialog(init = {}) {
 }
 async function saveSpot(s, dayIdx) {
   s.c = { lat: s.lat, lng: s.lng }; data.spots = data.spots.filter(x => norm(x.name) !== norm(s.name)); data.spots.push(s); data.places[norm(s.name)] = s.c;
-  renderSpots(); renderFilters(); drawMap(false);
+  ui.ver++; renderSpots(); renderFilters(); drawMap(false);
   const row = [s.name, +s.lat.toFixed(6), +s.lng.toFixed(6), s.note, s.type, s.meal, s.cuisine];
   if (sheetApi.on()) { try { await sheetApi.call('upsert', { tab: trip().placesTab || 'Places', header: ['Name', 'Lat', 'Lng', 'Note', 'Type', 'Meal', 'Cuisine'], key: s.name, keyCol: 0, values: row }); toast('บันทึกแล้ว ✓'); } catch (e) { toast(e.message); } }
   else copyText(row.join('\t'), 'ยังไม่ได้เชื่อมต่อชีต — คัดลอกแถวแล้ว วางในแท็บ ' + (trip().placesTab || 'Places'));
@@ -1464,6 +1483,8 @@ async function saveSpot(s, dayIdx) {
 }
 
 /* ---------- menu / settings / sheet connection ---------- */
+const updAt = () => ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '—';
+const renderUpd = () => { const u = $('#updAt'); if (u) u.textContent = updAt(); };
 function renderMenu() {
   const el = $('#tab-menu'), on = sheetApi.on();
   let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
@@ -1474,7 +1495,7 @@ function renderMenu() {
   h += `<div class="card"><h2 style="margin-bottom:6px">ทริป</h2>${tripFilterBar('data-tfm')}${tripItems('data-trip')}${trip().priv ? '' : '<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div>'}</div>`;
   h += `<div class="card"><h2 style="margin-bottom:4px">สมาชิก</h2>${users().map(u => `<div class="row">${avatar(u.name, 'sm')}<div><b>${esc(u.name)}</b></div><div class="amt mut">${Object.entries(u.budgets || {}).map(([k, v]) => fmt(v) + ' ' + k).join(' · ') || '—'}</div></div>`).join('') || '<span class="mut">ยังไม่มี — เพิ่มในแท็บ ' + esc(trip().usersTab) + '</span>'}</div>`;
   h += data.extra.map(x => tableCard(x.name, x.rows)).join('');
-  h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด ${ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '—'} · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
+  h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด <span id="updAt">${updAt()}</span> · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
   el.innerHTML = h;
   $('#bSwitch').onclick = () => $('#btnMe').click();
   const bp = $('#bPinSync'); if (bp) bp.onclick = async () => { await syncPendingPins(true); renderMenu(); if (!cfg.pendingPin[me]) toast('บันทึก PIN แล้ว — ใช้ได้ทุกเครื่อง', 3500); };
@@ -1488,7 +1509,13 @@ function renderMenu() {
   $$('[data-tfm]', el).forEach(b => b.onclick = () => { ui.tripFilter = b.dataset.tfm; renderMenu(); });
   $$('[data-trip]', el).forEach(b => b.onclick = () => { if (b.dataset.trip !== cfg.active) switchTrip(b.dataset.trip); });
 }
-function switchTrip(id, auto) { if (!auto) sess.set('tt.picked', '1'); cfg.active = id; saveCfg(); ui.day = null; ui.edit = false; ui.centered = false; data = { ...data, plan: null, _trip: '' }; renderAll(); load(); }
+function switchTrip(id, auto) {
+  if (!auto) sess.set('tt.picked', '1');
+  cfg.active = id; saveCfg(); ui.day = null; ui.edit = false; ui.centered = false; ui.stayOpen = false; ui.activeStep = null; ui.scroll = {}; ui.refit = true;
+  const c = readCache(id);
+  if (c) { ui.updated = new Date(c.t); applyData(dataFromCache(id, c), c.snap, true); } else { dim(true); renderMenu(); }          // last good copy, or the previous plan stays (dimmed) until the new one is ready
+  load();
+}
 function tripPicker() {
   if (visibleTrips().length < 2) return;
   const draw = () => {
@@ -1585,10 +1612,6 @@ function fmtCd(ms) {
   return (d ? `${d} วัน ` : '') + `${pad2(h)}:${pad2(m)}:${pad2(sc)}`;
 }
 const nextEvent = () => planEvents().find(e => e.dt.getTime() > Date.now()) || null;
-function cdCard() {
-  const e = nextEvent(); if (!e) return ''; const on = remOn(e);
-  return `<div class="cd" id="cd" data-key="${esc(e.key)}"><div class="cd-b"><small>ถัดไป · อีก <span id="cdTime">${fmtCd(e.dt - Date.now())}</span></small><b>${esc(e.title)}</b></div><button class="bellbtn ${on ? 'on' : ''}" data-bell="${esc(e.key)}" aria-label="เตือน">${on ? '🔔' : '🔕'}</button></div>`;
-}
 const bell = (di, k) => { const e = evMapCur[di + '|' + k]; if (!e || e.dt < Date.now() - 36e5) return ''; return `<button class="bellbtn sm ${remOn(e) ? 'on' : ''}" data-bell="${esc(e.key)}" aria-label="เตือน">${remOn(e) ? '🔔' : '🔕'}</button>`; };
 function bindBells(el) {
   $$('[data-bell]', el).forEach(b => b.onclick = async ev => {
@@ -1628,7 +1651,8 @@ function checkReminders() {
 function tickCountdown() {
   const el = $('#cdTime'); if (!el) return;
   const e = nextEvent(), box = $('#cd');
-  if (!e || (box && box.dataset.key !== e.key)) { renderPlan(); return; }
+  if (ui.tab !== 'plan' && (!e || (box && box.dataset.key !== e.key))) { ui.ver++; return; }
+  if (!e || (box && box.dataset.key !== e.key)) { keepScroll(renderPlan); return; }
   el.textContent = fmtCd(e.dt - Date.now());
 }
 /* calendar export: the phone's calendar app does the reminding, even when this app is closed */
@@ -1659,8 +1683,9 @@ function downloadIcs() {
 }
 const lead0 = () => cfg.notif.lead;
 function notifCard() {
-  const perm = !('Notification' in window) ? 'unsupported' : Notification.permission, n = planEvents().length;
+  const perm = !('Notification' in window) ? 'unsupported' : Notification.permission, n = planEvents().filter(e => (e.end || e.dt) > Date.now()).length;
   const chip = perm === 'granted' ? '<span class="chip ok">อนุญาตแล้ว</span>' : perm === 'denied' ? '<span class="chip bad">ถูกบล็อก</span>' : perm === 'unsupported' ? '<span class="chip bad">ไม่รองรับ</span>' : '<span class="chip">ยังไม่อนุญาต</span>';
+  if (!n) return `<div class="card"><div class="row2"><h2>การแจ้งเตือน</h2>${chip}</div><small id="nEnded" style="display:block;margin-top:8px">ทริปนี้จบแล้ว — ไม่มีรายการให้เตือน</small></div>`;
   return `<div class="card"><div class="row2"><h2>การแจ้งเตือน</h2>${chip}</div>
   <div class="row2" style="margin:8px 0"><div>เตือนทุกรายการที่มีเวลา<small style="display:block">${n} รายการ · เปิดปิดรายตัวด้วยกระดิ่ง</small></div><button class="switch ${cfg.notif.on ? 'on' : ''}" id="nOn" aria-label="เตือนทุกรายการ"><i></i></button></div>
   <div class="row2" style="margin:8px 0"><span>เตือนล่วงหน้า</span><select class="dropdown" id="nLead">${[5, 10, 15, 30, 60, 120].map(m => `<option value="${m}" ${cfg.notif.lead === m ? 'selected' : ''}>${m < 60 ? m + ' นาที' : m / 60 + ' ชั่วโมง'}</option>`).join('')}</select></div>
@@ -1675,38 +1700,354 @@ function bindNotif(el) {
   $('#nIcs').onclick = downloadIcs;
 }
 
+/* ---------- documents (เอกสาร): personal + shared files, shown full-screen, cached offline in IndexedDB (per member) ---------- */
+const DOC_KINDS = { passport: ['🛂', 'พาสปอร์ต/วีซ่า', 'พาสปอร์ต'], ticket: ['✈️', 'ตั๋ว/บอร์ดดิงพาส', 'ตั๋วเครื่องบิน'], hotel: ['🏨', 'ที่พัก', 'ใบจองที่พัก'], insurance: ['🛡', 'ประกัน', 'ประกันการเดินทาง'], other: ['📄', 'อื่นๆ', 'เอกสาร'] };
+const DOC_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'], DOC_MAX_B64 = 6e6, DOC_PDF_MAX = 4 * 1024 * 1024, DOC_CHUNK = 300000;
+const DOC_NOSQL = 'ฟีเจอร์เอกสารยังไม่เปิดใช้งาน — ผู้ดูแลต้องรัน docs/supabase_docs.sql';
+const dc = { list: null, seg: 'me', status: 'idle', offline: false, epoch: 0, urls: {}, cached: new Set(), t: 0, running: null, prefetch: '', up: false };
+const dv = { open: false, mode: '', list: [], i: 0, s: 1, x: 0, y: 0, r: 0, lock: null, d: null, pop: false };
+const docIcon = k => (DOC_KINDS[k] || DOC_KINDS.other)[0];
+const docDate = s => { try { return new Date(s).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; } };
+const docExt = m => ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' }[m] || 'bin');
+const docFileName = d => (String(d.title || 'document').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '').replace(/\s+/g, '_').trim().slice(0, 60) || 'document') + '.' + docExt(d.mime);
+/* IndexedDB: one store 'kv' — `l:<me>` = last document list, `f:<me>:<id>` = {blob}. Wiped as a whole on sign-out / user switch. */
+let idbP = null;
+const idb = () => idbP || (idbP = new Promise((ok, no) => { try { const r = indexedDB.open('tt-docs', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); } catch (e) { no(e); } }));
+const idbDo = async (mode, fn) => { const d = await idb(); return new Promise((ok, no) => { const q = fn(d.transaction('kv', mode).objectStore('kv')); q.onsuccess = () => ok(q.result); q.onerror = () => no(q.error); }); };
+const idbGet = k => idbDo('readonly', s => s.get(k)).catch(() => undefined), idbSet = (k, v) => idbDo('readwrite', s => s.put(v, k)).catch(() => { }), idbDel = k => idbDo('readwrite', s => s.delete(k)).catch(() => { });
+const idbKeys = () => idbDo('readonly', s => s.getAllKeys()).catch(() => []);
+const dkey = () => String(me).toLowerCase();
+function docsWipe() {
+  dc.epoch++; Object.values(dc.urls).forEach(u => { try { URL.revokeObjectURL(u); } catch { } });
+  dc.urls = {}; dc.list = null; dc.cached = new Set(); dc.status = 'idle'; dc.offline = false; dc.running = null; dc.seg = 'me';
+  if (typeof dv !== 'undefined' && dv.open) closeViewer(true);
+  const p = idbP; idbP = null;
+  dc.wiping = (p ? p.then(d => d.close(), () => { }) : Promise.resolve()).then(() => new Promise(ok => { try { const r = indexedDB.deleteDatabase('tt-docs'); r.onsuccess = r.onerror = r.onblocked = () => ok(); } catch { ok(); } }));
+}
+const b64Blob = (chunks, mime) => { const bin = atob(chunks.join('')), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type: mime }); };
+const blobB64 = b => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = () => no(r.error); r.readAsDataURL(b); });
+/* get a document's bytes: memory -> IndexedDB -> network (then cached) */
+async function docBlob(d) {
+  const ep = dc.epoch, k = `f:${dkey()}:${d.id}`;
+  const c = await idbGet(k); if (c && c.blob) { dc.cached.add(d.id); return c.blob; }
+  const j = await sbRpc('doc_get', { p_name: me, p_hash: myHash(), p_id: d.id });
+  if (j === null) { const e = new Error('ไม่พบเอกสารนี้แล้ว'); e.gone = true; throw e; }
+  const b = b64Blob(j.chunks || [], d.mime);
+  if (ep === dc.epoch) { await idbSet(k, { blob: b, t: Date.now() }); dc.cached.add(d.id); }
+  return b;
+}
+const docUrl = async d => { if (dc.urls[d.id]) return dc.urls[d.id]; const ep = dc.epoch, b = await docBlob(d); if (ep !== dc.epoch) throw new Error('cancelled'); return dc.urls[d.id] = URL.createObjectURL(b); };
+const docNetErr = e => !!e && (e.net || e instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test(e.message || ''));
+const docErrText = e => e.nosql ? DOC_NOSQL : e.gone ? e.message : docNetErr(e) ? 'ออฟไลน์ — เอกสารนี้ยังไม่ได้บันทึกไว้ในเครื่อง' : 'เปิดเอกสารไม่ได้ — ' + (e.message || 'ลองใหม่อีกครั้ง');
+function docsStale() {          // doc_list answered null for a signed-in member: the saved PIN is no longer valid -> clean sign-out (same as get_private)
+  me = ''; sess.set('tt.me', null); sess.set('tt.ph', null); cfg.active = DEFAULT_TRIP.id; saveCfg(); ui.day = null; clearPrivCaches();
+  showErr(''); toast('PIN ของคุณใช้ไม่ได้แล้ว (อาจถูกรีเซ็ต) — กรุณาเข้าสู่ระบบใหม่อีกครั้ง', 5000);
+  $('#login').hidden = false; $('#loginPin').hidden = true; $('#loginPin').innerHTML = ''; $('#loginUsers').hidden = false; $('#loginSub').hidden = false; renderLogin(); load();
+}
+function docsRefresh(force) {
+  if (!me || !myHash()) return Promise.resolve();
+  if (dc.running) return dc.running;
+  if (!force && dc.list && Date.now() - dc.t < 20000) return Promise.resolve();
+  const ep = dc.epoch, k = 'l:' + dkey(); if (!dc.list) { dc.status = 'loading'; renderDocs(true); }
+  return dc.running = (async () => {
+    let next = null;
+    try {
+      const j = await sbRpc('doc_list', { p_name: me, p_hash: myHash() });
+      if (ep !== dc.epoch) return;
+      if (j === null) return docsStale();
+      dc.list = j; dc.status = 'ok'; dc.offline = false; dc.t = Date.now(); await idbSet(k, j);
+    } catch (e) {
+      if (ep !== dc.epoch) return;
+      if (e.nosql) { dc.status = 'nosql'; dc.list = null; }
+      else { const c = await idbGet(k); if (c) { dc.list = c; dc.status = 'ok'; dc.offline = true; } else { dc.status = 'error'; dc.list = null; } }
+    }
+    if (ep !== dc.epoch) return;
+    const ks = await idbKeys(), pre = `f:${dkey()}:`; if (ep === dc.epoch) dc.cached = new Set(ks.filter(x => String(x).startsWith(pre)).map(x => String(x).slice(pre.length)));
+  })().finally(() => { if (dc.epoch === ep) { dc.running = null; renderDocs(true); } });
+}
+function infoCard() {
+  const st = data.stay || {}, info = data.info || [], hasStay = !!(st.name || st.address); if (!hasStay && !info.length) return '';
+  const open = ui.infoOpen !== false, nav = st.lat != null ? `https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(st.address || st.name || '')}`;
+  let b = '';
+  if (hasStay) b += `<div class="inf-stay"><small>🏠 ที่พัก</small>${st.name ? `<div class="inf-big">${esc(st.name)}</div>` : ''}${st.address ? `<div class="inf-addr">${esc(st.address)}</div>` : ''}<div class="btns" style="margin-top:8px">${st.address ? '<button class="btn" id="infCopy">คัดลอก</button>' : ''}<a class="btn" target="_blank" rel="noopener" href="${nav}">นำทาง</a><button class="btn pri" id="infTaxi">โชว์ให้คนขับแท็กซี่</button></div></div>`;
+  b += info.map((r, i) => `<div class="inf-row"><div><small>${esc(r.k)}</small><div class="inf-v">${esc(r.v)}</div></div><button class="btn sm" data-icp="${i}" aria-label="คัดลอก ${esc(r.k)}">คัดลอก</button></div>`).join('');
+  return `<div class="card info" id="infoCard"><div class="row2"><h2>ข้อมูลด่วน</h2><button class="btn sm" id="infTgl" aria-expanded="${open}">${open ? 'ซ่อน' : 'แสดง'}</button></div><div id="infBody" ${open ? '' : 'hidden'}>${b}</div></div>`;
+}
+function docCard(d) {
+  const mine = d.created_by === dkey(), u = dc.urls[d.id], img = d.mime !== 'application/pdf';
+  return `<div class="dcard" data-id="${esc(d.id)}"><div class="dthumb ${img ? '' : 'pdf'}" data-th="${esc(d.id)}">${u && img ? `<img src="${u}" alt="">` : docIcon(d.kind)}</div>
+  <div class="dbody"><div class="dt"><b>${docIcon(d.kind)} ${esc(d.title)}</b><button class="dmore" data-more="${esc(d.id)}" aria-label="เมนูเอกสาร">⋯</button></div>
+  ${d.note ? `<small class="dnote">${esc(d.note)}</small>` : ''}<small>เพิ่ม ${esc(docDate(d.created_at))}${d.scope === 'shared' && d.created_by ? ' · โดย ' + esc(d.created_by) : ''}</small>
+  <small class="lock">${d.scope === 'shared' ? '👥 ทุกคนในทริปเห็น' : '🔒 เห็นเฉพาะคุณ'}${dc.cached.has(d.id) ? ' · 📥 ในเครื่อง' : ''}</small></div>
+  <div class="dact"><button class="btn pri big" data-show="${esc(d.id)}">โชว์</button><button class="btn" data-dl="${esc(d.id)}">ดาวน์โหลด/แชร์</button></div></div>`;
+}
+const docsOf = seg => (dc.list || []).filter(d => seg === 'me' ? d.scope === 'person' : d.scope === 'shared');
+function renderDocs(fromLoad) {
+  const el = $('#tab-docs'); if (!el) return;
+  let h = infoCard();
+  if (!me || !myHash()) h += '<div class="card dpanel"><div class="dp-i">🔐</div><h2>เข้าสู่ระบบด้วย PIN เพื่อดูเอกสาร</h2><div class="mut">เอกสารส่วนตัวเห็นเฉพาะคุณ และเปิดโดยไม่ต้องมีอินเทอร์เน็ตได้หลังบันทึกไว้ในเครื่อง</div><div class="btns" style="justify-content:center"><button class="btn pri" id="dcLogin">เข้าสู่ระบบ</button></div></div>';
+  else if (dc.status === 'nosql') h += `<div class="card dpanel" id="dcNoSql"><div class="dp-i">🛠</div><h2>${esc(DOC_NOSQL)}</h2></div>`;
+  else if (dc.status === 'error') h += '<div class="card dpanel"><div class="dp-i">📡</div><h2>โหลดเอกสารไม่ได้</h2><div class="mut">ตรวจอินเทอร์เน็ตแล้วลองใหม่ (ยังไม่ได้ออกจากระบบ)</div><div class="btns" style="justify-content:center"><button class="btn pri" id="dcRetry">ลองใหม่</button></div></div>';
+  else {
+    const me_ = docsOf('me'), sh = docsOf('shared'), ready = dc.status === 'ok', cur = dc.seg === 'shared' ? sh : me_;
+    h += `<div class="dsegw"><div class="seg" id="dcSeg"><button data-seg="me" class="${dc.seg === 'me' ? 'on' : ''}">ของฉัน (${ready ? me_.length : '…'})</button><button data-seg="shared" class="${dc.seg === 'shared' ? 'on' : ''}">ส่วนกลาง (${ready ? sh.length : '…'})</button></div></div>`;
+    h += `<div class="dtools"><button class="btn pri" id="dcAdd">➕ เพิ่มเอกสาร</button><button class="btn" id="dcAll" ${ready && (me_.length + sh.length) ? '' : 'disabled'}>${esc(dc.prefetch || '📥 ดาวน์โหลดทั้งหมดไว้ใช้ออฟไลน์')}</button>${dc.offline ? '<span class="chip bad" id="dcOff">ออฟไลน์</span>' : ''}</div>`;
+    if (!ready) h += '<div class="dcard sk"></div><div class="dcard sk"></div><div class="dcard sk"></div>';
+    else if (!cur.length) h += dc.seg === 'shared' ? '<div class="card dpanel"><div class="dp-i">👥</div><h2>ยังไม่มีเอกสารส่วนกลาง</h2><div class="mut">ใส่ใบจองโรงแรม/ตั๋วกลุ่มที่ทุกคนต้องใช้ แล้วทุกคนจะเปิดได้ทันที</div></div>' : '<div class="card dpanel"><div class="dp-i">🛂</div><h2>ยังไม่มีเอกสารของคุณ</h2><div class="mut">เก็บพาสปอร์ต วีซ่า ตั๋ว ประกัน ไว้ที่นี่ แล้วกด “โชว์” ให้เจ้าหน้าที่ได้เลย — กด “เพิ่มเอกสาร” เพื่อเริ่ม</div></div>';
+    else h += cur.map(docCard).join('');
+  }
+  if (fromLoad && el.__sig === h) return; el.__sig = h; el.innerHTML = h; bindDocs(el);
+  if (ui.tab === 'docs' && me && myHash() && dc.status === 'idle') docsRefresh();
+}
+function bindDocs(el) {
+  const g = (s, f) => { const n = $(s, el); if (n) n.onclick = f; };
+  const st = data.stay || {};
+  g('#infTgl', () => { ui.infoOpen = ui.infoOpen === false; $('#infBody').hidden = !ui.infoOpen; $('#infTgl').textContent = ui.infoOpen ? 'ซ่อน' : 'แสดง'; $('#infTgl').setAttribute('aria-expanded', ui.infoOpen); });
+  g('#infCopy', () => copyText([st.name, st.address].filter(Boolean).join('\n'), 'คัดลอกที่อยู่แล้ว'));
+  g('#infTaxi', () => openViewer({ mode: 'taxi' }));
+  $$('[data-icp]', el).forEach(b => b.onclick = () => copyText((data.info[+b.dataset.icp] || {}).v || '', 'คัดลอกแล้ว'));
+  g('#dcLogin', () => $('#btnMe').click()); g('#dcRetry', () => { dc.status = 'idle'; renderDocs(); });
+  $$('#dcSeg [data-seg]', el).forEach(b => b.onclick = () => { dc.seg = b.dataset.seg; renderDocs(); });
+  g('#dcAdd', addDocDialog); g('#dcAll', prefetchAll);
+  const byId = id => (dc.list || []).find(d => d.id === id);
+  $$('[data-show]', el).forEach(b => b.onclick = () => openViewer({ mode: 'doc', id: b.dataset.show }));
+  $$('[data-dl]', el).forEach(b => b.onclick = () => shareDoc(byId(b.dataset.dl)));
+  $$('[data-more]', el).forEach(b => b.onclick = () => docMenu(byId(b.dataset.more)));
+  if ('IntersectionObserver' in window) {          // lazy thumbnails (the box has a fixed size, so nothing moves when the picture arrives)
+    const io = new IntersectionObserver(es => es.forEach(en => {
+      if (!en.isIntersecting) return; io.unobserve(en.target); const d = byId(en.target.dataset.th); if (!d || d.mime === 'application/pdf' || en.target.querySelector('img')) return;
+      docUrl(d).then(u => { if (en.target.isConnected && !en.target.querySelector('img')) { en.target.innerHTML = `<img src="${u}" alt="">`; } }).catch(() => { });
+    }), { rootMargin: '200px' });
+    $$('.dthumb[data-th]', el).forEach(n => io.observe(n));
+  }
+}
+async function prefetchAll() {
+  if (dc.prefetch) return; const ep = dc.epoch, all = dc.list || [], todo = all.filter(d => !dc.cached.has(d.id)); let n = 0;
+  for (const d of todo) {
+    dc.prefetch = `กำลังบันทึก ${++n}/${todo.length}…`; renderDocs();
+    try { await docBlob(d); } catch (e) { if (ep === dc.epoch) { dc.prefetch = ''; renderDocs(); toast(docErrText(e), 3500); } return; }
+    if (ep !== dc.epoch) return;
+  }
+  dc.prefetch = ''; renderDocs(); toast(todo.length ? 'บันทึกเอกสารทั้งหมดไว้ในเครื่องแล้ว' : 'เอกสารทั้งหมดอยู่ในเครื่องแล้ว', 2500);
+}
+function docMenu(d) {
+  if (!d) return; const can = d.created_by === dkey();
+  const dl = openDlg(`<h3>${docIcon(d.kind)} ${esc(d.title)}</h3><div class="dmenu"><button class="btn block" data-a="save">📥 บันทึกไว้ในเครื่อง${dc.cached.has(d.id) ? ' (บันทึกแล้ว)' : ''}</button>${can ? '<button class="btn block" data-a="ren">✏️ เปลี่ยนชื่อ</button><button class="btn block danger" data-a="del">🗑 ลบ</button>' : ''}<button class="btn block" data-a="x">ปิด</button></div>`);
+  $$('[data-a]', dl).forEach(b => b.onclick = async () => {
+    const a = b.dataset.a; dl.close(); if (a === 'save') { try { await docBlob(d); renderDocs(); toast('บันทึกไว้ในเครื่องแล้ว'); } catch (e) { toast(docErrText(e), 3500); } }
+    if (a === 'ren') renameDialog(d); if (a === 'del') deleteDialog(d);
+  });
+}
+function docWrite(fn, args, okMsg) {
+  return sbRpc(fn, { p_name: me, p_hash: myHash(), ...args }).then(r => {
+    if (r === null || r === -1) { docsStale(); return false; }
+    if (r === 0) { toast('ทำรายการนี้ไม่ได้ — ไม่มีสิทธิ์หรือไม่พบเอกสาร', 3500); return false; }
+    if (r < 0) { toast('ชื่อไม่ถูกต้อง (ต้องไม่ว่างและไม่เกิน 80 ตัวอักษร)', 3500); return false; }
+    toast(okMsg); return true;
+  }).catch(e => { toast(e.nosql ? DOC_NOSQL : docNetErr(e) ? 'ออฟไลน์ — ทำรายการไม่ได้ ลองใหม่เมื่อมีอินเทอร์เน็ต' : 'ไม่สำเร็จ — ' + e.message, 4000); return false; });
+}
+function renameDialog(d) {
+  const dl = openDlg(`<form method="dialog"><h3>เปลี่ยนชื่อเอกสาร</h3><input id="rnT" maxlength="80" value="${esc(d.title)}"><div class="btns"><button type="button" class="btn" id="rnX">ยกเลิก</button><button type="button" class="btn pri" id="rnOk">บันทึก</button></div></form>`);
+  $('#rnX', dl).onclick = () => dl.close();
+  $('#rnOk', dl).onclick = async () => { const t = $('#rnT', dl).value.trim(); if (!t) return; dl.close(); if (await docWrite('doc_rename', { p_id: d.id, p_title: t }, 'เปลี่ยนชื่อแล้ว')) docsRefresh(true); };
+}
+function deleteDialog(d) {
+  const dl = openDlg(`<form method="dialog"><h3>ลบเอกสาร?</h3><p>“${esc(d.title)}” จะถูกลบถาวร${d.scope === 'shared' ? ' และคนอื่นในทริปจะเปิดไม่ได้อีก' : ''}</p><div class="btns"><button type="button" class="btn" id="dlX">ยกเลิก</button><button type="button" class="btn pri danger" id="dlOk">ลบ</button></div></form>`);
+  $('#dlX', dl).onclick = () => dl.close();
+  $('#dlOk', dl).onclick = async () => { dl.close(); if (await docWrite('doc_delete', { p_id: d.id }, 'ลบแล้ว')) { delete dc.urls[d.id]; idbDel(`f:${dkey()}:${d.id}`); dc.cached.delete(d.id); docsRefresh(true); } };
+}
+/* ---- add a document ---- */
+function loadImg(file) {
+  return new Promise((ok, no) => { const u = URL.createObjectURL(file), im = new Image(); im.onload = () => { URL.revokeObjectURL(u); ok(im); }; im.onerror = () => { URL.revokeObjectURL(u); no(new Error('bad image')); }; im.src = u; });
+}
+async function prepDocFile(f) {          // -> {blob, mime} or throws Error(thai message)
+  const t = f.type || (/\.pdf$/i.test(f.name) ? 'application/pdf' : /\.(jpe?g|png|webp|heic)$/i.test(f.name) ? 'image/jpeg' : '');
+  if (t === 'application/pdf') { if (f.size > DOC_PDF_MAX) throw new Error('ไฟล์ PDF ใหญ่เกินไป (ไม่เกิน 4 MB)'); return { blob: f, mime: t }; }
+  if (!/^image\/(jpeg|png|webp|heic|heif)$/.test(t)) throw new Error('ชนิดไฟล์ไม่รองรับ — ใช้รูปภาพ (JPG/PNG/WebP) หรือ PDF');
+  if (f.size > 30 * 1024 * 1024) throw new Error('รูปใหญ่เกินไป (เกิน 30 MB)');
+  let im; try { im = await loadImg(f); } catch { throw new Error('เปิดรูปนี้ไม่ได้ — ลองถ่ายใหม่หรือเลือกไฟล์ JPG/PNG'); }
+  const w0 = im.naturalWidth, h0 = im.naturalHeight, k = Math.min(1, 1800 / Math.max(w0, h0)), c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w0 * k)); c.height = Math.max(1, Math.round(h0 * k));
+  const cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height); cx.drawImage(im, 0, 0, c.width, c.height);
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82)); if (!blob) throw new Error('แปลงรูปไม่สำเร็จ');
+  return { blob, mime: 'image/jpeg', w: c.width, h: c.height };
+}
+function dcPut(args, onProg) {
+  return new Promise((ok, no) => {
+    const sb = SB(), x = new XMLHttpRequest(), body = JSON.stringify(args); x.open('POST', `${sb.url}/rest/v1/rpc/doc_put`); x.setRequestHeader('apikey', sb.key); x.setRequestHeader('Content-Type', 'application/json');
+    x.upload.onprogress = e => { if (e.lengthComputable) onProg(e.loaded / e.total); };
+    x.onload = () => { const t = x.responseText; apiStat.add(body.length + t.length); let j; try { j = JSON.parse(t); } catch { j = t; } if (x.status >= 200 && x.status < 300) return ok(j); const m = (j && j.message) || String(t), e = new Error(m); e.nosql = /Could not find the function|schema cache/i.test(m); no(e); };
+    x.onerror = x.ontimeout = () => { const e = new Error('network'); e.net = true; no(e); }; x.send(body);
+  });
+}
+function addDocDialog() {
+  const f = { scope: dc.seg === 'shared' ? 'shared' : 'person', kind: 'passport', title: DOC_KINDS.passport[2], dirty: false, file: null, prep: null }, ep = dc.epoch;
+  const dl = openDlg(`<form method="dialog" id="dfForm"><h3>เพิ่มเอกสาร</h3>
+    <div class="seg" id="dfScope"><button type="button" data-sc="person">ของฉัน</button><button type="button" data-sc="shared">ส่วนกลาง</button></div>
+    <small id="dfScopeNote" class="mut"></small>
+    <div class="chips reuse" id="dfKinds">${Object.entries(DOC_KINDS).map(([k, v]) => `<button type="button" class="tag" data-k="${k}">${v[0]} ${v[1]}</button>`).join('')}</div>
+    <input id="dfTitle" maxlength="80" placeholder="ชื่อเอกสาร"><input id="dfNote" maxlength="300" placeholder="โน้ต (ไม่บังคับ)" style="margin-top:8px">
+    <div class="btns"><button type="button" class="btn" id="dfPick">📁 เลือกไฟล์</button><button type="button" class="btn" id="dfCamBtn">📷 ถ่ายรูป</button></div>
+    <input type="file" id="dfFile" accept="image/*,application/pdf" hidden><input type="file" id="dfCam" accept="image/*" capture="environment" hidden>
+    <div class="dprev" id="dfPrev"><span class="mut">ยังไม่ได้เลือกไฟล์ (รูป JPG/PNG/WebP หรือ PDF ไม่เกิน 4 MB — รูปจะถูกย่อให้อัตโนมัติ)</span></div>
+    <div class="prog" id="dfProg" hidden><i id="dfBar"></i></div><div class="derr" id="dfErr" role="alert"></div>
+    <div class="btns"><button type="button" class="btn" id="dfX">ยกเลิก</button><button type="button" class="btn pri" id="dfOk" disabled>บันทึกเอกสาร</button></div></form>`);
+  const q = s => $(s, dl), err = m => { q('#dfErr').textContent = m || ''; };
+  const sync = () => {
+    $$('[data-sc]', dl).forEach(b => b.classList.toggle('on', b.dataset.sc === f.scope)); $$('[data-k]', dl).forEach(b => b.classList.toggle('sel', b.dataset.k === f.kind));
+    q('#dfScopeNote').textContent = f.scope === 'shared' ? '👥 ทุกคนในทริปที่ล็อกอินเห็นได้' : '🔒 เห็นเฉพาะคุณ'; if (!f.dirty) q('#dfTitle').value = f.title;
+    q('#dfOk').disabled = !f.prep || f.up;
+  };
+  $$('[data-sc]', dl).forEach(b => b.onclick = () => { if (f.up) return; f.scope = b.dataset.sc; sync(); });
+  $$('[data-k]', dl).forEach(b => b.onclick = () => { if (f.up) return; f.kind = b.dataset.k; if (!f.dirty) f.title = DOC_KINDS[f.kind][2]; sync(); });
+  q('#dfTitle').oninput = e => { f.dirty = true; f.title = e.target.value; };
+  q('#dfPick').onclick = () => q('#dfFile').click(); q('#dfCamBtn').onclick = () => q('#dfCam').click(); q('#dfX').onclick = () => { if (!f.up) dl.close(); };
+  const pick = async e => {
+    const file = e.target.files && e.target.files[0]; e.target.value = ''; if (!file) return; err(''); f.prep = null; sync();
+    q('#dfPrev').innerHTML = '<span class="mut">กำลังเตรียมไฟล์…</span>';
+    try {
+      const r = await prepDocFile(file); f.prep = r; f.file = file;
+      const b64len = Math.ceil(r.blob.size / 3) * 4; if (b64len > DOC_MAX_B64) throw new Error('ไฟล์ใหญ่เกิน 6 MB');
+      const u = URL.createObjectURL(r.blob); q('#dfPrev').innerHTML = r.mime === 'application/pdf' ? `<div class="pdfp">📄 ${esc(file.name)}<br><small>${Math.round(r.blob.size / 1024)} KB</small></div>` : `<img src="${u}" alt="ตัวอย่าง"><small>${r.w}×${r.h} · ${Math.round(r.blob.size / 1024)} KB</small>`;
+      if (r.mime !== 'application/pdf') setTimeout(() => URL.revokeObjectURL(u), 60000);
+    } catch (x) { q('#dfPrev').innerHTML = '<span class="mut">ยังไม่ได้เลือกไฟล์</span>'; err(x.message); }
+    sync();
+  };
+  q('#dfFile').onchange = pick; q('#dfCam').onchange = pick;
+  q('#dfOk').onclick = async () => {
+    const title = q('#dfTitle').value.trim(); if (!f.prep || f.up) return; if (!title) return err('ใส่ชื่อเอกสารก่อน'); if (title.length > 80) return err('ชื่อยาวเกิน 80 ตัวอักษร');
+    err(''); f.up = true; q('#dfOk').disabled = true; q('#dfOk').textContent = 'กำลังอัปโหลด…'; q('#dfProg').hidden = false; q('#dfBar').style.width = '4%';
+    try {
+      const b64 = await blobB64(f.prep.blob); if (b64.length > DOC_MAX_B64) throw new Error('ไฟล์ใหญ่เกิน 6 MB');
+      const chunks = []; for (let i = 0; i < b64.length; i += DOC_CHUNK) chunks.push(b64.slice(i, i + DOC_CHUNK));
+      const r = await dcPut({ p_name: me, p_hash: myHash(), p_scope: f.scope, p_trip: '', p_title: title, p_kind: f.kind, p_mime: f.prep.mime, p_note: q('#dfNote').value.trim(), p_chunks: chunks }, p => { q('#dfBar').style.width = Math.max(4, Math.round(p * 100)) + '%'; });
+      if (typeof r === 'string' && /^-\d$/.test(r)) throw Object.assign(new Error({ '-1': 'เข้าสู่ระบบใหม่อีกครั้ง — PIN ใช้ไม่ได้', '-2': 'ชนิดไฟล์ไม่รองรับ (เฉพาะ JPG/PNG/WebP/PDF)', '-3': 'ไฟล์ใหญ่เกิน 6 MB', '-4': 'เอกสารเต็มแล้ว (ส่วนตัว 40 / ส่วนกลาง 60) — ลบบางรายการก่อน', '-5': 'ข้อมูลไม่ถูกต้อง (ชื่อว่างหรือยาวเกิน 80 ตัวอักษร)' }[r] || 'เซิร์ฟเวอร์ปฏิเสธ'), { refused: true });
+      if (ep === dc.epoch && /^[0-9a-f-]{36}$/.test(r)) { await idbSet(`f:${dkey()}:${r}`, { blob: f.prep.blob, t: Date.now() }); }
+      f.up = false; dl.close(); dc.seg = f.scope === 'shared' ? 'shared' : 'me'; toast('เพิ่มเอกสารแล้ว'); await docsRefresh(true);
+    } catch (x) {
+      f.up = false; q('#dfProg').hidden = true; q('#dfOk').textContent = 'บันทึกเอกสาร';
+      err(x.nosql ? DOC_NOSQL : docNetErr(x) ? 'ออฟไลน์ — เชื่อมต่ออินเทอร์เน็ตก่อนจึงจะเพิ่มเอกสารได้' : x.refused ? 'เซิร์ฟเวอร์ปฏิเสธ — ' + x.message : x.message); sync();
+    }
+  };
+  sync();
+}
+/* ---- share / download ---- */
+async function shareDoc(d) {
+  if (!d) return;
+  let b; try { b = await docBlob(d); } catch (e) { return toast(docErrText(e), 3500); }
+  const name = docFileName(d), file = new File([b], name, { type: d.mime });
+  try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: d.title }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+  const u = URL.createObjectURL(b), a = document.createElement('a');
+  if ('download' in a) { a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); toast('ดาวน์โหลดแล้ว'); setTimeout(() => URL.revokeObjectURL(u), 30000); }
+  else { window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60000); }
+}
+/* ---- full-screen viewer ("โชว์") ---- */
+const dvEl = () => $('#docOv');
+function dvApply() {
+  const im = $('#dvImg'), st = $('#dvStage'); if (!im || !st) return; const r = st.getBoundingClientRect(), q = dv.r % 180 !== 0;
+  im.style.width = (q ? r.height : r.width) + 'px'; im.style.height = (q ? r.width : r.height) + 'px';
+  im.style.transform = `translate(-50%,-50%) translate(${dv.x}px,${dv.y}px) scale(${dv.s}) rotate(${dv.r}deg)`;
+}
+const dvReset = () => { dv.s = 1; dv.x = dv.y = 0; dvApply(); };
+function dvClamp() { const st = $('#dvStage'); if (!st) return; const r = st.getBoundingClientRect(), mx = r.width * (dv.s - 1) / 2, my = r.height * (dv.s - 1) / 2; dv.x = Math.max(-mx, Math.min(mx, dv.x)); dv.y = Math.max(-my, Math.min(my, dv.y)); }
+async function dvWake() {
+  try { if (navigator.wakeLock && dv.open && !dv.lock) { dv.lock = await navigator.wakeLock.request('screen'); dv.lock.addEventListener('release', () => { dv.lock = null; }); } } catch { dv.lock = null; }
+  const h = $('#dvHint'); if (h) h.hidden = !!dv.lock && !navigator.standalone;
+}
+function openViewer(o) {
+  if (dv.open) return; const ov = dvEl();
+  dv.open = true; dv.mode = o.mode; dv.s = 1; dv.x = dv.y = 0; dv.r = 0; ov.hidden = false; document.documentElement.classList.add('noscroll'); history.pushState({ dov: 1 }, ''); dv.pop = false;
+  if (o.mode === 'taxi') { const st = data.stay || {}; ov.innerHTML = `<div class="dov-bar"><div class="dov-t"><small>โชว์ให้คนขับแท็กซี่</small><b>กรุณาพาไปที่นี่</b></div><button class="ov-btn" id="dvClose" aria-label="ปิด">✕</button></div><div class="dov-stage taxi" id="dvStage"><div class="tx-n">${esc(st.name || '')}</div><div class="tx-a">${esc(st.address || '')}</div></div>`; $('#dvClose').onclick = () => closeViewer(); dvWake(); return; }
+  dv.list = docsOf(dc.seg === 'shared' ? 'shared' : 'me'); dv.i = Math.max(0, dv.list.findIndex(d => d.id === o.id));
+  ov.innerHTML = `<div class="dov-bar"><div class="dov-t"><small id="dvOwner"></small><b id="dvTitle"></b></div><button class="ov-btn" id="dvRot" aria-label="หมุน">⟳</button><button class="ov-btn" id="dvClose" aria-label="ปิด">✕</button></div>
+    <div class="dov-stage" id="dvStage"><div class="dov-msg" id="dvMsg"></div></div>
+    <div class="dov-foot"><div class="dov-hint" id="dvHint" hidden>เพิ่มความสว่าง/ปิดล็อกหน้าจออัตโนมัติ</div><div class="dov-nav"><button class="ov-btn" id="dvPrev" aria-label="ก่อนหน้า">‹</button><span id="dvCount"></span><button class="ov-btn" id="dvNext" aria-label="ถัดไป">›</button><button class="btn" id="dvShare">ดาวน์โหลด/แชร์</button></div></div>`;
+  $('#dvClose').onclick = () => closeViewer(); $('#dvRot').onclick = () => { dv.r = (dv.r + 90) % 360; dvClamp(); dvApply(); }; $('#dvPrev').onclick = () => dvGo(-1); $('#dvNext').onclick = () => dvGo(1); $('#dvShare').onclick = () => shareDoc(dv.list[dv.i]);
+  dvGestures(); dvShow(); dvWake();
+}
+async function dvShow() {
+  const d = dv.list[dv.i], st = $('#dvStage'); if (!d || !st) return; const ep = dc.epoch, idx = dv.i;
+  $('#dvOwner').textContent = (d.scope === 'shared' ? 'ส่วนกลาง' : me); $('#dvTitle').textContent = d.title; $('#dvCount').textContent = `${dv.i + 1}/${dv.list.length}`;
+  $('#dvPrev').disabled = dv.i <= 0; $('#dvNext').disabled = dv.i >= dv.list.length - 1; dv.s = 1; dv.x = dv.y = 0; dv.r = 0;
+  $$('#dvStage > :not(.dov-msg)').forEach(n => n.remove()); const msg = $('#dvMsg'); msg.textContent = 'กำลังโหลด…'; msg.hidden = false;
+  try {
+    const u = await docUrl(d); if (ep !== dc.epoch || !dv.open || idx !== dv.i) return; msg.hidden = true; renderDocs(true);
+    if (d.mime === 'application/pdf') { st.insertAdjacentHTML('beforeend', `<div class="dov-pdf"><div class="dp-i">📄</div><b>${esc(d.title)}</b><button class="btn pri big" id="dvPdf">เปิด PDF</button></div>`); $('#dvPdf').onclick = () => window.open(u, '_blank'); $('#dvRot').hidden = true; }
+    else { $('#dvRot').hidden = false; st.insertAdjacentHTML('beforeend', `<img id="dvImg" src="${u}" alt="${esc(d.title)}" draggable="false">`); dvApply(); }
+  } catch (e) { if (idx === dv.i) { msg.hidden = false; msg.textContent = docErrText(e); } }
+}
+function dvGo(n) { const j = dv.i + n; if (!dv.open || dv.mode !== 'doc' || j < 0 || j >= dv.list.length) return; dv.i = j; dvShow(); }
+function dvGestures() {
+  const st = $('#dvStage'), pts = new Map(); let g = null, last = 0, lx = 0, ly = 0;
+  const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+  const base = () => { const p = [...pts.values()][0]; g = { x0: p.x, y0: p.y, ox: dv.x, oy: dv.y, moved: 0, d0: pts.size > 1 ? dist() : 0, s0: dv.s }; };
+  st.onpointerdown = e => { if (e.target.closest('button')) return; try { st.setPointerCapture(e.pointerId); } catch { } pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); base(); };
+  st.onpointermove = e => {
+    if (!pts.has(e.pointerId) || !g) return; pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size >= 2 && g.d0) { dv.s = Math.max(1, Math.min(6, g.s0 * dist() / g.d0)); g.moved = 99; dvClamp(); dvApply(); }
+    else { const dx = e.clientX - g.x0, dy = e.clientY - g.y0; g.moved = Math.max(g.moved, Math.hypot(dx, dy)); if (dv.s > 1) { dv.x = g.ox + dx; dv.y = g.oy + dy; dvClamp(); dvApply(); } }
+  };
+  const end = e => {
+    if (!pts.has(e.pointerId)) return; const one = pts.size === 1, p = pts.get(e.pointerId), gg = g; pts.delete(e.pointerId);
+    if (pts.size) { base(); return; } g = null; if (!one || !gg) return;
+    const dx = p.x - gg.x0, dy = p.y - gg.y0;
+    if (gg.moved < 10 && e.type === 'pointerup') {          // tap; two taps = zoom in / out
+      const now = Date.now(); if (now - last < 320 && Math.hypot(e.clientX - lx, e.clientY - ly) < 40) { if (dv.s > 1) dvReset(); else { dv.s = 2.5; dvApply(); } last = 0; } else { last = now; lx = e.clientX; ly = e.clientY; }
+    } else if (dv.s <= 1.02 && dv.mode === 'doc' && Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) dvGo(dx < 0 ? 1 : -1);          // swipe = previous / next
+    if (dv.s < 1.02) dvReset();
+  };
+  st.onpointerup = end; st.onpointercancel = end;
+}
+function closeViewer(fromPop) {
+  if (!dv.open) return; dv.open = false; const ov = dvEl(); ov.hidden = true; ov.innerHTML = ''; document.documentElement.classList.remove('noscroll');
+  try { if (dv.lock) dv.lock.release(); } catch { } dv.lock = null;
+  if (!fromPop) history.back();
+}
+addEventListener('popstate', () => closeViewer(true));
+addEventListener('keydown', e => { if (!dv.open) return; if (e.key === 'Escape') closeViewer(); else if (e.key === 'ArrowLeft') dvGo(-1); else if (e.key === 'ArrowRight') dvGo(1); });
+addEventListener('resize', () => { if (dv.open) dvApply(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && dv.open) dvWake(); });
+
 /* ---------- boot ---------- */
+/* tabs keep their own scroll position and are only re-rendered when something changed since they were drawn */
+const TABS = { plan: () => renderPlan(), money: () => renderMoney(), spots: () => renderSpots(), docs: () => renderDocs(), menu: () => renderMenu() };
+function renderTab(t) { TABS[t](); ui.tabVer[t] = ui.ver; }
 function renderAll() {
-  $('#btnMe').textContent = me ? initial(me) : '?';
-  renderPlan(); renderMoney(); renderSpots(); renderMenu(); renderSub();
-  if (ui.tab === 'map') renderMap();
+  ui.ver++; $('#btnMe').textContent = me ? initial(me) : '?';
+  Object.keys(TABS).forEach(renderTab); renderSub();
 }
 $('#tabs').onclick = e => {
-  const b = e.target.closest('button'); if (!b) return; ui.tab = b.dataset.tab;
+  const b = e.target.closest('button'); if (!b) return; const to = b.dataset.tab;
+  if (to === ui.tab) return scrollTo(0, 0);          // tapping the active tab = back to its top
+  ui.scroll[ui.tab] = scrollY; ui.dockLockAt = Date.now() - 650; ui.tab = to;          // ignores only the scroll event of the restore itself (~150 ms)
   $$('#tabs button').forEach(x => x.classList.toggle('on', x === b));
-  $$('main > section').forEach(s => s.hidden = s.id !== 'tab-' + ui.tab);
-  scrollTo(0, 0); updateDock();
-  if (ui.tab === 'plan') { ui.refit = true; renderPlan(); }
-  if (ui.tab === 'map') { renderMap(); if (geo.state === 'idle' && me) startLocation(); }
-  if (ui.tab === 'spots') renderSpots();
+  $$('main > section').forEach(s => s.hidden = s.id !== 'tab-' + to);
+  updateDock();
+  if (ui.tabVer[to] !== ui.ver) renderTab(to); else if (to === 'plan') drawMap(false);
+  scrollTo(0, ui.scroll[to] || 0);
+  if (to === 'docs') docsRefresh();
 };
 setInterval(() => { if (!document.hidden && !dlg.open && $('#login').hidden && !ui.edit && !ui.dirty && !ui.saving) load(); }, 60000);
 setInterval(() => {
   if (!me || !data.plan) return; const g = gate().state;
   if (g === 'active' && geo.watch == null && !['denied', 'unsupported'].includes(geo.state)) startLocation();
   else if (g !== 'active' && (geo.watch != null || geo.state === 'ok')) { stopLocation(); startLocation(); }
-  else if (g === 'before' || g === 'after') { geo.state = g; if (ui.tab === 'map') renderMapStatus(); }
+  else if (g === 'before' || g === 'after') { geo.state = g; renderMapStatus(); }
 }, 30000);
 setInterval(silentRenew, 60000);
 setInterval(tickCountdown, 1000);
-setInterval(() => { if (document.hidden || !map || !data.plan || ui.edit || (ui.tab !== 'plan' && ui.tab !== 'map')) return; const d = data.plan.days[ui.day]; if (ui.tab === 'plan' && !(d && isToday(d))) return; try { drawMap(false); } catch { } }, 60000);
+setInterval(() => { if (document.hidden || !map || !data.plan || ui.edit || (ui.tab !== 'plan' && !ui.ov)) return; const d = data.plan.days[ui.day]; if (!(d && isToday(d))) return; try { drawMap(false); } catch { } }, 60000);
 setInterval(() => { try { checkReminders(); } catch { } }, 15000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { try { checkReminders(); } catch { } tickCountdown();  } });
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
+/* a refresh that arrived while a dialog / text field / picture was open is applied as soon as it is closed */
+const retryStale = () => setTimeout(() => { if (ui.stale && !busy()) load(); }, 250);
+dlg.addEventListener('close', retryStale); document.addEventListener('focusout', retryStale);
 (async function boot() {
   ui.refit = true;
-  if (me) { $('#login').hidden = true; $('#app').hidden = false; renderAll(); }
+  if (!me) clearPrivCaches();
+  if (me) { $('#login').hidden = true; $('#app').hidden = false; }
+  { const t = allowedTrip(), c = readCache(t.id); if (c) { ui.updated = new Date(c.t); applyData(dataFromCache(t.id, c), c.snap, true); } else if (me) renderAll(); }          // last good copy first, then refresh
   await load();
   if (me) startLocation();
 })();

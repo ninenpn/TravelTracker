@@ -12,7 +12,10 @@ Mobile-only trip web app (static site on GitHub Pages) backed by Supabase. Users
 - Writes: only through SQL functions (RPC) — `save_tab/append_row/upsert_row` need the **edit code** (public trip); `private_write` needs a signed-in member's **PIN** (other trips). Tables are not writable directly (RLS).
 - Login = pick name + 4-digit PIN (hash `sha256(name|pin|traveltracker)` stored server-side in `member_pins`, checked by `verify_pin`, throttled 8 tries/10 min). Session hash lives only in `sessionStorage` (`tt.ph`).
 - Every signed-in member can open every trip. Trips show **Current / Upcoming / Past**; default list = Current + Upcoming.
-- Home screen: sticky map + day bar slide away while scrolling down (`.dock.away`), only the day bar returns when scrolling up (`.dock.peek`).
+- Tabs: แผน · เงิน · สถานที่ · เอกสาร · เมนู (no Map tab; "เปิดแผนที่เต็ม" opens a full-screen overlay that borrows the single Leaflet map). Home: sticky map + day bar slide away while scrolling down (`.dock.away`), only the day bar returns when scrolling up (`.dock.peek`), with >= 28 px hysteresis; one slim "ถัดไป / ที่พัก" row.
+- Stability rules: `load()` compares a data signature and re-renders nothing when identical; changed data re-renders via `keepScroll`; trip switch never blanks; tabs keep scroll and are not re-rendered unless changed; reserve space (CLS <= 0.05), animate only transform/opacity, honour reduced motion.
+- Documents (tab เอกสาร): personal (owner-only) + shared files in `member_docs`/`member_doc_chunks` (no table grants), only via RPC `doc_list/get/put/rename/delete` (name+PIN, `docs/supabase_docs.sql`; the user runs it — never run it on live yourself). Client downsizes images (≤1800 px JPEG), cache in IndexedDB `tt-docs` (wiped by `clearPrivCaches` → `docsWipe`), full-screen viewer `#docOv`. Never commit real documents/IDs; tests use synthetic PNGs.
+- Offline: last good data per trip cached in `localStorage` (`tt.cache.<trip>`, <= 1.5 MB, no pictures), shown at start then refreshed; private caches are cleared on sign-out / stale PIN / user switch.
 - Plan rows: `Day, Start time, Start Location, Arrive time, Arrive Location, How to Travel, Note[, Notice, Tickets, Location]`. Travel time = arrive − start; time at a place = arrive → next timed row's start.
 - Free tier: Supabase 500 MB DB / 5 GB egress — usage card in Menu.
 

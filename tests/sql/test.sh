@@ -9,7 +9,7 @@ su postgres -c "$B/initdb -D $D -A trust >/dev/null" && su postgres -c "$B/pg_ct
 trap 'su postgres -c "$B/pg_ctl -D $D -m immediate stop >/dev/null" 2>/dev/null; rm -rf "$D"' EXIT
 P="psql -h /tmp -p $PORT -U postgres -d postgres -q -t -A"
 $P -v ON_ERROR_STOP=1 -c "create role anon nologin; create role authenticated nologin;" || exit 1
-for f in supabase supabase_edit supabase_trips supabase_trips_v2 supabase_trips_v2; do          # v2 twice = must be idempotent
+for f in supabase supabase_edit supabase_trips supabase_trips_v2 supabase_trips_v2 supabase_docs supabase_docs; do          # v2 twice = must be idempotent
   $P -v ON_ERROR_STOP=1 -f "$ROOT/docs/$f.sql" 2>&1 | grep -v NOTICE
 done
 $P -c "select public.set_edit_code('secret1');" >/dev/null
@@ -44,5 +44,53 @@ eq  "member write appends"        1 "$(asanon "select public.private_write('maca
 eq  "picture chunks readable by a member" 1 "$(asanon "select jsonb_array_length(public.get_private('macau','media:m1','Tu','hashTu'))")"
 has "repeated wrong PINs are throttled" "too many" "$(asanon "do \$\$ declare i int; begin for i in 1..10 loop perform public.verify_pin('Tu','bad'||i); end loop; end \$\$;")"
 eq  "usage_stats has db_bytes" t "$(asanon "select (public.usage_stats() ? 'db_bytes')")"
+# ---- documents (supabase_docs.sql) ----
+$P -c "insert into sheet_rows values ('Users',101,'[\"Ann\"]'),('Users',102,'[\"Bob\"]') on conflict do nothing;" >/dev/null
+asanon "select public.set_first_pin('Ann','hA')" >/dev/null; asanon "select public.set_first_pin('Bob','hB')" >/dev/null
+has "anon cannot read member_docs"       "permission denied" "$(asanon 'select count(*) from member_docs')"
+has "anon cannot read member_doc_chunks" "permission denied" "$(asanon 'select count(*) from member_doc_chunks')"
+has "anon cannot insert member_docs"     "permission denied" "$(asanon "insert into member_docs(scope,title,mime,created_by) values ('shared','x','image/png','x')")"
+PA=$(asanon "select public.doc_put('Ann','hA','person','','Passport','passport','image/png','','[\"QUJD\",\"REVG\"]'::jsonb)")
+PS=$(asanon "select public.doc_put('Ann','hA','shared','','Hotel voucher','hotel','application/pdf','n','[\"QUJD\"]'::jsonb)")
+has "member can add a personal doc (uuid)" "^[0-9a-f-]\{36\}\$" "$PA"
+has "member can add a shared doc (uuid)"   "^[0-9a-f-]\{36\}\$" "$PS"
+eq  "doc_put wrong PIN => -1"      -1 "$(asanon "select public.doc_put('Ann','bad','person','','T','other','image/png','','[\"a\"]'::jsonb)")"
+eq  "doc_put unknown name => -1"   -1 "$(asanon "select public.doc_put('Zed','hA','person','','T','other','image/png','','[\"a\"]'::jsonb)")"
+eq  "doc_list wrong PIN => null"    t "$(asanon "select public.doc_list('Ann','bad') is null")"
+eq  "doc_list unknown name => null" t "$(asanon "select public.doc_list('Zed','hA') is null")"
+eq  "owner sees own + shared (2)"   2 "$(asanon "select jsonb_array_length(public.doc_list('Ann','hA'))")"
+eq  "other member sees only shared (1)" 1 "$(asanon "select jsonb_array_length(public.doc_list('Bob','hB'))")"
+eq  "list has no chunk data"        f "$(asanon "select (public.doc_list('Ann','hA')->0) ? 'data'")"
+eq  "owner gets own chunks (2)"     2 "$(asanon "select jsonb_array_length(public.doc_get('Ann','hA','$PA')->'chunks')")"
+eq  "other member cannot get a personal doc" t "$(asanon "select public.doc_get('Bob','hB','$PA') is null")"
+eq  "other member gets a shared doc" 1 "$(asanon "select jsonb_array_length(public.doc_get('Bob','hB','$PS')->'chunks')")"
+eq  "doc_get wrong PIN => null"      t "$(asanon "select public.doc_get('Ann','bad','$PA') is null")"
+eq  "other member cannot rename personal doc" 0 "$(asanon "select public.doc_rename('Bob','hB','$PA','Hacked')")"
+eq  "other member cannot delete personal doc" 0 "$(asanon "select public.doc_delete('Bob','hB','$PA')")"
+eq  "non-creator cannot rename shared doc"    0 "$(asanon "select public.doc_rename('Bob','hB','$PS','Hacked')")"
+eq  "non-creator cannot delete shared doc"    0 "$(asanon "select public.doc_delete('Bob','hB','$PS')")"
+eq  "rename wrong PIN => -1"        -1 "$(asanon "select public.doc_rename('Ann','bad','$PA','x')")"
+eq  "delete wrong PIN => -1"        -1 "$(asanon "select public.doc_delete('Ann','bad','$PA')")"
+eq  "creator renames own doc"        1 "$(asanon "select public.doc_rename('Ann','hA','$PA','Passport 2')")"
+eq  "rename took effect"   "Passport 2" "$(val "select title from member_docs where id='$PA'")"
+eq  "rename too long title => -5"   -5 "$(asanon "select public.doc_rename('Ann','hA','$PA','$(printf 'x%.0s' $(seq 81))')")"
+eq  "bad MIME => -2"                -2 "$(asanon "select public.doc_put('Ann','hA','person','','T','other','text/html','','[\"a\"]'::jsonb)")"
+eq  "svg MIME => -2"                -2 "$(asanon "select public.doc_put('Ann','hA','person','','T','other','image/svg+xml','','[\"a\"]'::jsonb)")"
+eq  "title > 80 chars => -5"        -5 "$(asanon "select public.doc_put('Ann','hA','person','','$(printf 'x%.0s' $(seq 81))','other','image/png','','[\"a\"]'::jsonb)")"
+eq  "empty title => -5"             -5 "$(asanon "select public.doc_put('Ann','hA','person','','  ','other','image/png','','[\"a\"]'::jsonb)")"
+eq  "bad scope => -5"               -5 "$(asanon "select public.doc_put('Ann','hA','public','','T','other','image/png','','[\"a\"]'::jsonb)")"
+eq  "empty chunks => -5"            -5 "$(asanon "select public.doc_put('Ann','hA','person','','T','other','image/png','','[]'::jsonb)")"
+eq  "doc > 6 MB => -3"              -3 "$(asanon "select public.doc_put('Ann','hA','person','','Big','other','image/png','',jsonb_build_array(repeat('a',3000000),repeat('a',3000001)))")"
+eq  "doc of exactly 6 MB accepted"   1 "$(asanon "select (public.doc_put('Ann','hA','person','','Edge','other','image/png','',jsonb_build_array(repeat('a',3000000),repeat('a',3000000)))) ~ '^[0-9a-f-]{36}\$'::text and true" | sed 's/t/1/')"
+eq  "rejected docs wrote nothing"    t "$(val "select count(*) = 3 from member_docs")"
+eq  "chunks removed with the doc"    1 "$(asanon "select public.doc_delete('Ann','hA','$PS')")"
+eq  "no orphan chunks"               0 "$(val "select count(*) from member_doc_chunks where doc_id='$PS'")"
+asanon "select public.doc_delete('Ann','hA',id) from (select id from public.member_docs where title='Edge') x" >/dev/null 2>&1; val "delete from member_docs where title='Edge'" >/dev/null
+$P -c "insert into member_docs(scope,owner,title,mime,created_by,chunks) select 'person','ann','f'||g,'image/png','ann',1 from generate_series(1,39) g; insert into member_doc_chunks select id,0,'a' from member_docs where title like 'f%';" >/dev/null
+eq  "41st personal doc refused => -4" -4 "$(asanon "select public.doc_put('Ann','hA','person','','Over','other','image/png','','[\"a\"]'::jsonb)")"
+eq  "limit is per member (Bob can add)" t "$(asanon "select public.doc_put('Bob','hB','person','','Mine','other','image/png','','[\"a\"]'::jsonb) ~ '^[0-9a-f-]{36}\$'")"
+$P -c "insert into member_docs(scope,title,mime,created_by,chunks) select 'shared','s'||g,'image/png','ann',1 from generate_series(1,60) g;" >/dev/null
+eq  "61st shared doc refused => -4"   -4 "$(asanon "select public.doc_put('Bob','hB','shared','','Over','other','image/png','','[\"a\"]'::jsonb)")"
+eq  "re-running supabase_docs.sql kept data" t "$(val "select count(*) > 60 from member_docs")"
 [ $fail -eq 0 ] && echo "SQL RESULT: all passed" || echo "SQL RESULT: FAILURES"
 exit $fail

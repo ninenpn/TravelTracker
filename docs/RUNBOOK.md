@@ -1,7 +1,7 @@
 # Runbook
 
 ## One-time setup of a fresh Supabase project
-SQL Editor → run in order: `docs/supabase.sql` → `docs/supabase_edit.sql` → `select public.set_edit_code('<your code>');` → `docs/supabase_trips.sql` → `docs/supabase_trips_v2.sql`. Put the project URL + publishable key in `config.js`. All files are idempotent (safe to re-run). Verify: `node tests/live-smoke.js`.
+SQL Editor → run in order: `docs/supabase.sql` → `docs/supabase_edit.sql` → `select public.set_edit_code('<your code>');` → `docs/supabase_trips.sql` → `docs/supabase_trips_v2.sql` → `docs/supabase_docs.sql` (เอกสาร). Put the project URL + publishable key in `config.js`. All files are idempotent (safe to re-run). Verify: `node tests/live-smoke.js`.
 
 ## Everyday
 | Task | How |
@@ -33,6 +33,8 @@ Push to `main` → GitHub Actions "Deploy to GitHub Pages" (two jobs: `build` up
 | Cannot open other trips | not signed in with PIN, PIN not yet created, or SQL files not applied → `node tests/live-smoke.js`, check `pin_status` |
 | "ลองผิดหลายครั้ง" at login | throttle (8 wrong PINs / 10 min) → wait, or delete that name's rows in `pin_fail` |
 | Everything empty / HTTP 5xx | free project paused after 7 idle days → Dashboard → Restore |
+| Tab เอกสาร says "ฟีเจอร์เอกสารยังไม่เปิดใช้งาน" | `docs/supabase_docs.sql` not applied → run it in SQL Editor (idempotent). Doc caps: 40 personal/member, 60 shared, 6 MB each (~ DB usage visible in Menu quota card) |
+| Delete someone's shared document | only its creator can in the app; as admin: `delete from member_docs where id = '<id>'` (chunks cascade) |
 | Almaty `ค่าใช้จ่าย` table missing | the tab is not in `sheet_rows` → apply `docs/supabase_trips_v2.sql` |
 
 ## Known limits

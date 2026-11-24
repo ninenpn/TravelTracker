@@ -1,5 +1,5 @@
 /* End-to-end system check (Playwright). Run via `bash tests/run.sh`. Real Supabase for public reads; private/write RPCs mocked with synthetic data. */
-const { open, login, check, finish, FAKE } = require('./lib');
+const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
 
 (async () => {
   /* ---------- A. public data (real Supabase) ---------- */
@@ -108,8 +108,9 @@ const { open, login, check, finish, FAKE } = require('./lib');
   check('F1 places tab renders segments', await p.evaluate(() => document.querySelectorAll('#tab-spots .seg button').length) >= 2);
   await p.evaluate(() => { ui.spotView = 'tips'; renderSpots(); }); await p.waitForTimeout(300);
   check('F2 tips: food items link to Maps / TikTok / Facebook', await p.evaluate(() => { const l = [...document.querySelectorAll('#tab-spots a')].map(a => a.href); return l.some(x => /google\.com\/maps/.test(x)) && l.some(x => /tiktok\.com\/search/.test(x)) && l.some(x => /facebook\.com\/search/.test(x)); }));
-  await p.click('[data-tab=map]'); await p.waitForTimeout(1300);
-  check('F3 map renders', await p.evaluate(() => !!document.querySelector('.leaflet-container')));
+  await p.click('[data-tab=plan]'); await p.waitForTimeout(500); await p.click('#dockFull'); await p.waitForTimeout(1300);
+  check('F3 full-screen map overlay renders the map', await p.evaluate(() => !document.getElementById('mapOv').hidden && !!document.querySelector('#mapOv .leaflet-container')));
+  await p.click('#ovClose'); await p.waitForTimeout(300);
   await p.click('[data-tab=menu]'); await p.waitForTimeout(1000);
   const menu = await p.innerText('#tab-menu');
   check('F4 menu: trips, usage card (X / 500 MB), edit card', /ทริป/.test(menu) && /\/ 500 MB/.test(menu) && /แก้ไขทริป/.test(menu));
@@ -136,7 +137,7 @@ const { open, login, check, finish, FAKE } = require('./lib');
     s = await open({ w, h, stepsPerDay: 10 }); p = s.p; await login(s, 'Nine');
     await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
     const bad = [];
-    for (const t of ['plan', 'money', 'spots', 'map', 'menu']) { await p.click(`[data-tab=${t}]`); await p.waitForTimeout(500); const o = await p.evaluate(() => document.documentElement.scrollWidth - innerWidth); if (o > 1) bad.push(t + '+' + o); }
+    for (const t of ['plan', 'money', 'spots', 'docs', 'menu']) { await p.click(`[data-tab=${t}]`); await p.waitForTimeout(500); const o = await p.evaluate(() => document.documentElement.scrollWidth - innerWidth); if (o > 1) bad.push(t + '+' + o); }
     check(`H1 ${w}x${h}: no horizontal scroll on any tab`, !bad.length, bad.join());
     await p.click('[data-tab=plan]'); await p.waitForTimeout(400);
     const m = await p.evaluate(async () => {
@@ -151,5 +152,329 @@ const { open, login, check, finish, FAKE } = require('./lib');
     check(`H3 ${w}x${h}: last card not covered by the bottom bar`, m.lastClear);
     await s.b.close();
   }
+  /* ---------- I. stale PIN session + reminders on past trips ---------- */
+  console.log('\n[I] stale session & past-trip reminders');
+  s = await open(); p = s.p; await login(s, 'Nine');
+  await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
+  s.flags.err500 = true; await p.evaluate(() => load()); await p.waitForTimeout(1500);
+  check('I2 transient HTTP error does NOT sign the member out', await p.evaluate(() => !!me && !!sessionStorage.getItem('tt.ph') && document.getElementById('login').hidden));
+  s.flags.err500 = false; s.flags.nullPriv = true; await p.evaluate(() => load()); await p.waitForTimeout(2500);
+  const st = await p.evaluate(() => ({ me, ph: sessionStorage.getItem('tt.ph'), act: cfg.active, login: !document.getElementById('login').hidden, err: document.getElementById('error').hidden ? '' : document.getElementById('error').textContent, toast: document.getElementById('toast').textContent }));
+  check('I1 null get_private for signed-in member: signed out, public trip, login shown, Thai toast, no error box', !st.me && !st.ph && st.act === ALMATY.id && st.login && !st.err && /PIN/.test(st.toast) && /เข้าสู่ระบบ/.test(st.toast), JSON.stringify(st));
+  s.flags.nullPriv = false; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
+  check('I3 can sign in again and open the private trip', await p.evaluate(() => !!me && trip().key === 'macau' && !!data.plan && data.plan.days.length > 0));
+  check('I4 past trip: menu shows "trip ended" note, no switch/ics buttons', await (async () => { await p.click('[data-tab=menu]'); await p.waitForTimeout(400); return p.evaluate(() => /ทริปนี้จบแล้ว/.test(document.getElementById('tab-menu').innerText) && !document.getElementById('nOn') && !document.getElementById('nIcs')); })());
+  await s.b.close();
+  s = await open({ clock: '2026-07-01T10:00:00' }); p = s.p; await login(s, 'Nine');
+  await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300); await p.click('[data-tab=menu]'); await p.waitForTimeout(400);
+  check('I5 upcoming trip: card keeps count, switch, lead select, ics', await p.evaluate(() => !!document.getElementById('nOn') && !!document.getElementById('nLead') && !!document.getElementById('nIcs') && /\d+ รายการ/.test(document.getElementById('tab-menu').innerText)));
+  s.flags.nullPriv = false; await s.b.close();
+  s = await open({ clock: '2026-07-12T10:30:00' }); p = s.p; await login(s, 'Nine');
+  await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
+  check('I6 count excludes events already over', await p.evaluate(() => { const all = planEvents().length, n = planEvents().filter(e => (e.end || e.dt) > Date.now()).length; return n < all && n > 0 && notifCard().includes(n + ' รายการ'); }));
+  await s.b.close();
+
+  /* ---------- J. calm UI: stability, overlay map, offline cache ---------- */
+  console.log('\n[J] calm UI');
+  const CLS = () => { window.__cls = 0; try { new PerformanceObserver(l => { for (const e of l.getEntries()) if (!e.hadRecentInput) window.__cls += e.value; }).observe({ type: 'layout-shift', buffered: true }); } catch { } };
+  const cls = p => p.evaluate(() => +window.__cls.toFixed(4));
+  s = await open({ init: CLS }); p = s.p;
+  const cBoot = await cls(p);
+  check('J1 CLS boot -> login screen <= 0.05', cBoot <= 0.05, String(cBoot));
+  await login(s, 'Nine'); await p.waitForTimeout(1500);
+  const cLogin = await cls(p) - cBoot;
+  check('J2 CLS login -> home <= 0.05', cLogin <= 0.05, String(cLogin));
+  await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
+  await p.evaluate(() => switchTrip('priv:nagoya')); await p.waitForTimeout(2500);
+  await p.evaluate(() => switchTrip(DEFAULT_TRIP.id)).catch(() => { }); await p.waitForTimeout(2500);
+  const cSwitch = await cls(p) - cBoot - cLogin;
+  check('J3 CLS over three trip switches <= 0.05', cSwitch <= 0.05, String(cSwitch));
+  check('J4 Map tab is gone: no #tab-map, nav = แผน · เงิน · สถานที่ · เอกสาร · เมนู', await p.evaluate(() => !document.getElementById('tab-map') && typeof renderMap === 'undefined' && [...document.querySelectorAll('#tabs button')].map(b => b.textContent.trim()).join('·') === 'แผน·เงิน·สถานที่·เอกสาร·เมนู'));
+  await s.b.close();
+
+  /* trip switch without blanking (slow private trip so the waiting window is visible) */
+  s = await open({ stepsPerDay: 10 }); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(800);
+  await p.evaluate(() => { window.__fr = []; const h0 = document.documentElement.scrollHeight, from = data._trip; (function f() { const tl = document.getElementById('tl'); window.__fr.push({ plan: !!tl && tl.children.length > 0, h: document.documentElement.scrollHeight, h0, old: data._trip === from, sub: document.getElementById('tripSub').textContent, dim: document.querySelector('main').classList.contains('busy') }); requestAnimationFrame(f); })(); });
+  s.flags.delayMs = 1500; await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(3000);
+  const fr = await p.evaluate(() => window.__fr), waiting = fr.filter(f => f.old);
+  check('J5 trip switch: 0 frames without a plan, document height never collapses while waiting, "loading" shown', waiting.length > 20 && fr.every(f => f.plan) && waiting.every(f => f.h >= 0.9 * f.h0) && waiting.some(f => /กำลังโหลด/.test(f.sub)), JSON.stringify({ n: waiting.length, noPlan: fr.filter(f => !f.plan).length, minH: Math.min(...waiting.map(f => f.h)), h0: waiting[0] && waiting[0].h0 }));
+  s.flags.delayMs = 0; await s.b.close();
+
+  /* no-op refresh, changed refresh, dialog safety */
+  s = await open({ stepsPerDay: 10 }); p = s.p; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
+  await p.evaluate(() => { data.plan.days.forEach((_, d) => dayWaypoints(d).forEach(w => { gc.cache[gKey(w.q)] = { lat: 22.19, lng: 113.54 }; })); });          // stops already located: nothing left to geocode / route
+  await p.waitForFunction(() => !gc.running && !Object.keys(trv.pending).length, null, { timeout: 30000 }); await p.waitForTimeout(600);
+  await p.evaluate(() => { window.scrollTo(0, 500); window.__n = { draw: 0, all: 0, plan: 0 }; for (const k of ['drawMap', 'renderAll', 'renderPlan']) { const o = window[k], key = { drawMap: 'draw', renderAll: 'all', renderPlan: 'plan' }[k]; window[k] = (...a) => { window.__n[key]++; return o(...a); }; } for (const id of ['tl', 'homeDock', 'map']) document.getElementById(id).__keep = 1; });
+  await p.waitForTimeout(500); const y0 = await p.evaluate(() => scrollY);
+  await p.evaluate(() => load()); await p.waitForTimeout(800);
+  const same = await p.evaluate(() => ({ keep: ['tl', 'homeDock', 'map'].every(id => document.getElementById(id).__keep === 1), n: window.__n, y: scrollY }));
+  check('J6 identical refresh: #tl / #homeDock / #map nodes kept, no drawMap/renderAll/renderPlan, scroll untouched', same.keep && !same.n.draw && !same.n.all && !same.n.plan && Math.abs(same.y - y0) <= 1, JSON.stringify(same) + ' y0=' + y0);
+  const before = await p.evaluate(() => { const lim = document.querySelector('.top').getBoundingClientRect().bottom + document.getElementById('homeDock').getBoundingClientRect().height; const a = [...document.querySelectorAll('#tl .step')].find(n => n.getBoundingClientRect().bottom > lim + 1); return { i: a.dataset.i, top: a.getBoundingClientRect().top, h: document.documentElement.scrollHeight }; });
+  s.trips.macau.plan[1][6] = 'changed note\nline two\nline three\nline four\nline five';          // first step of the first day, above the reading position
+  await p.evaluate(() => load()); await p.waitForTimeout(800);
+  const after = await p.evaluate(sel => { const a = document.querySelector(`#tl .step[data-i="${sel}"]`); return { top: a.getBoundingClientRect().top, h: document.documentElement.scrollHeight, y: scrollY, changed: /changed note/.test(document.getElementById('tl').innerText), moved: document.getElementById('tl').__keep !== 1 }; }, before.i);
+  check('J7 changed data: re-rendered, reader stays on the same step (anchor +-2 px)', after.changed && after.moved && Math.abs(after.top - before.top) <= 2, JSON.stringify({ before, after }));
+  await p.evaluate(() => { openDlg('<form method="dialog"><input name="x" id="jIn"></form>'); }); await p.fill('#jIn', 'typing'); s.trips.macau.plan[1][6] = 'second change';
+  await p.evaluate(() => load()); await p.waitForTimeout(800);
+  const dl = await p.evaluate(() => ({ open: document.getElementById('dlg').open, v: document.getElementById('jIn') && document.getElementById('jIn').value, applied: /second change/.test(document.getElementById('tl').innerText) }));
+  check('J8 refresh while a dialog is open: dialog + typed text untouched, data waits', dl.open && dl.v === 'typing' && !dl.applied, JSON.stringify(dl));
+  await p.evaluate(() => document.getElementById('dlg').close()); await p.waitForTimeout(1500);
+  check('J9 ...and is applied right after the dialog closes', await p.evaluate(() => /second change/.test(document.getElementById('tl').innerText)));
+  await s.b.close();
+
+  /* per-tab scroll memory */
+  s = await open({ stepsPerDay: 10 }); p = s.p; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
+  await p.evaluate(() => { window.scrollTo(0, 700); document.getElementById('tl').__keep = 1; }); await p.waitForTimeout(500);
+  await p.click('[data-tab=money]'); await p.waitForTimeout(300); await p.evaluate(() => { document.getElementById('tab-money').firstElementChild.__keep = 1; });
+  await p.click('[data-tab=menu]'); await p.waitForTimeout(300); await p.evaluate(() => window.scrollTo(0, 120)); await p.waitForTimeout(300);
+  await p.click('[data-tab=plan]'); await p.waitForTimeout(500);
+  const t1 = await p.evaluate(() => ({ y: scrollY, keep: document.getElementById('tl').__keep === 1 }));
+  check('J10 plan -> money -> menu -> plan: scroll restored (+-2 px), plan not re-rendered', Math.abs(t1.y - 700) <= 2 && t1.keep, JSON.stringify(t1));
+  await p.click('[data-tab=menu]'); await p.waitForTimeout(400); const t2 = await p.evaluate(() => scrollY);
+  await p.click('[data-tab=money]'); await p.waitForTimeout(400); const t3 = await p.evaluate(() => ({ keep: document.getElementById('tab-money').firstElementChild.__keep === 1 }));
+  check('J11 each tab keeps its own scroll (menu 120) and an unchanged tab is not re-rendered', Math.abs(t2 - 120) <= 2 && t3.keep, JSON.stringify({ t2, t3 }));
+  await s.b.close();
+
+  /* calm dock */
+  s = await open({ stepsPerDay: 10 }); p = s.p; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
+  const flips = await p.evaluate(async () => {
+    const d = document.getElementById('homeDock'), st = () => d.classList.contains('away') ? 'away' : d.classList.contains('peek') ? 'peek' : 'show'; let last = st(), n = 0;
+    new MutationObserver(() => { const c = st(); if (c !== last) { n++; last = c; } }).observe(d, { attributes: true, attributeFilter: ['class'] });
+    for (const y of [0, 200, 400, 380, 395, 370, 410, 385, 400, 375, 405, 380, 410]) { window.scrollTo(0, y); await new Promise(r => setTimeout(r, 130)); }
+    return { n, end: st() };
+  });
+  check('J12 jittery scroll path flips the dock <= 4 times', flips.n <= 4, JSON.stringify(flips));
+  const hy = await p.evaluate(async () => {
+    const d = document.getElementById('homeDock'), st = () => d.classList.contains('away') ? 'away' : d.classList.contains('peek') ? 'peek' : 'show', out = [], w = ms => new Promise(r => setTimeout(r, ms));
+    window.scrollTo(0, 800); await w(500); out.push(st()); window.scrollTo(0, 785); await w(200); out.push(st()); window.scrollTo(0, 760); await w(200); out.push(st()); window.scrollTo(0, 700); await w(500); out.push(st());
+    const cs = getComputedStyle(d); return { out, willChange: cs.willChange, tr: cs.transitionProperty };
+  });
+  check('J13 hysteresis: hides on 800; a 15 px / 40 px reversal keeps it hidden; 100 px sustained up -> peek; will-change + transform-only transition', hy.out.join() === 'away,away,away,peek' && /transform/.test(hy.willChange) && hy.tr === 'transform', JSON.stringify(hy));
+  await s.b.close();
+  s = await open({ reducedMotion: 'reduce' }); p = s.p; await login(s, 'Nine');
+  check('J14 prefers-reduced-motion: no dock transition', await p.evaluate(() => parseFloat(getComputedStyle(document.getElementById('homeDock')).transitionDuration) === 0));
+  await s.b.close();
+
+  /* full-screen map overlay */
+  s = await open(); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(1500);
+  await p.evaluate(() => { window.__m = map; }); const m0 = await p.evaluate(() => ({ c: map.getCenter(), z: map.getZoom() }));
+  await p.click('#dockFull'); await p.waitForTimeout(900);
+  const o1 = await p.evaluate(() => { const r = document.getElementById('bAsk'), cl = document.getElementById('ovClose').getBoundingClientRect(); return { vis: !document.getElementById('mapOv').hidden, one: document.querySelectorAll('.leaflet-container').length, inOv: !!document.querySelector('#ovHolder #map'), same: window.__m === map, chips: [...document.querySelectorAll('#ovFilters [data-f]')].map(b => b.textContent.replace(/[^\u0E00-\u0E7Fa-z]/gi, '')), closeTR: cl.right > innerWidth - 70 && cl.top < 90, loc: !!document.getElementById('ovLoc'), c: map.getCenter(), z: map.getZoom() }; });
+  check('J15 overlay opens: one Leaflet instance moved in, ✕ top-right, ⟲, filter chips เส้นทาง/ร้านอาหาร/ที่เที่ยว/อื่นๆ/เพื่อน', o1.vis && o1.one === 1 && o1.inOv && o1.same && o1.closeTR && o1.loc && o1.chips.join('|').replace(/[0-9]/g, '') === 'เส้นทาง|ร้านอาหาร|ที่เที่ยว|อื่นๆ|เพื่อน', JSON.stringify(o1));
+  check('J16 opening does not re-fit or jump the map', Math.abs(o1.c.lat - m0.c.lat) < 0.002 && Math.abs(o1.c.lng - m0.c.lng) < 0.002 && o1.z === m0.z, JSON.stringify({ m0, c: o1.c, z: o1.z }));
+  const f0 = await p.evaluate(() => ui.f.food); await p.click('#ovFilters [data-f=food]'); await p.waitForTimeout(200);
+  check('J17 filter chip toggles the layer + its state', await p.evaluate(f => ui.f.food === !f && document.querySelector('#ovFilters [data-f=food]').classList.contains('on') === !f, f0));
+  await p.click('#ovFilters [data-f=food]');
+  await p.evaluate(() => { geo.state = 'denied'; renderMapStatus(); }); const askD = await p.evaluate(() => /ขอสิทธิ์ตำแหน่ง/.test(document.getElementById('ovStatus').innerText));
+  await p.evaluate(() => { geo.state = 'ok'; data.me = { lat: 43.25, lng: 76.95, acc: 12, at: new Date() }; renderMapStatus(); }); const askO = await p.evaluate(() => !!document.getElementById('bAsk'));
+  await p.evaluate(() => { geo.state = 'idle'; data.me = null; renderMapStatus(); });
+  check('J18 location status: "ขอสิทธิ์ตำแหน่ง" only when permission is needed', askD && !askO);
+  await p.click('#ovClose'); await p.waitForTimeout(700);
+  const o2 = await p.evaluate(() => ({ hidden: document.getElementById('mapOv').hidden, home: !!document.querySelector('#homeMapHolder #map'), one: document.querySelectorAll('.leaflet-container').length, same: window.__m === map, c: map.getCenter(), z: map.getZoom() }));
+  check('J19 ✕ closes: map back in the dock, same instance, same view', o2.hidden && o2.home && o2.one === 1 && o2.same && Math.abs(o2.c.lat - m0.c.lat) < 0.002 && o2.z === m0.z, JSON.stringify(o2));
+  await p.click('#dockFull'); await p.waitForTimeout(500); await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+  const esc1 = await p.evaluate(() => document.getElementById('mapOv').hidden);
+  await p.click('#dockFull'); await p.waitForTimeout(500); await p.goBack(); await p.waitForTimeout(500);
+  check('J20 Esc and browser Back both close the overlay', esc1 && await p.evaluate(() => document.getElementById('mapOv').hidden && !!document.querySelector('#homeMapHolder #map')));
+  await s.b.close();
+
+  /* nav with 4 (and 5) evenly spaced items */
+  s = await open(); p = s.p; await login(s, 'Nine');
+  const nv = await p.evaluate(() => { const r = [...document.querySelectorAll('#tabs button')].map(b => b.getBoundingClientRect()); return { n: r.length, labels: [...document.querySelectorAll('#tabs span')].map(x => x.textContent).join('|'), w: Math.max(...r.map(x => x.width)) - Math.min(...r.map(x => x.width)), gap: Math.max(...r.slice(1).map((x, i) => x.left - r[i].right)) - Math.min(...r.slice(1).map((x, i) => x.left - r[i].right)), h: Math.min(...r.map(x => x.height)), over: document.documentElement.scrollWidth - innerWidth }; });
+  check('J21 nav: 5 evenly spaced items (แผน|เงิน|สถานที่|เอกสาร|เมนู) >= 44 px tall, no horizontal overflow', nv.n === 5 && nv.labels === 'แผน|เงิน|สถานที่|เอกสาร|เมนู' && nv.w < 1 && nv.gap < 1 && nv.h >= 44 && nv.over <= 1, JSON.stringify(nv));
+  await s.b.close();
+
+  /* home top compaction */
+  for (const [w, h] of [[390, 844], [360, 640]]) {
+    s = await open({ w, h }); p = s.p; await login(s, 'Nine'); await p.evaluate(() => window.scrollTo(0, 0)); await p.waitForTimeout(600);
+    const g = await p.evaluate(() => { const nav = document.querySelector('nav').getBoundingClientRect().top, st = document.querySelector('#tl .step'), hd = document.querySelector('.dayh h2').getBoundingClientRect(), dk = document.getElementById('homeDock').getBoundingClientRect(), mp = document.querySelector('.dock-map').getBoundingClientRect(); return { nav, stepBottom: st ? st.getBoundingClientRect().bottom : null, headTop: hd.top, headBottom: hd.bottom, dockBottom: dk.bottom, map: mp.height, nx: !!document.getElementById('cd'), stayOpen: !document.getElementById('stayPn') || document.getElementById('stayPn').hidden === false }; });
+    if (w === 390) check('J22 390x844: first step card fully above the bottom nav at scroll 0; map ~23 dvh; stay collapsed', g.stepBottom != null && g.stepBottom <= g.nav && g.map < 844 * 0.25 && g.map >= 120 && !g.stayOpen, JSON.stringify(g));
+    else check('J23 360x640: day heading visible (below the dock, above the nav) at scroll 0', g.headTop >= g.dockBottom - 1 && g.headBottom <= g.nav, JSON.stringify(g));
+    await s.b.close();
+  }
+
+  /* offline cache (stale-while-revalidate) */
+  s = await open(); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(800);
+  check('J24 last good data is cached per trip, without picture data', await p.evaluate(() => { const v = localStorage.getItem('tt.cache.' + trip().id); return !!v && v.length < 1.5e6 && !/data:image/.test(v); }));
+  check('J25 cache is skipped above ~1.5 MB', await p.evaluate(() => { writeCache('big', 'x'.repeat(1.6e6)); const a = localStorage.getItem('tt.cache.big'); writeCache('small', '{}'); const b = localStorage.getItem('tt.cache.small'); localStorage.removeItem('tt.cache.small'); return a === null && b !== null; }));
+  await s.ctx.route('**/rest/v1/sheet_rows*', async r => { await new Promise(x => setTimeout(x, 4000)); r.continue().catch(() => { }); });
+  await p.reload({ waitUntil: 'domcontentloaded' }); await p.waitForTimeout(900);
+  const c1 = await p.evaluate(() => ({ steps: document.querySelectorAll('#tl .step').length, sub: document.getElementById('tripSub').textContent, shown: !document.getElementById('app').hidden }));
+  check('J26 start renders the cached copy immediately (network still pending) and says it is updating', c1.shown && c1.steps > 0 && /กำลังอัปเดต/.test(c1.sub), JSON.stringify(c1));
+  await p.waitForFunction(() => !ui.sync, null, { timeout: 30000 }); await s.ctx.unroute('**/rest/v1/sheet_rows*');
+  await p.evaluate(() => { document.getElementById('tl').__keep = 1; }); await s.ctx.setOffline(true);
+  await p.evaluate(() => load()); await p.waitForTimeout(1200);
+  const of = await p.evaluate(() => ({ sub: document.getElementById('tripSub').textContent, err: !document.getElementById('error').hidden, keep: document.getElementById('tl').__keep === 1, steps: document.querySelectorAll('#tl .step').length }));
+  check('J27 offline: "ออฟไลน์ — แสดงข้อมูลล่าสุด HH:MM", no red error box, plan stays', /^ออฟไลน์ — แสดงข้อมูลล่าสุด \d\d:\d\d$/.test(of.sub) && !of.err && of.keep && of.steps > 0, JSON.stringify(of));
+  await s.ctx.setOffline(false); await p.evaluate(() => load()); await p.waitForTimeout(3500);
+  check('J28 back online: banner clears', await p.evaluate(() => !/ออฟไลน์/.test(document.getElementById('tripSub').textContent)));
+  await s.b.close();
+  s = await open(); p = s.p; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
+  check('J29 private trip cached while signed in', await p.evaluate(() => !!localStorage.getItem('tt.cache.priv:macau')));
+  await p.click('#btnMe'); await p.waitForTimeout(300);
+  check('J30 switching user clears private caches (public cache stays)', await p.evaluate(() => !Object.keys(localStorage).some(k => k.startsWith('tt.cache.priv:')) && !!localStorage.getItem('tt.cache.' + DEFAULT_TRIP.id)));
+  await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
+  s.flags.nullPriv = true; await p.evaluate(() => load()); await p.waitForTimeout(2500);
+  check('J31 stale PIN clears private caches', await p.evaluate(() => !Object.keys(localStorage).some(k => k.startsWith('tt.cache.priv:'))));
+  await s.b.close();
+
+
+  /* ---------- K. เอกสาร (documents) ---------- */
+  console.log('\n[K] documents tab');
+  const zlib = require('zlib');
+  const crcT = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = b => { let c = 0xffffffff; for (const x of b) c = crcT[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]), c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([l, td, c]); };
+  const png = (w, h) => { const ih = Buffer.alloc(13); ih.writeUInt32BE(w, 0); ih.writeUInt32BE(h, 4); ih[8] = 8; ih[9] = 2; const row = Buffer.alloc(1 + w * 3, 0x80); row[0] = 0; return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ih), chunk('IDAT', zlib.deflateSync(Buffer.concat(Array(h).fill(row)))), chunk('IEND', Buffer.alloc(0))]); };
+  const CLSK = () => { window.__cls = 0; try { new PerformanceObserver(l => { for (const e of l.getEntries()) if (!e.hadRecentInput) window.__cls += e.value; }).observe({ type: 'layout-shift', buffered: true }); } catch { } };
+  const addDoc = async (p, { scope, kind, title, file }) => {
+    await p.click('#dcAdd'); await p.waitForSelector('#dfForm'); if (scope) await p.click(`[data-sc=${scope}]`); if (kind) await p.click(`[data-k=${kind}]`);
+    if (title) await p.fill('#dfTitle', title); await p.setInputFiles('#dfFile', file); await p.waitForFunction(() => !document.getElementById('dfOk').disabled || document.getElementById('dfErr').textContent, null, { timeout: 8000 });
+  };
+  const seg = p => p.evaluate(() => [...document.querySelectorAll('#dcSeg button')].map(b => b.textContent.trim()));
+  const off = async (s, v) => { s.flags.offline = v; await s.ctx.setOffline(v); };
+  const png1 = { name: 'scan.png', mimeType: 'image/png', buffer: png(2400, 1000) };
+  const docTab = async p => { await p.click('[data-tab=docs]'); await p.waitForTimeout(900); };
+
+  /* K1-K2: signed out / guest sees the panel and no RPC is called */
+  s = await open(); p = s.p; await login(s, 'Nine'); await p.evaluate(() => { sess.set('tt.ph', null); renderDocs(); });
+  await docTab(p);
+  check('K1 signed out: "เข้าสู่ระบบด้วย PIN เพื่อดูเอกสาร" panel, no doc_* RPC', /เข้าสู่ระบบด้วย PIN เพื่อดูเอกสาร/.test(await p.innerText('#tab-docs')) && !s.rpc.some(r => r.fn.startsWith('doc_')));
+  await s.b.close();
+
+  /* K2-K: main flow */
+  s = await open({ init: CLSK }); p = s.p; await login(s, 'Nine');
+  await p.evaluate(() => { window.__cls = 0; });
+  await docTab(p);
+  const cls0 = await p.evaluate(() => window.__cls);
+  check('K2 tab opens with CLS <= 0.05', cls0 <= 0.05, String(cls0));
+  check('K3 segments with counts: ของฉัน (0) | ส่วนกลาง (0) and a friendly empty state', (await seg(p)).join('|') === 'ของฉัน (0)|ส่วนกลาง (0)' && /ยังไม่มีเอกสารของคุณ/.test(await p.innerText('#tab-docs')), (await seg(p)).join('|'));
+  await addDoc(p, { file: png1 });
+  const pv = await p.innerText('#dfPrev');
+  check('K4 image is downscaled client-side to <= 1800 px (2400x1000 -> 1800x750) and previewed', /1800×750/.test(pv) && await p.evaluate(() => !!document.querySelector('#dfPrev img')), pv);
+  await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open, null, { timeout: 8000 }); await p.waitForTimeout(500);
+  const put = s.rpc.find(r => r.fn === 'doc_put');
+  check('K5 uploaded as JPEG chunks (<= 300k chars each), personal scope, title auto-filled', !!put && put.a.p_mime === 'image/jpeg' && put.a.p_scope === 'person' && put.a.p_title === 'พาสปอร์ต' && put.a.p_chunks.every(c => c.length <= 300000) && put.a.p_chunks[0].startsWith('/9j/'), put && JSON.stringify({ m: put.a.p_mime, sc: put.a.p_scope, t: put.a.p_title }));
+  check('K6 new document appears in the list, counts update, lock note shown', (await seg(p)).join('|') === 'ของฉัน (1)|ส่วนกลาง (0)' && /เห็นเฉพาะคุณ/.test(await p.innerText('#tab-docs')) && await p.evaluate(() => document.querySelectorAll('.dcard[data-id]').length) === 1);
+  /* a PDF as a shared doc + a second personal image */
+  await addDoc(p, { scope: 'shared', kind: 'hotel', file: { name: 'voucher.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF') } });
+  await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open, null, { timeout: 8000 }); await p.waitForTimeout(500);
+  check('K7 shared document: segment switches to ส่วนกลาง (1), "ทุกคนในทริปเห็น"', (await seg(p)).join('|') === 'ของฉัน (1)|ส่วนกลาง (1)' && /ทุกคนในทริปเห็น/.test(await p.innerText('#tab-docs')), (await seg(p)).join('|'));
+  await p.click('[data-seg=me]'); await addDoc(p, { kind: 'ticket', file: { name: 'b.png', mimeType: 'image/png', buffer: png(300, 200) } });
+  await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open, null, { timeout: 8000 }); await p.waitForTimeout(500);
+  check('K8 two personal docs listed', (await seg(p))[0] === 'ของฉัน (2)');
+  /* lazy thumbnail: reserved box, picture arrives without moving the card */
+  const th = await p.evaluate(async () => { const c = document.querySelector('.dcard[data-id]'), t = c.querySelector('.dthumb'); const h0 = c.getBoundingClientRect().height; await new Promise(r => setTimeout(r, 800)); return { img: !!t.querySelector('img'), h0, h1: c.getBoundingClientRect().height, box: t.getBoundingClientRect().height }; });
+  check('K9 thumbnail loads lazily into a fixed 84 px box (card height unchanged)', th.img && th.box === 84 && th.h0 === th.h1, JSON.stringify(th));
+  /* viewer */
+  await p.click('[data-show]'); await p.waitForSelector('#dvImg', { timeout: 5000 });
+  const v0 = await p.evaluate(() => ({ open: dv.open, title: document.getElementById('dvTitle').textContent, owner: document.getElementById('dvOwner').textContent, bg: getComputedStyle(document.getElementById('docOv')).backgroundColor, lock: document.documentElement.classList.contains('noscroll'), i: dv.i, n: dv.list.length }));
+  check('K10 viewer: full-screen white, owner + title, page scroll locked', v0.open && v0.bg === 'rgb(255, 255, 255)' && v0.title && v0.owner === 'Nine' && v0.lock && v0.n === 2, JSON.stringify(v0));
+  const box = await p.evaluate(() => { const r = document.getElementById('dvStage').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  await p.touchscreen.tap(box.x, box.y); await p.waitForTimeout(80); await p.touchscreen.tap(box.x, box.y); await p.waitForTimeout(150);
+  const z1 = await p.evaluate(() => dv.s); await p.touchscreen.tap(box.x, box.y); await p.waitForTimeout(80); await p.touchscreen.tap(box.x, box.y); await p.waitForTimeout(150);
+  check('K11 double-tap zooms in (2.5x) and back out (1x)', z1 > 2 && (await p.evaluate(() => dv.s)) === 1, String(z1));
+  await p.evaluate(() => { const st = document.getElementById('dvStage'), r = st.getBoundingClientRect(), mk = (id, x, y, t) => st.dispatchEvent(new PointerEvent(t, { pointerId: id, clientX: x, clientY: y, bubbles: true, isPrimary: id === 1 })); const cx = r.x + r.width / 2, cy = r.y + r.height / 2; mk(1, cx - 40, cy, 'pointerdown'); mk(2, cx + 40, cy, 'pointerdown'); mk(2, cx + 100, cy, 'pointermove'); mk(2, cx + 100, cy, 'pointerup'); mk(1, cx - 40, cy, 'pointerup'); });
+  check('K12 pinch gesture changes zoom (pointer events, no library)', (await p.evaluate(() => dv.s)) > 1.5);
+  await p.click('#dvRot'); await p.waitForTimeout(100);
+  check('K13 rotate button turns the image 90 degrees', (await p.evaluate(() => dv.r)) === 90 && await p.evaluate(() => /rotate\(90deg\)/.test(document.getElementById('dvImg').style.transform)));
+  const i0 = await p.evaluate(() => dv.i); await p.click('#dvNext'); await p.waitForTimeout(500);
+  const i1 = await p.evaluate(() => ({ i: dv.i, r: dv.r, s: dv.s })); await p.keyboard.press('ArrowLeft'); await p.waitForTimeout(400);
+  check('K14 next / arrow-key prev move within the group and reset zoom + rotation', i1.i === i0 + 1 && i1.r === 0 && i1.s === 1 && (await p.evaluate(() => dv.i)) === i0, JSON.stringify({ i0, i1 }));
+  check('K15 wake lock hint shown when the browser has no Wake Lock (headless)', await p.evaluate(() => !!navigator.wakeLock) || await p.evaluate(() => !document.getElementById('dvHint').hidden));
+  await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+  check('K16 Esc closes the viewer and unlocks page scroll', await p.evaluate(() => !dv.open && document.getElementById('docOv').hidden && !document.documentElement.classList.contains('noscroll')));
+  await p.click('[data-show]'); await p.waitForSelector('#dvImg'); await p.goBack(); await p.waitForTimeout(300);
+  check('K17 browser Back closes the viewer', await p.evaluate(() => !dv.open));
+  /* PDF viewer */
+  await p.click('[data-seg=shared]'); await p.click('[data-show]'); await p.waitForSelector('#dvPdf', { timeout: 5000 });
+  await p.evaluate(() => { window.__op = null; window.open = u => { window.__op = u; }; }); await p.click('#dvPdf'); const pu = await p.evaluate(() => window.__op);
+  check('K18 PDF: "เปิด PDF" opens the blob in a new tab', /^blob:/.test(pu || ''), pu);
+  await p.keyboard.press('Escape'); await p.waitForTimeout(300); await p.click('[data-seg=me]'); await p.waitForTimeout(200);
+  /* share / download */
+  await p.evaluate(() => { window.__sh = null; navigator.canShare = () => true; navigator.share = async d => { window.__sh = { n: d.files[0].name, t: d.files[0].type }; }; });
+  await p.click('[data-dl]'); await p.waitForTimeout(600);
+  const sh = await p.evaluate(() => window.__sh);
+  check('K19 share: Web Share API gets the file (sanitised title + .jpg)', !!sh && /^พาสปอร์ต\.jpg$/.test(sh.n) && sh.t === 'image/jpeg', JSON.stringify(sh));
+  await p.evaluate(() => { navigator.canShare = undefined; navigator.share = undefined; });
+  await p.evaluate(() => { window.__dn = null; const o = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () { window.__dn = this.download; return o.call(this); }; });
+  const dlp = p.waitForEvent('download', { timeout: 4000 }).catch(() => null); await p.click('[data-dl]'); const dlo = await dlp, dn = await p.evaluate(() => window.__dn);
+  check('K20 no share support: falls back to a file download (<a download="พาสปอร์ต.jpg">)', !!dlo && dn === 'พาสปอร์ต.jpg', dn);
+  /* rename / delete / menu */
+  await p.click('[data-more]'); await p.waitForSelector('[data-a=ren]'); await p.click('[data-a=ren]'); await p.fill('#rnT', 'Passport A'); await p.click('#rnOk'); await p.waitForTimeout(700);
+  check('K21 rename works', await p.evaluate(() => (dc.list || []).some(d => d.title === 'Passport A')));
+  await p.click('[data-more]'); await p.click('[data-a=del]'); await p.waitForSelector('#dlOk'); const nBefore = s.docs.length; await p.click('#dlOk'); await p.waitForTimeout(700);
+  check('K22 delete asks for confirmation, then removes the document', s.docs.length === nBefore - 1 && /\(1\)/.test((await seg(p))[0]), (await seg(p))[0]);
+  /* offline */
+  await off(s, true);
+  await p.evaluate(() => { Object.values(dc.urls).forEach(u => URL.revokeObjectURL(u)); dc.urls = {}; dc.list = null; dc.status = 'idle'; dc.cached = new Set(); renderDocs(); }); await p.waitForTimeout(1200);
+  check('K23 offline: list comes from cached metadata and an "ออฟไลน์" chip shows', await p.evaluate(() => !!document.getElementById('dcOff') && document.querySelectorAll('.dcard[data-id]').length >= 1));
+  await p.click('[data-show]'); await p.waitForSelector('#dvImg', { timeout: 5000 }).catch(() => { });
+  check('K24 offline: a document opened before opens from IndexedDB', await p.evaluate(() => dv.open && !!document.getElementById('dvImg') && /^blob:/.test(document.getElementById('dvImg').src)), await p.evaluate(() => document.getElementById('dvStage') && document.getElementById('dvStage').innerText));
+  await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+  /* upload while offline -> clear Thai error */
+  await addDoc(p, { file: png1 }); await p.click('#dfOk'); await p.waitForTimeout(800);
+  check('K25 upload offline: clear message, button usable again', /ออฟไลน์/.test(await p.innerText('#dfErr')) && await p.evaluate(() => !document.getElementById('dfOk').disabled));
+  await p.click('#dfX'); await off(s, false);
+  /* rejections */
+  await addDoc(p, { file: { name: 'a.txt', mimeType: 'text/plain', buffer: Buffer.from('hello') } });
+  check('K26 wrong type is refused with a Thai message', /ชนิดไฟล์ไม่รองรับ/.test(await p.innerText('#dfErr')) && await p.evaluate(() => document.getElementById('dfOk').disabled));
+  await p.setInputFiles('#dfFile', { name: 'big.pdf', mimeType: 'application/pdf', buffer: Buffer.alloc(4.5 * 1024 * 1024, 65) }); await p.waitForTimeout(500);
+  check('K27 PDF over 4 MB is refused with a Thai message', /ใหญ่เกินไป/.test(await p.innerText('#dfErr')));
+  s.flags.forcePut = '-4'; await p.setInputFiles('#dfFile', png1); await p.waitForFunction(() => !document.getElementById('dfOk').disabled); await p.click('#dfOk'); await p.waitForTimeout(800);
+  check('K28 server refusal (-4 full) shows a clear message and nothing is added', /เซิร์ฟเวอร์ปฏิเสธ/.test(await p.innerText('#dfErr')) && /เต็ม/.test(await p.innerText('#dfErr')));
+  s.flags.forcePut = ''; await p.click('#dfX'); await p.waitForTimeout(200);
+  /* wipe on sign-out */
+  check('K29 cached files exist in IndexedDB before sign-out', (await p.evaluate(async () => (await idbKeys()).length)) > 0);
+  await p.click('#btnMe'); await p.waitForTimeout(500); await p.evaluate(() => dc.wiping);
+  const wp = await p.evaluate(async () => ({ keys: (await idbKeys()).length, list: dc.list, urls: Object.keys(dc.urls).length }));
+  check('K30 sign-out / user switch wipes every document cache (IndexedDB, memory, blob URLs)', wp.keys === 0 && wp.list === null && wp.urls === 0, JSON.stringify(wp));
+  /* privacy between two members */
+  await login(s, 'Mew'); await p.waitForTimeout(500); await p.click('[data-tab=docs]'); await p.waitForTimeout(1200);
+  const mine = await seg(p);
+  check('K31 another member sees none of the first member\'s personal documents (only shared)', mine.join('|') === 'ของฉัน (0)|ส่วนกลาง (1)', mine.join('|'));
+  const pid = s.docs.find(d => d.scope === 'person').id, sid = s.docs.find(d => d.scope === 'shared').id;
+  const px = await p.evaluate(async ([a, b]) => ({ get: await sbRpc('doc_get', { p_name: me, p_hash: myHash(), p_id: a }), del: await sbRpc('doc_delete', { p_name: me, p_hash: myHash(), p_id: a }), ren: await sbRpc('doc_rename', { p_name: me, p_hash: myHash(), p_id: b, p_title: 'x' }) }), [pid, sid]);
+  check('K32 server mock refuses get/delete of others\' personal docs and rename of others\' shared docs', px.get === null && px.del === 0 && px.ren === 0, JSON.stringify(px));
+  await p.click('[data-seg=shared]'); await p.click('[data-more]'); await p.waitForSelector('[data-a=save]');
+  check('K33 non-creator sees no rename/delete on a shared document', await p.evaluate(() => !document.querySelector('[data-a=del]') && !document.querySelector('[data-a=ren]'))); await p.keyboard.press('Escape');
+  /* stale PIN -> clean sign-out; transient errors -> no sign-out */
+  s.flags.nullDocs = true; await p.evaluate(() => docsRefresh(true)); await p.waitForTimeout(1500);
+  check('K34 doc_list null for a signed-in member signs out cleanly with the Thai message', await p.evaluate(() => !me && !document.getElementById('login').hidden && /PIN ของคุณใช้ไม่ได้แล้ว/.test(document.getElementById('toast').textContent)));
+  await s.b.close();
+  s = await open(); p = s.p; await login(s, 'Nine'); await off(s, true); await docTab(p);
+  check('K35 network error with nothing cached: inline retry, still signed in', await p.evaluate(() => !!me && !!document.getElementById('dcRetry') && !document.getElementById('app').hidden));
+  await off(s, false); await p.click('#dcRetry'); await p.waitForTimeout(1500);
+  check('K36 retry succeeds once the network is back', await p.evaluate(() => !!document.getElementById('dcSeg')));
+  await s.b.close();
+  /* SQL not applied */
+  s = await open(); p = s.p; s.flags.noDocsSql = true; await login(s, 'Nine'); await docTab(p);
+  check('K37 SQL not applied: friendly "ยังไม่เปิดใช้งาน" message, no raw error, other tabs fine', /ฟีเจอร์เอกสารยังไม่เปิดใช้งาน — ผู้ดูแลต้องรัน docs\/supabase_docs\.sql/.test(await p.innerText('#tab-docs')) && !/Could not find/.test(await p.innerText('#tab-docs')) && await p.evaluate(() => document.getElementById('error').hidden));
+  await p.click('[data-tab=money]'); await p.waitForTimeout(300);
+  check('K38 other tabs still work when docs are not enabled', await p.evaluate(() => !document.getElementById('tab-money').hidden && document.getElementById('tab-money').innerText.length > 20));
+  await s.b.close();
+  /* quick info + taxi screen */
+  s = await open(); p = s.p; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300); await docTab(p);
+  check('K39 info card hidden when there is no stay / Info data', await p.evaluate(() => !document.getElementById('infoCard')));
+  s.trips.macau.Stay = [['Key', 'Value'], ['name', 'Test Hotel'], ['address', '1 Test Road, Sample City'], ['lat', '22.19'], ['lng', '113.54']]; s.trips.macau.Info = [['Key', 'Value'], ['Police', '999'], ['Wi-Fi', 'guest1234']];
+  await p.evaluate(() => load()); await p.waitForTimeout(2000);
+  const ic = await p.evaluate(() => { const c = document.getElementById('infoCard'); return c && { t: c.innerText, open: !document.getElementById('infBody').hidden, copies: c.querySelectorAll('[data-icp]').length, nav: !!c.querySelector('a[href*="google.com/maps"]'), addr: parseFloat(getComputedStyle(c.querySelector('.inf-addr')).fontSize) }; });
+  check('K40 info card: stay name + address (large), copy / navigate / taxi, Info rows with copy buttons, open by default', ic && /Test Hotel/.test(ic.t) && /1 Test Road/.test(ic.t) && /999/.test(ic.t) && ic.open && ic.copies === 2 && ic.nav && ic.addr >= 16 && /โชว์ให้คนขับแท็กซี่/.test(ic.t), JSON.stringify(ic));
+  await p.click('#infTgl'); check('K41 info card collapses', await p.evaluate(() => document.getElementById('infBody').hidden)); await p.click('#infTgl');
+  await p.click('#infTaxi'); await p.waitForTimeout(300);
+  const tx = await p.evaluate(() => ({ open: dv.open, t: document.getElementById('docOv').innerText, fs: parseFloat(getComputedStyle(document.querySelector('.tx-a')).fontSize) }));
+  check('K42 taxi screen: full-screen big-text address', tx.open && /Test Hotel/.test(tx.t) && /1 Test Road/.test(tx.t) && tx.fs >= 24, JSON.stringify(tx)); await p.keyboard.press('Escape');
+  await s.b.close();
+  /* layouts */
+  for (const [w, h] of [[360, 640], [390, 844], [430, 932]]) {
+    s = await open({ w, h, init: CLSK }); p = s.p; await login(s, 'Nine'); await docTab(p);
+    for (const f of [png1, { name: 'c.png', mimeType: 'image/png', buffer: png(200, 100) }]) { await addDoc(p, { file: f, title: 'เอกสารที่มีชื่อยาวมากๆ สำหรับทดสอบการตัดบรรทัดในมือถือ ' + w }); await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open); await p.waitForTimeout(300); }
+    await p.waitForTimeout(600);
+    const L = await p.evaluate(() => { const nav = document.querySelector('nav').getBoundingClientRect(), cs = [...document.querySelectorAll('.dcard[data-id]')]; window.scrollTo(0, document.body.scrollHeight); const last = cs[cs.length - 1].getBoundingClientRect(); return { over: document.documentElement.scrollWidth - innerWidth, n: cs.length, under: last.bottom > nav.top + 1 ? last.bottom - nav.top : 0, cardOver: cs.some(c => c.scrollWidth > c.clientWidth + 1), btnH: Math.min(...[...document.querySelectorAll('.dact .btn')].map(b => b.getBoundingClientRect().height)), cls: window.__cls }; });
+    check(`K43 ${w}x${h}: no horizontal scroll, 44px+ buttons, nothing under the nav`, L.over <= 1 && L.n === 2 && !L.cardOver && L.btnH >= 44 && L.under <= 1, JSON.stringify(L));
+    await s.b.close();
+  }
+
+
   finish();
 })();

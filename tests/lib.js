@@ -42,33 +42,65 @@ function finish() {
   process.exit(state.fails.length ? 1 : 0);
 }
 
-/* opts: w,h, clock(ISO), active (saved trip id), editCode, goodHash, stepsPerDay, pinned (names that already have a PIN) */
+/* In-memory twin of docs/supabase_docs.sql (same rules: owner-only personal docs, creator-only delete, MIME/size/count/title limits). SYNTHETIC data only. */
+function mockDocs(fn, a, docs, flags) {
+  if (flags.noDocsSql) return { status: 404, body: { message: `Could not find the function public.${fn} in the schema cache` } };
+  const me = String(a.p_name || '').toLowerCase(), ok = !!a.p_hash && a.p_hash !== 'bad' && !flags.nullDocs, vis = d => d.scope === 'shared' || d.owner === me, meta = ({ chunkData, ...m }) => m;
+  const mine = d => d.created_by === me && vis(d);
+  if (fn === 'doc_list') return { status: 200, body: ok ? docs.filter(vis).map(meta) : null };
+  if (fn === 'doc_get') { const d = docs.find(x => x.id === a.p_id && vis(x)); return { status: 200, body: ok && d ? { id: d.id, scope: d.scope, owner: d.owner, title: d.title, kind: d.kind, mime: d.mime, note: d.note, chunks: d.chunkData } : null }; }
+  if (fn === 'doc_put') {
+    if (flags.forcePut) return { status: 200, body: flags.forcePut };
+    if (!ok) return { status: 200, body: '-1' };
+    if (!['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(a.p_mime)) return { status: 200, body: '-2' };
+    const t = String(a.p_title || '').trim(), tot = (a.p_chunks || []).reduce((n, c) => n + c.length, 0);
+    if (!['person', 'shared'].includes(a.p_scope) || !t || t.length > 80 || !(a.p_chunks || []).length) return { status: 200, body: '-5' };
+    if (tot > 6e6) return { status: 200, body: '-3' };
+    if (docs.filter(d => a.p_scope === 'person' ? d.scope === 'person' && d.owner === me : d.scope === 'shared').length >= (a.p_scope === 'person' ? 40 : 60)) return { status: 200, body: '-4' };
+    docs.seq = (docs.seq || 0) + 1; const nid = '00000000-0000-4000-8000-' + String(docs.seq).padStart(12, '0');
+    docs.push({ id: nid, scope: a.p_scope, owner: a.p_scope === 'person' ? me : '', trip: a.p_trip || '', title: t, kind: a.p_kind || 'other', mime: a.p_mime, size_bytes: Math.floor(tot * 3 / 4), note: a.p_note || '', created_by: me, created_at: new Date().toISOString(), chunks: a.p_chunks.length, chunkData: a.p_chunks });
+    return { status: 200, body: nid };
+  }
+  if (!ok) return { status: 200, body: -1 };
+  const d = docs.find(x => x.id === a.p_id && mine(x));
+  if (fn === 'doc_rename') { const t = String(a.p_title || '').trim(); if (!t || t.length > 80) return { status: 200, body: -5 }; if (d) d.title = t; return { status: 200, body: d ? 1 : 0 }; }
+  if (fn === 'doc_delete') { if (d) docs.splice(docs.indexOf(d), 1); return { status: 200, body: d ? 1 : 0 }; }
+  return { status: 404, body: { message: 'unknown ' + fn } };
+}
+
+/* opts: w,h, clock(ISO), active (saved trip id), editCode, goodHash, stepsPerDay, pinned (names that already have a PIN), init (function run in the page before any script), reducedMotion */
 async function open(opts = {}) {
-  const b = await chromium.launch(), ctx = await b.newContext({ viewport: { width: opts.w || 390, height: opts.h || 844 }, hasTouch: true, isMobile: true });
-  const rpc = [], trips = Object.fromEntries(Object.keys(FAKE).map(k => [k, fakeTrip(k, opts.stepsPerDay || 3)]));
+  const b = await chromium.launch(), ctx = await b.newContext({ viewport: { width: opts.w || 390, height: opts.h || 844 }, hasTouch: true, isMobile: true, reducedMotion: opts.reducedMotion || 'no-preference' });
+  const rpc = [], docs = [], flags = { nullPriv: false, err500: false, delayMs: 0, noDocsSql: false, nullDocs: false, offline: false }, trips = Object.fromEntries(Object.keys(FAKE).map(k => [k, fakeTrip(k, opts.stepsPerDay || 3)]));
   await ctx.route(`${SB}/rest/v1/rpc/*`, async r => {
+    if (flags.offline) return r.abort('internetdisconnected');
     const req = r.request(), HH = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
     if (req.method() === 'OPTIONS') return r.fulfill({ status: 204, headers: HH });
     const fn = req.url().split('/rpc/')[1], a = JSON.parse(req.postData() || '{}'); rpc.push({ fn, a });
     let body = null, status = 200;
+    if (flags.delayMs && fn === 'get_private') await new Promise(x => setTimeout(x, flags.delayMs));
     if (fn === 'pin_status') body = opts.pinned || ['nine'];
     else if (fn === 'verify_pin') body = !opts.goodHash || a.p_hash === opts.goodHash;
     else if (fn === 'usage_stats') body = { db_bytes: 12e6, total_rows: 500, tables: { plan: 25, '(ทริปส่วนตัว)': 400 } };
     else if (fn === 'check_code') body = a.code === 'good';
-    else if (fn === 'get_private') body = a.p_hash ? ((trips[a.p_trip] || {})[a.p_tab] || []) : null;
+    else if (fn === 'get_private') { if (flags.err500) { status = 500; body = { message: 'boom' }; } else body = a.p_hash && !flags.nullPriv ? ((trips[a.p_trip] || {})[a.p_tab] || []) : null; }
+    else if (fn.startsWith('doc_')) { const r = mockDocs(fn, a, docs, flags); status = r.status; body = r.body; }
     else if (fn === 'private_write') body = 1;
     else if (['save_tab', 'append_row', 'upsert_row'].includes(fn)) { if (a.code !== 'good') { status = 400; body = { message: 'wrong code' }; } else body = 1; }
     r.fulfill({ status, contentType: 'application/json', headers: HH, body: JSON.stringify(body) });
   });
+  /* third-party geocoding / routing are not under test (and are rate limited): answer "nothing found" so runs are deterministic */
+  await ctx.route(/nominatim\.openstreetmap\.org|routing\.openstreetmap\.de/, r => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: r.request().url().includes('routing') ? '{"code":"NoRoute"}' : '[]' }));
   const p = await ctx.newPage(), reqs = [];
   p.on('pageerror', e => state.errors.push('pageerror: ' + e.message));
   p.on('console', m => { if (m.type() === 'error' && !/404|Failed to load resource/.test(m.text())) state.errors.push('console: ' + m.text().slice(0, 140)); });
   p.on('request', rq => { const u = rq.url(); if (u.includes('supabase.co')) reqs.push('SB'); else if (/docs\.google\.com\/spreadsheets/.test(u)) reqs.push('SHEET'); });
+  if (opts.init) await p.addInitScript(opts.init);
   if (opts.clock) await p.clock.install({ time: new Date(opts.clock) });
   await p.addInitScript(([c]) => { if (!localStorage.getItem('tt.cfg')) localStorage.setItem('tt.cfg', JSON.stringify(c)); },
     [{ v: 5, trips: [ALMATY], active: opts.active || ALMATY.id, lastMe: '', pendingPin: {}, googleClientId: '', editCode: opts.editCode || '' }]);
   await p.goto(BASE); if (opts.clock) await p.clock.runFor(4000); await p.waitForTimeout(4500);
-  return { b, p, rpc, reqs, trips };
+  return { b, ctx, p, rpc, reqs, trips, flags, docs };
 }
 async function login(s, who, pin = '1234') {
   await s.p.click(`#loginUsers [data-u=${who}]`); await s.p.waitForTimeout(250);
