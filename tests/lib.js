@@ -42,11 +42,11 @@ function finish() {
   process.exit(state.fails.length ? 1 : 0);
 }
 
-/* In-memory twin of docs/supabase_docs.sql (same rules: owner-only personal docs, creator-only delete, MIME/size/count/title limits). SYNTHETIC data only. */
+/* In-memory twin of docs/supabase_docs.sql (same rules: every member sees/gets every doc, p_owner = add for someone else, rename/delete by owner or uploader, MIME/size/count/title limits). SYNTHETIC data only. */
 function mockDocs(fn, a, docs, flags) {
   if (flags.noDocsSql) return { status: 404, body: { message: `Could not find the function public.${fn} in the schema cache` } };
-  const me = String(a.p_name || '').toLowerCase(), ok = !!a.p_hash && a.p_hash !== 'bad' && !flags.nullDocs, vis = d => d.scope === 'shared' || d.owner === me, meta = ({ chunkData, ...m }) => m;
-  const mine = d => d.created_by === me && vis(d);
+  const me = String(a.p_name || '').toLowerCase(), ok = !!a.p_hash && a.p_hash !== 'bad' && !flags.nullDocs, vis = () => true, meta = ({ chunkData, ...m }) => m;
+  const mine = d => d.created_by === me || (d.scope === 'person' && d.owner === me);
   if (fn === 'doc_list') return { status: 200, body: ok ? docs.filter(vis).map(meta) : null };
   if (fn === 'doc_get') { const d = docs.find(x => x.id === a.p_id && vis(x)); return { status: 200, body: ok && d ? { id: d.id, scope: d.scope, owner: d.owner, title: d.title, kind: d.kind, mime: d.mime, note: d.note, chunks: d.chunkData } : null }; }
   if (fn === 'doc_put') {
@@ -56,9 +56,11 @@ function mockDocs(fn, a, docs, flags) {
     const t = String(a.p_title || '').trim(), tot = (a.p_chunks || []).reduce((n, c) => n + c.length, 0);
     if (!['person', 'shared'].includes(a.p_scope) || !t || t.length > 80 || !(a.p_chunks || []).length) return { status: 200, body: '-5' };
     if (tot > 6e6) return { status: 200, body: '-3' };
-    if (docs.filter(d => a.p_scope === 'person' ? d.scope === 'person' && d.owner === me : d.scope === 'shared').length >= (a.p_scope === 'person' ? 40 : 60)) return { status: 200, body: '-4' };
+    const ow = a.p_scope === 'person' && a.p_owner ? String(a.p_owner).trim().toLowerCase() : me;
+    if (a.p_scope === 'person' && a.p_owner && flags.users && !flags.users.includes(ow)) return { status: 200, body: '-6' };
+    if (docs.filter(d => a.p_scope === 'person' ? d.scope === 'person' && d.owner === ow : d.scope === 'shared').length >= (a.p_scope === 'person' ? 40 : 60)) return { status: 200, body: '-4' };
     docs.seq = (docs.seq || 0) + 1; const nid = '00000000-0000-4000-8000-' + String(docs.seq).padStart(12, '0');
-    docs.push({ id: nid, scope: a.p_scope, owner: a.p_scope === 'person' ? me : '', trip: a.p_trip || '', title: t, kind: a.p_kind || 'other', mime: a.p_mime, size_bytes: Math.floor(tot * 3 / 4), note: a.p_note || '', created_by: me, created_at: new Date().toISOString(), chunks: a.p_chunks.length, chunkData: a.p_chunks });
+    docs.push({ id: nid, scope: a.p_scope, owner: a.p_scope === 'person' ? ow : '', trip: a.p_trip || '', title: t, kind: a.p_kind || 'other', mime: a.p_mime, size_bytes: Math.floor(tot * 3 / 4), note: a.p_note || '', created_by: me, created_at: new Date().toISOString(), chunks: a.p_chunks.length, chunkData: a.p_chunks });
     return { status: 200, body: nid };
   }
   if (!ok) return { status: 200, body: -1 };

@@ -327,8 +327,8 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]), c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([l, td, c]); };
   const png = (w, h) => { const ih = Buffer.alloc(13); ih.writeUInt32BE(w, 0); ih.writeUInt32BE(h, 4); ih[8] = 8; ih[9] = 2; const row = Buffer.alloc(1 + w * 3, 0x80); row[0] = 0; return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ih), chunk('IDAT', zlib.deflateSync(Buffer.concat(Array(h).fill(row)))), chunk('IEND', Buffer.alloc(0))]); };
   const CLSK = () => { window.__cls = 0; try { new PerformanceObserver(l => { for (const e of l.getEntries()) if (!e.hadRecentInput) window.__cls += e.value; }).observe({ type: 'layout-shift', buffered: true }); } catch { } };
-  const addDoc = async (p, { scope, kind, title, file }) => {
-    await p.click('#dcAdd'); await p.waitForSelector('#dfForm'); if (scope) await p.click(`[data-sc=${scope}]`); if (kind) await p.click(`[data-k=${kind}]`);
+  const addDoc = async (p, { scope, owner, kind, title, file }) => {
+    await p.click('#dcAdd'); await p.waitForSelector('#dfForm'); if (scope) await p.click(`[data-sc=${scope}]`); if (owner) await p.click(`[data-w="${owner}"]`); if (kind) await p.click(`[data-k=${kind}]`);
     if (title) await p.fill('#dfTitle', title); await p.setInputFiles('#dfFile', file); await p.waitForFunction(() => !document.getElementById('dfOk').disabled || document.getElementById('dfErr').textContent, null, { timeout: 8000 });
   };
   const seg = p => p.evaluate(() => [...document.querySelectorAll('#dcSeg button')].map(b => b.textContent.trim()));
@@ -348,18 +348,18 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await docTab(p);
   const cls0 = await p.evaluate(() => window.__cls);
   check('K2 tab opens with CLS <= 0.05', cls0 <= 0.05, String(cls0));
-  check('K3 segments with counts: ของฉัน (0) | ส่วนกลาง (0) and a friendly empty state', (await seg(p)).join('|') === 'ของฉัน (0)|ส่วนกลาง (0)' && /ยังไม่มีเอกสารของคุณ/.test(await p.innerText('#tab-docs')), (await seg(p)).join('|'));
+  check('K3 segments with counts: ของฉัน (0) | ส่วนกลาง (0) | เพื่อน (0) and a friendly empty state', (await seg(p)).join('|') === 'ของฉัน (0)|ส่วนกลาง (0)|เพื่อน (0)' && /ยังไม่มีเอกสารของคุณ/.test(await p.innerText('#tab-docs')), (await seg(p)).join('|'));
   await addDoc(p, { file: png1 });
   const pv = await p.innerText('#dfPrev');
   check('K4 image is downscaled client-side to <= 1800 px (2400x1000 -> 1800x750) and previewed', /1800×750/.test(pv) && await p.evaluate(() => !!document.querySelector('#dfPrev img')), pv);
   await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open, null, { timeout: 8000 }); await p.waitForTimeout(500);
   const put = s.rpc.find(r => r.fn === 'doc_put');
   check('K5 uploaded as JPEG chunks (<= 300k chars each), personal scope, title auto-filled', !!put && put.a.p_mime === 'image/jpeg' && put.a.p_scope === 'person' && put.a.p_title === 'พาสปอร์ต' && put.a.p_chunks.every(c => c.length <= 300000) && put.a.p_chunks[0].startsWith('/9j/'), put && JSON.stringify({ m: put.a.p_mime, sc: put.a.p_scope, t: put.a.p_title }));
-  check('K6 new document appears in the list, counts update, lock note shown', (await seg(p)).join('|') === 'ของฉัน (1)|ส่วนกลาง (0)' && /เห็นเฉพาะคุณ/.test(await p.innerText('#tab-docs')) && await p.evaluate(() => document.querySelectorAll('.dcard[data-id]').length) === 1);
+  check('K6 new document appears in the list, counts update, group-visible note shown', (await seg(p)).join('|') === 'ของฉัน (1)|ส่วนกลาง (0)|เพื่อน (0)' && /เห็นทั้งกลุ่ม/ && !/เห็นเฉพาะคุณ/.test(await p.innerText('#tab-docs')) && await p.evaluate(() => document.querySelectorAll('.dcard[data-id]').length) === 1);
   /* a PDF as a shared doc + a second personal image */
   await addDoc(p, { scope: 'shared', kind: 'hotel', file: { name: 'voucher.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF') } });
   await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open, null, { timeout: 8000 }); await p.waitForTimeout(500);
-  check('K7 shared document: segment switches to ส่วนกลาง (1), "ทุกคนในทริปเห็น"', (await seg(p)).join('|') === 'ของฉัน (1)|ส่วนกลาง (1)' && /ทุกคนในทริปเห็น/.test(await p.innerText('#tab-docs')), (await seg(p)).join('|'));
+  check('K7 shared document: segment switches to ส่วนกลาง (1), "ทุกคนในทริปเห็น"', (await seg(p)).join('|') === 'ของฉัน (1)|ส่วนกลาง (1)|เพื่อน (0)' && /ทุกคนในทริปเห็น/.test(await p.innerText('#tab-docs')), (await seg(p)).join('|'));
   await p.click('[data-seg=me]'); await addDoc(p, { kind: 'ticket', file: { name: 'b.png', mimeType: 'image/png', buffer: png(300, 200) } });
   await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open, null, { timeout: 8000 }); await p.waitForTimeout(500);
   check('K8 two personal docs listed', (await seg(p))[0] === 'ของฉัน (2)');
@@ -429,18 +429,64 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await p.click('#btnMe'); await p.waitForTimeout(500); await p.evaluate(() => dc.wiping);
   const wp = await p.evaluate(async () => ({ keys: (await idbKeys()).length, list: dc.list, urls: Object.keys(dc.urls).length }));
   check('K30 sign-out / user switch wipes every document cache (IndexedDB, memory, blob URLs)', wp.keys === 0 && wp.list === null && wp.urls === 0, JSON.stringify(wp));
-  /* privacy between two members */
+  /* group visibility: another member sees, opens and adds for others (policy: private group app) */
+  const unames = await p.evaluate(() => users().map(u => u.name)), third = unames.find(n => n !== 'Nine' && n !== 'Mew');
+  s.flags.users = unames.map(n => n.toLowerCase());
   await login(s, 'Mew'); await p.waitForTimeout(500); await p.click('[data-tab=docs]'); await p.waitForTimeout(1200);
   const mine = await seg(p);
-  check('K31 another member sees none of the first member\'s personal documents (only shared)', mine.join('|') === 'ของฉัน (0)|ส่วนกลาง (1)', mine.join('|'));
+  check('K31 another member sees the first member\'s personal docs under เพื่อน (1) and shared (1)', mine.join('|') === 'ของฉัน (0)|ส่วนกลาง (1)|เพื่อน (1)', mine.join('|'));
   const pid = s.docs.find(d => d.scope === 'person').id, sid = s.docs.find(d => d.scope === 'shared').id;
-  const px = await p.evaluate(async ([a, b]) => ({ get: await sbRpc('doc_get', { p_name: me, p_hash: myHash(), p_id: a }), del: await sbRpc('doc_delete', { p_name: me, p_hash: myHash(), p_id: a }), ren: await sbRpc('doc_rename', { p_name: me, p_hash: myHash(), p_id: b, p_title: 'x' }) }), [pid, sid]);
-  check('K32 server mock refuses get/delete of others\' personal docs and rename of others\' shared docs', px.get === null && px.del === 0 && px.ren === 0, JSON.stringify(px));
+  const px = await p.evaluate(async ([a, b]) => ({ get: !!(await sbRpc('doc_get', { p_name: me, p_hash: myHash(), p_id: a })), del: await sbRpc('doc_delete', { p_name: me, p_hash: myHash(), p_id: a }), ren: await sbRpc('doc_rename', { p_name: me, p_hash: myHash(), p_id: b, p_title: 'x' }) }), [pid, sid]);
+  check('K32 server mock: get works for others\' personal docs; delete/rename of docs you neither own nor uploaded return 0', px.get === true && px.del === 0 && px.ren === 0, JSON.stringify(px));
+  /* offline scope choice (before anything is opened/cached for this member) */
+  const gets = () => s.rpc.filter(r => r.fn === 'doc_get').length; let g0 = gets();
+  await p.click('#dcAll'); await p.waitForSelector('[data-p=all]');
+  check('K32a "ดาวน์โหลดทั้งหมด" asks for a scope: default (ของฉัน + ส่วนกลาง), เฉพาะของฉัน, ทั้งหมดในกลุ่ม', await p.evaluate(() => ['def', 'me', 'all', 'x'].every(k => !!document.querySelector(`[data-p=${k}]`)) && /ของฉัน \+ ส่วนกลาง/.test(document.getElementById('dlg').innerText)));
+  await p.click('[data-p=me]'); await p.waitForTimeout(800); const g1 = gets();
+  await p.click('#dcAll'); await p.click('[data-p=def]'); await p.waitForTimeout(1200); const g2 = gets();
+  await p.click('#dcAll'); await p.click('[data-p=all]'); await p.waitForTimeout(1200); const g3 = gets();
+  check('K32b scope choice downloads only what was chosen (mine: 0 files, default: +shared 1, all: +friends 1)', g1 - g0 === 0 && g2 - g1 === 1 && g3 - g2 === 1, [g0, g1, g2, g3].join(','));
+  await p.click('[data-seg=friends]'); await p.waitForTimeout(500);
+  const fg = await p.evaluate(() => ({ grp: document.querySelectorAll('.dgh').length, hdr: document.querySelector('.dgh').innerText, av: !!document.querySelector('.dgh .avatar'), cards: document.querySelectorAll('.dcard[data-id]').length, txt: document.getElementById('tab-docs').innerText }));
+  check('K33 เพื่อน segment: one group per member (avatar + name + count), single group opens by itself, card says "ของ Nine"', fg.grp === 1 && /Nine/.test(fg.hdr) && /1 รายการ/.test(fg.hdr) && fg.av && fg.cards === 1 && /ของ Nine/.test(fg.txt), JSON.stringify(fg));
+  await p.click('[data-show]'); await p.waitForSelector('#dvImg', { timeout: 5000 });
+  check('K33a viewer works on another member\'s doc and names the owner at the top', await p.evaluate(() => dv.open && document.getElementById('dvOwner').textContent === 'Nine' && !!document.getElementById('dvImg')));
+  await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+  await p.click('[data-more]'); await p.waitForSelector('[data-a=save]');
+  check('K33b non-owner non-uploader: menu has save but NO rename/delete (hidden, not disabled)', await p.evaluate(() => !document.querySelector('[data-a=del]') && !document.querySelector('[data-a=ren]'))); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
   await p.click('[data-seg=shared]'); await p.click('[data-more]'); await p.waitForSelector('[data-a=save]');
-  check('K33 non-creator sees no rename/delete on a shared document', await p.evaluate(() => !document.querySelector('[data-a=del]') && !document.querySelector('[data-a=ren]'))); await p.keyboard.press('Escape');
+  check('K33c non-creator sees no rename/delete on a shared document', await p.evaluate(() => !document.querySelector('[data-a=del]') && !document.querySelector('[data-a=ren]'))); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  /* add for someone else */
+  await p.click('[data-seg=friends]'); await addDoc(p, { scope: 'other', owner: 'Nine', title: 'For Nine', file: { name: 'o.png', mimeType: 'image/png', buffer: png(300, 200) } });
+  const wp0 = await p.evaluate(() => ({ who: !document.getElementById('dfWho').hidden, n: document.querySelectorAll('#dfWho [data-w]').length, names: [...document.querySelectorAll('#dfWho [data-w]')].map(b => b.dataset.w), av: document.querySelectorAll('#dfWho .avatar').length }));
+  check('K34 add sheet: third chip "ของคนอื่น" shows a member picker with every member except me', wp0.who && wp0.n === unames.length - 1 && !wp0.names.includes('Mew') && wp0.av === wp0.n, JSON.stringify(wp0));
+  await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open, null, { timeout: 8000 }); await p.waitForTimeout(500);
+  const pu2 = s.rpc.filter(r => r.fn === 'doc_put').pop(), nd = s.docs.find(d => d.title === 'For Nine');
+  check('K35 saved with p_owner, owner=nine, created_by=mew, scope person; toast "เพิ่มเอกสารให้ Nine แล้ว"; shows under Nine in เพื่อน', pu2.a.p_owner === 'Nine' && pu2.a.p_scope === 'person' && nd && nd.owner === 'nine' && nd.created_by === 'mew' && /เพิ่มเอกสารให้ Nine แล้ว/.test(await p.innerText('#toast')) && (await seg(p))[2] === 'เพื่อน (2)' && /For Nine/.test(await p.innerText('#tab-docs')) && /เพิ่มโดย Mew/.test(await p.innerText('#tab-docs')), JSON.stringify(pu2.a.p_owner) + JSON.stringify(nd));
+  await p.click('.dcard[data-id]:has-text("For Nine") [data-more]'); await p.waitForSelector('[data-a=save]');
+  check('K36 the uploader (Mew) sees rename + delete on a doc she added for Nine', await p.evaluate(() => !!document.querySelector('[data-a=del]') && !!document.querySelector('[data-a=ren]'))); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  /* a second friend -> two collapsed/expanded groups, toggle keeps layout stable */
+  if (third) {
+    await addDoc(p, { scope: 'other', owner: third, title: 'For third', file: { name: 'o2.png', mimeType: 'image/png', buffer: png(300, 200) } }); await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open, null, { timeout: 8000 }); await p.waitForTimeout(500);
+    const g2x = await p.evaluate(() => [...document.querySelectorAll('.dgh')].map(b => ({ n: b.querySelector('b').textContent, open: b.getAttribute('aria-expanded') })));
+    await p.click('.dgh >> nth=0'); await p.waitForTimeout(200);
+    const g2y = await p.evaluate(() => ({ ex: [...document.querySelectorAll('.dgh')].map(b => b.getAttribute('aria-expanded')), cards: document.querySelectorAll('.dcard[data-id]').length }));
+    await p.click('.dgh >> nth=0'); await p.waitForTimeout(200);
+    check('K37 two friends -> two groups (both open after adding); header collapses / expands its cards', g2x.length === 2 && g2x.every(x => x.open === 'true') && g2y.ex[0] === 'false' && g2y.ex[1] === 'true' && g2y.cards < 3 && await p.evaluate(() => document.querySelectorAll('.dcard[data-id]').length) === 3, JSON.stringify([g2x, g2y]));
+  }
+  await p.click('#btnMe'); await p.waitForTimeout(500);
+  await login(s, 'Nine'); await p.waitForTimeout(500); await p.click('[data-tab=docs]'); await p.waitForTimeout(1200);
+  const nsg = await seg(p); await p.click('[data-seg=me]'); await p.waitForTimeout(300);
+  const forMe = await p.evaluate(() => { const c = [...document.querySelectorAll('.dcard[data-id]')].find(x => /For Nine/.test(x.innerText)); return c && { t: c.innerText, more: !!c.querySelector('[data-more]') }; });
+  check('K38 the owner (Nine) sees the doc Mew added: "เพิ่มโดย Mew" and "เห็นทั้งกลุ่ม"', nsg[0] === 'ของฉัน (2)' && forMe && /เพิ่มโดย Mew/.test(forMe.t) && /เห็นทั้งกลุ่ม/.test(forMe.t), nsg.join('|') + JSON.stringify(forMe));
+  await p.click('.dcard[data-id]:has-text("For Nine") [data-more]'); await p.waitForSelector('[data-a=ren]'); await p.click('[data-a=ren]'); await p.fill('#rnT', 'For Nine ok'); await p.click('#rnOk'); await p.waitForTimeout(600);
+  check('K39 the owner may rename a doc someone else uploaded for them', s.docs.some(d => d.title === 'For Nine ok'));
+  s.flags.users = ['nine']; await p.evaluate(() => { dc.seg = 'friends'; }); await addDoc(p, { scope: 'other', owner: unames.find(n => n !== 'Nine'), file: png1 }); await p.click('#dfOk'); await p.waitForTimeout(800);
+  check('K39a unknown owner (server -6) shows a clear Thai message', /ไม่พบสมาชิก/.test(await p.innerText('#dfErr'))); await p.click('#dfX'); await p.waitForTimeout(200); s.flags.users = null;
+  await p.click('#btnMe'); await p.waitForTimeout(500); await login(s, 'Mew'); await p.waitForTimeout(500); await p.click('[data-tab=docs]'); await p.waitForTimeout(1200);
   /* stale PIN -> clean sign-out; transient errors -> no sign-out */
   s.flags.nullDocs = true; await p.evaluate(() => docsRefresh(true)); await p.waitForTimeout(1500);
-  check('K34 doc_list null for a signed-in member signs out cleanly with the Thai message', await p.evaluate(() => !me && !document.getElementById('login').hidden && /PIN ของคุณใช้ไม่ได้แล้ว/.test(document.getElementById('toast').textContent)));
+  check('K40 doc_list null for a signed-in member signs out cleanly with the Thai message', await p.evaluate(() => !me && !document.getElementById('login').hidden && /PIN ของคุณใช้ไม่ได้แล้ว/.test(document.getElementById('toast').textContent)));
   await s.b.close();
   s = await open(); p = s.p; await login(s, 'Nine'); await off(s, true); await docTab(p);
   check('K35 network error with nothing cached: inline retry, still signed in', await p.evaluate(() => !!me && !!document.getElementById('dcRetry') && !document.getElementById('app').hidden));

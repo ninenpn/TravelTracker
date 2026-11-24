@@ -1704,7 +1704,7 @@ function bindNotif(el) {
 const DOC_KINDS = { passport: ['🛂', 'พาสปอร์ต/วีซ่า', 'พาสปอร์ต'], ticket: ['✈️', 'ตั๋ว/บอร์ดดิงพาส', 'ตั๋วเครื่องบิน'], hotel: ['🏨', 'ที่พัก', 'ใบจองที่พัก'], insurance: ['🛡', 'ประกัน', 'ประกันการเดินทาง'], other: ['📄', 'อื่นๆ', 'เอกสาร'] };
 const DOC_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'], DOC_MAX_B64 = 6e6, DOC_PDF_MAX = 4 * 1024 * 1024, DOC_CHUNK = 300000;
 const DOC_NOSQL = 'ฟีเจอร์เอกสารยังไม่เปิดใช้งาน — ผู้ดูแลต้องรัน docs/supabase_docs.sql';
-const dc = { list: null, seg: 'me', status: 'idle', offline: false, epoch: 0, urls: {}, cached: new Set(), t: 0, running: null, prefetch: '', up: false };
+const dc = { open: {}, list: null, seg: 'me', status: 'idle', offline: false, epoch: 0, urls: {}, cached: new Set(), t: 0, running: null, prefetch: '', up: false };
 const dv = { open: false, mode: '', list: [], i: 0, s: 1, x: 0, y: 0, r: 0, lock: null, d: null, pop: false };
 const docIcon = k => (DOC_KINDS[k] || DOC_KINDS.other)[0];
 const docDate = s => { try { return new Date(s).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; } };
@@ -1719,7 +1719,7 @@ const idbKeys = () => idbDo('readonly', s => s.getAllKeys()).catch(() => []);
 const dkey = () => String(me).toLowerCase();
 function docsWipe() {
   dc.epoch++; Object.values(dc.urls).forEach(u => { try { URL.revokeObjectURL(u); } catch { } });
-  dc.urls = {}; dc.list = null; dc.cached = new Set(); dc.status = 'idle'; dc.offline = false; dc.running = null; dc.seg = 'me';
+  dc.urls = {}; dc.list = null; dc.cached = new Set(); dc.status = 'idle'; dc.offline = false; dc.running = null; dc.seg = 'me'; dc.open = {};
   if (typeof dv !== 'undefined' && dv.open) closeViewer(true);
   const p = idbP; idbP = null;
   dc.wiping = (p ? p.then(d => d.close(), () => { }) : Promise.resolve()).then(() => new Promise(ok => { try { const r = indexedDB.deleteDatabase('tt-docs'); r.onsuccess = r.onerror = r.onblocked = () => ok(); } catch { ok(); } }));
@@ -1773,28 +1773,37 @@ function infoCard() {
   b += info.map((r, i) => `<div class="inf-row"><div><small>${esc(r.k)}</small><div class="inf-v">${esc(r.v)}</div></div><button class="btn sm" data-icp="${i}" aria-label="คัดลอก ${esc(r.k)}">คัดลอก</button></div>`).join('');
   return `<div class="card info" id="infoCard"><div class="row2"><h2>ข้อมูลด่วน</h2><button class="btn sm" id="infTgl" aria-expanded="${open}">${open ? 'ซ่อน' : 'แสดง'}</button></div><div id="infBody" ${open ? '' : 'hidden'}>${b}</div></div>`;
 }
+const ownerName = o => { const u = users().find(x => String(x.name).toLowerCase() === String(o || '').toLowerCase()); return u ? u.name : o; };
+const docCan = d => d.created_by === dkey() || (d.scope === 'person' && d.owner === dkey());          // owner or uploader may rename / delete
 function docCard(d) {
-  const mine = d.created_by === dkey(), u = dc.urls[d.id], img = d.mime !== 'application/pdf';
+  const u = dc.urls[d.id], img = d.mime !== 'application/pdf', own = d.scope === 'person' && d.owner === dkey(), by = d.created_by && (d.scope === 'shared' || d.created_by !== d.owner) ? ' · ' + (d.scope === 'shared' ? 'โดย ' : 'เพิ่มโดย ') + esc(ownerName(d.created_by)) : '';
   return `<div class="dcard" data-id="${esc(d.id)}"><div class="dthumb ${img ? '' : 'pdf'}" data-th="${esc(d.id)}">${u && img ? `<img src="${u}" alt="">` : docIcon(d.kind)}</div>
   <div class="dbody"><div class="dt"><b>${docIcon(d.kind)} ${esc(d.title)}</b><button class="dmore" data-more="${esc(d.id)}" aria-label="เมนูเอกสาร">⋯</button></div>
-  ${d.note ? `<small class="dnote">${esc(d.note)}</small>` : ''}<small>เพิ่ม ${esc(docDate(d.created_at))}${d.scope === 'shared' && d.created_by ? ' · โดย ' + esc(d.created_by) : ''}</small>
-  <small class="lock">${d.scope === 'shared' ? '👥 ทุกคนในทริปเห็น' : '🔒 เห็นเฉพาะคุณ'}${dc.cached.has(d.id) ? ' · 📥 ในเครื่อง' : ''}</small></div>
+  ${d.note ? `<small class="dnote">${esc(d.note)}</small>` : ''}<small>${d.scope === 'person' && !own ? 'ของ ' + esc(ownerName(d.owner)) + ' · ' : ''}เพิ่ม ${esc(docDate(d.created_at))}${by}</small>
+  <small class="lock">${d.scope === 'shared' ? '👥 ทุกคนในทริปเห็น' : own ? '👥 เห็นทั้งกลุ่ม' : '👤 เอกสารของ ' + esc(ownerName(d.owner))}${dc.cached.has(d.id) ? ' · 📥 ในเครื่อง' : ''}</small></div>
   <div class="dact"><button class="btn pri big" data-show="${esc(d.id)}">โชว์</button><button class="btn" data-dl="${esc(d.id)}">ดาวน์โหลด/แชร์</button></div></div>`;
 }
-const docsOf = seg => (dc.list || []).filter(d => seg === 'me' ? d.scope === 'person' : d.scope === 'shared');
+const friendIdx = o => { const i = users().findIndex(u => String(u.name).toLowerCase() === o); return i < 0 ? 999 : i; };
+const docsOf = seg => seg === 'friends' ? (dc.list || []).filter(d => d.scope === 'person' && d.owner !== dkey()).sort((a, b) => friendIdx(a.owner) - friendIdx(b.owner) || (a.owner < b.owner ? -1 : a.owner > b.owner ? 1 : 0))
+  : (dc.list || []).filter(d => seg === 'me' ? d.scope === 'person' && d.owner === dkey() : d.scope === 'shared');
+function friendGroups(fr) {          // friends' documents grouped under each member (collapsed unless only one member has documents)
+  const g = []; fr.forEach(d => { let x = g[g.length - 1]; if (!x || x.o !== d.owner) g.push(x = { o: d.owner, l: [] }); x.l.push(d); });
+  return g.map(x => { const nm = ownerName(x.o), open = dc.open[x.o] !== undefined ? dc.open[x.o] : g.length === 1;
+    return `<div class="dgrp"><button class="dgh" data-grp="${esc(x.o)}" aria-expanded="${open}">${avatar(nm, 'sm')}<b>${esc(nm)}</b><span class="mut">${x.l.length} รายการ</span><i>${open ? '▾' : '▸'}</i></button>${open ? x.l.map(docCard).join('') : ''}</div>`; }).join('');
+}
 function renderDocs(fromLoad) {
   const el = $('#tab-docs'); if (!el) return;
   let h = infoCard();
-  if (!me || !myHash()) h += '<div class="card dpanel"><div class="dp-i">🔐</div><h2>เข้าสู่ระบบด้วย PIN เพื่อดูเอกสาร</h2><div class="mut">เอกสารส่วนตัวเห็นเฉพาะคุณ และเปิดโดยไม่ต้องมีอินเทอร์เน็ตได้หลังบันทึกไว้ในเครื่อง</div><div class="btns" style="justify-content:center"><button class="btn pri" id="dcLogin">เข้าสู่ระบบ</button></div></div>';
+  if (!me || !myHash()) h += '<div class="card dpanel"><div class="dp-i">🔐</div><h2>เข้าสู่ระบบด้วย PIN เพื่อดูเอกสาร</h2><div class="mut">เอกสารเห็นได้ทั้งกลุ่ม (แอปส่วนตัว) และเปิดโดยไม่ต้องมีอินเทอร์เน็ตได้หลังบันทึกไว้ในเครื่อง</div><div class="btns" style="justify-content:center"><button class="btn pri" id="dcLogin">เข้าสู่ระบบ</button></div></div>';
   else if (dc.status === 'nosql') h += `<div class="card dpanel" id="dcNoSql"><div class="dp-i">🛠</div><h2>${esc(DOC_NOSQL)}</h2></div>`;
   else if (dc.status === 'error') h += '<div class="card dpanel"><div class="dp-i">📡</div><h2>โหลดเอกสารไม่ได้</h2><div class="mut">ตรวจอินเทอร์เน็ตแล้วลองใหม่ (ยังไม่ได้ออกจากระบบ)</div><div class="btns" style="justify-content:center"><button class="btn pri" id="dcRetry">ลองใหม่</button></div></div>';
   else {
-    const me_ = docsOf('me'), sh = docsOf('shared'), ready = dc.status === 'ok', cur = dc.seg === 'shared' ? sh : me_;
-    h += `<div class="dsegw"><div class="seg" id="dcSeg"><button data-seg="me" class="${dc.seg === 'me' ? 'on' : ''}">ของฉัน (${ready ? me_.length : '…'})</button><button data-seg="shared" class="${dc.seg === 'shared' ? 'on' : ''}">ส่วนกลาง (${ready ? sh.length : '…'})</button></div></div>`;
-    h += `<div class="dtools"><button class="btn pri" id="dcAdd">➕ เพิ่มเอกสาร</button><button class="btn" id="dcAll" ${ready && (me_.length + sh.length) ? '' : 'disabled'}>${esc(dc.prefetch || '📥 ดาวน์โหลดทั้งหมดไว้ใช้ออฟไลน์')}</button>${dc.offline ? '<span class="chip bad" id="dcOff">ออฟไลน์</span>' : ''}</div>`;
+    const me_ = docsOf('me'), sh = docsOf('shared'), fr = docsOf('friends'), ready = dc.status === 'ok', cur = dc.seg === 'shared' ? sh : dc.seg === 'friends' ? fr : me_;
+    h += `<div class="dsegw"><div class="seg" id="dcSeg"><button data-seg="me" class="${dc.seg === 'me' ? 'on' : ''}">ของฉัน (${ready ? me_.length : '…'})</button><button data-seg="shared" class="${dc.seg === 'shared' ? 'on' : ''}">ส่วนกลาง (${ready ? sh.length : '…'})</button><button data-seg="friends" class="${dc.seg === 'friends' ? 'on' : ''}">เพื่อน (${ready ? fr.length : '…'})</button></div></div>`;
+    h += `<div class="dtools"><button class="btn pri" id="dcAdd">➕ เพิ่มเอกสาร</button><button class="btn" id="dcAll" ${ready && (dc.list || []).length ? '' : 'disabled'}>${esc(dc.prefetch || '📥 ดาวน์โหลดทั้งหมดไว้ใช้ออฟไลน์')}</button>${dc.offline ? '<span class="chip bad" id="dcOff">ออฟไลน์</span>' : ''}</div>`;
     if (!ready) h += '<div class="dcard sk"></div><div class="dcard sk"></div><div class="dcard sk"></div>';
-    else if (!cur.length) h += dc.seg === 'shared' ? '<div class="card dpanel"><div class="dp-i">👥</div><h2>ยังไม่มีเอกสารส่วนกลาง</h2><div class="mut">ใส่ใบจองโรงแรม/ตั๋วกลุ่มที่ทุกคนต้องใช้ แล้วทุกคนจะเปิดได้ทันที</div></div>' : '<div class="card dpanel"><div class="dp-i">🛂</div><h2>ยังไม่มีเอกสารของคุณ</h2><div class="mut">เก็บพาสปอร์ต วีซ่า ตั๋ว ประกัน ไว้ที่นี่ แล้วกด “โชว์” ให้เจ้าหน้าที่ได้เลย — กด “เพิ่มเอกสาร” เพื่อเริ่ม</div></div>';
-    else h += cur.map(docCard).join('');
+    else if (!cur.length) h += dc.seg === 'friends' ? '<div class="card dpanel"><div class="dp-i">🧑‍🤝‍🧑</div><h2>เพื่อนยังไม่มีเอกสาร</h2><div class="mut">เอกสารของเพื่อนในกลุ่มจะแสดงที่นี่ — กด “เพิ่มเอกสาร” แล้วเลือก “ของคนอื่น” เพื่ออัปโหลดแทนเพื่อนได้</div></div>' : dc.seg === 'shared' ? '<div class="card dpanel"><div class="dp-i">👥</div><h2>ยังไม่มีเอกสารส่วนกลาง</h2><div class="mut">ใส่ใบจองโรงแรม/ตั๋วกลุ่มที่ทุกคนต้องใช้ แล้วทุกคนจะเปิดได้ทันที</div></div>' : '<div class="card dpanel"><div class="dp-i">🛂</div><h2>ยังไม่มีเอกสารของคุณ</h2><div class="mut">เก็บพาสปอร์ต วีซ่า ตั๋ว ประกัน ไว้ที่นี่ แล้วกด “โชว์” ให้เจ้าหน้าที่ได้เลย — กด “เพิ่มเอกสาร” เพื่อเริ่ม</div></div>';
+    else h += dc.seg === 'friends' ? friendGroups(cur) : cur.map(docCard).join('');
   }
   if (fromLoad && el.__sig === h) return; el.__sig = h; el.innerHTML = h; bindDocs(el);
   if (ui.tab === 'docs' && me && myHash() && dc.status === 'idle') docsRefresh();
@@ -1808,7 +1817,8 @@ function bindDocs(el) {
   $$('[data-icp]', el).forEach(b => b.onclick = () => copyText((data.info[+b.dataset.icp] || {}).v || '', 'คัดลอกแล้ว'));
   g('#dcLogin', () => $('#btnMe').click()); g('#dcRetry', () => { dc.status = 'idle'; renderDocs(); });
   $$('#dcSeg [data-seg]', el).forEach(b => b.onclick = () => { dc.seg = b.dataset.seg; renderDocs(); });
-  g('#dcAdd', addDocDialog); g('#dcAll', prefetchAll);
+  g('#dcAdd', addDocDialog); g('#dcAll', prefetchDialog);
+  $$('[data-grp]', el).forEach(b => b.onclick = () => { const o = b.dataset.grp, cur = dc.open[o] !== undefined ? dc.open[o] : docsOf('friends').every(d => d.owner === o); dc.open[o] = !cur; renderDocs(); });
   const byId = id => (dc.list || []).find(d => d.id === id);
   $$('[data-show]', el).forEach(b => b.onclick = () => openViewer({ mode: 'doc', id: b.dataset.show }));
   $$('[data-dl]', el).forEach(b => b.onclick = () => shareDoc(byId(b.dataset.dl)));
@@ -1821,8 +1831,13 @@ function bindDocs(el) {
     $$('.dthumb[data-th]', el).forEach(n => io.observe(n));
   }
 }
-async function prefetchAll() {
-  if (dc.prefetch) return; const ep = dc.epoch, all = dc.list || [], todo = all.filter(d => !dc.cached.has(d.id)); let n = 0;
+function prefetchDialog() {
+  if (dc.prefetch) return; const n = s => docsOf(s).length;
+  const dl = openDlg(`<h3>ดาวน์โหลดไว้ใช้ออฟไลน์</h3><div class="dmenu"><button class="btn pri block" data-p="def">ของฉัน + ส่วนกลาง (${n('me') + n('shared')})</button><button class="btn block" data-p="me">เฉพาะของฉัน (${n('me')})</button><button class="btn block" data-p="all">ทั้งหมดในกลุ่ม (${(dc.list || []).length})</button><button class="btn block" data-p="x">ยกเลิก</button></div>`);
+  $$('[data-p]', dl).forEach(b => b.onclick = () => { const k = b.dataset.p; dl.close(); if (k !== 'x') prefetchAll(k); });
+}
+async function prefetchAll(scope) {
+  if (dc.prefetch) return; const ep = dc.epoch, all = scope === 'all' ? (dc.list || []) : scope === 'me' ? docsOf('me') : [...docsOf('me'), ...docsOf('shared')], todo = all.filter(d => !dc.cached.has(d.id)); let n = 0;
   for (const d of todo) {
     dc.prefetch = `กำลังบันทึก ${++n}/${todo.length}…`; renderDocs();
     try { await docBlob(d); } catch (e) { if (ep === dc.epoch) { dc.prefetch = ''; renderDocs(); toast(docErrText(e), 3500); } return; }
@@ -1831,7 +1846,7 @@ async function prefetchAll() {
   dc.prefetch = ''; renderDocs(); toast(todo.length ? 'บันทึกเอกสารทั้งหมดไว้ในเครื่องแล้ว' : 'เอกสารทั้งหมดอยู่ในเครื่องแล้ว', 2500);
 }
 function docMenu(d) {
-  if (!d) return; const can = d.created_by === dkey();
+  if (!d) return; const can = docCan(d);
   const dl = openDlg(`<h3>${docIcon(d.kind)} ${esc(d.title)}</h3><div class="dmenu"><button class="btn block" data-a="save">📥 บันทึกไว้ในเครื่อง${dc.cached.has(d.id) ? ' (บันทึกแล้ว)' : ''}</button>${can ? '<button class="btn block" data-a="ren">✏️ เปลี่ยนชื่อ</button><button class="btn block danger" data-a="del">🗑 ลบ</button>' : ''}<button class="btn block" data-a="x">ปิด</button></div>`);
   $$('[data-a]', dl).forEach(b => b.onclick = async () => {
     const a = b.dataset.a; dl.close(); if (a === 'save') { try { await docBlob(d); renderDocs(); toast('บันทึกไว้ในเครื่องแล้ว'); } catch (e) { toast(docErrText(e), 3500); } }
@@ -1880,10 +1895,11 @@ function dcPut(args, onProg) {
   });
 }
 function addDocDialog() {
-  const f = { scope: dc.seg === 'shared' ? 'shared' : 'person', kind: 'passport', title: DOC_KINDS.passport[2], dirty: false, file: null, prep: null }, ep = dc.epoch;
+  const f = { scope: dc.seg === 'shared' ? 'shared' : dc.seg === 'friends' ? 'other' : 'person', owner: '', kind: 'passport', title: DOC_KINDS.passport[2], dirty: false, file: null, prep: null }, ep = dc.epoch;
   const dl = openDlg(`<form method="dialog" id="dfForm"><h3>เพิ่มเอกสาร</h3>
-    <div class="seg" id="dfScope"><button type="button" data-sc="person">ของฉัน</button><button type="button" data-sc="shared">ส่วนกลาง</button></div>
+    <div class="seg" id="dfScope"><button type="button" data-sc="person">ของฉัน</button><button type="button" data-sc="shared">ส่วนกลาง</button><button type="button" data-sc="other">ของคนอื่น</button></div>
     <small id="dfScopeNote" class="mut"></small>
+    <div class="chips reuse" id="dfWho" hidden>${users().filter(u => String(u.name).toLowerCase() !== dkey()).map(u => `<button type="button" class="tag" data-w="${esc(u.name)}">${avatar(u.name, 'sm')} ${esc(u.name)}</button>`).join('') || '<span class="mut">ยังไม่มีสมาชิกคนอื่น</span>'}</div>
     <div class="chips reuse" id="dfKinds">${Object.entries(DOC_KINDS).map(([k, v]) => `<button type="button" class="tag" data-k="${k}">${v[0]} ${v[1]}</button>`).join('')}</div>
     <input id="dfTitle" maxlength="80" placeholder="ชื่อเอกสาร"><input id="dfNote" maxlength="300" placeholder="โน้ต (ไม่บังคับ)" style="margin-top:8px">
     <div class="btns"><button type="button" class="btn" id="dfPick">📁 เลือกไฟล์</button><button type="button" class="btn" id="dfCamBtn">📷 ถ่ายรูป</button></div>
@@ -1894,10 +1910,12 @@ function addDocDialog() {
   const q = s => $(s, dl), err = m => { q('#dfErr').textContent = m || ''; };
   const sync = () => {
     $$('[data-sc]', dl).forEach(b => b.classList.toggle('on', b.dataset.sc === f.scope)); $$('[data-k]', dl).forEach(b => b.classList.toggle('sel', b.dataset.k === f.kind));
-    q('#dfScopeNote').textContent = f.scope === 'shared' ? '👥 ทุกคนในทริปที่ล็อกอินเห็นได้' : '🔒 เห็นเฉพาะคุณ'; if (!f.dirty) q('#dfTitle').value = f.title;
-    q('#dfOk').disabled = !f.prep || f.up;
+    q('#dfScopeNote').textContent = f.scope === 'shared' ? '👥 ทุกคนในทริปที่ล็อกอินเห็นได้' : f.scope === 'other' ? (f.owner ? '👤 เพิ่มให้ ' + f.owner + ' (ทุกคนในกลุ่มเห็นได้)' : '👤 เลือกคนที่จะเพิ่มเอกสารให้') : '👥 เห็นทั้งกลุ่ม';
+    q('#dfWho').hidden = f.scope !== 'other'; $$('[data-w]', dl).forEach(b => b.classList.toggle('sel', b.dataset.w === f.owner)); if (!f.dirty) q('#dfTitle').value = f.title;
+    q('#dfOk').disabled = !f.prep || f.up || (f.scope === 'other' && !f.owner);
   };
   $$('[data-sc]', dl).forEach(b => b.onclick = () => { if (f.up) return; f.scope = b.dataset.sc; sync(); });
+  $$('[data-w]', dl).forEach(b => b.onclick = () => { if (f.up) return; f.owner = b.dataset.w; sync(); });
   $$('[data-k]', dl).forEach(b => b.onclick = () => { if (f.up) return; f.kind = b.dataset.k; if (!f.dirty) f.title = DOC_KINDS[f.kind][2]; sync(); });
   q('#dfTitle').oninput = e => { f.dirty = true; f.title = e.target.value; };
   q('#dfPick').onclick = () => q('#dfFile').click(); q('#dfCamBtn').onclick = () => q('#dfCam').click(); q('#dfX').onclick = () => { if (!f.up) dl.close(); };
@@ -1919,10 +1937,10 @@ function addDocDialog() {
     try {
       const b64 = await blobB64(f.prep.blob); if (b64.length > DOC_MAX_B64) throw new Error('ไฟล์ใหญ่เกิน 6 MB');
       const chunks = []; for (let i = 0; i < b64.length; i += DOC_CHUNK) chunks.push(b64.slice(i, i + DOC_CHUNK));
-      const r = await dcPut({ p_name: me, p_hash: myHash(), p_scope: f.scope, p_trip: '', p_title: title, p_kind: f.kind, p_mime: f.prep.mime, p_note: q('#dfNote').value.trim(), p_chunks: chunks }, p => { q('#dfBar').style.width = Math.max(4, Math.round(p * 100)) + '%'; });
-      if (typeof r === 'string' && /^-\d$/.test(r)) throw Object.assign(new Error({ '-1': 'เข้าสู่ระบบใหม่อีกครั้ง — PIN ใช้ไม่ได้', '-2': 'ชนิดไฟล์ไม่รองรับ (เฉพาะ JPG/PNG/WebP/PDF)', '-3': 'ไฟล์ใหญ่เกิน 6 MB', '-4': 'เอกสารเต็มแล้ว (ส่วนตัว 40 / ส่วนกลาง 60) — ลบบางรายการก่อน', '-5': 'ข้อมูลไม่ถูกต้อง (ชื่อว่างหรือยาวเกิน 80 ตัวอักษร)' }[r] || 'เซิร์ฟเวอร์ปฏิเสธ'), { refused: true });
+      const r = await dcPut({ p_name: me, p_hash: myHash(), p_scope: f.scope === 'shared' ? 'shared' : 'person', p_owner: f.scope === 'other' ? f.owner : null, p_trip: '', p_title: title, p_kind: f.kind, p_mime: f.prep.mime, p_note: q('#dfNote').value.trim(), p_chunks: chunks }, p => { q('#dfBar').style.width = Math.max(4, Math.round(p * 100)) + '%'; });
+      if (typeof r === 'string' && /^-\d$/.test(r)) throw Object.assign(new Error({ '-1': 'เข้าสู่ระบบใหม่อีกครั้ง — PIN ใช้ไม่ได้', '-2': 'ชนิดไฟล์ไม่รองรับ (เฉพาะ JPG/PNG/WebP/PDF)', '-3': 'ไฟล์ใหญ่เกิน 6 MB', '-4': 'เอกสารเต็มแล้ว (ส่วนตัวคนละ 40 / ส่วนกลาง 60) — ลบบางรายการก่อน', '-5': 'ข้อมูลไม่ถูกต้อง (ชื่อว่างหรือยาวเกิน 80 ตัวอักษร)', '-6': 'ไม่พบสมาชิกคนนี้' }[r] || 'เซิร์ฟเวอร์ปฏิเสธ'), { refused: true });
       if (ep === dc.epoch && /^[0-9a-f-]{36}$/.test(r)) { await idbSet(`f:${dkey()}:${r}`, { blob: f.prep.blob, t: Date.now() }); }
-      f.up = false; dl.close(); dc.seg = f.scope === 'shared' ? 'shared' : 'me'; toast('เพิ่มเอกสารแล้ว'); await docsRefresh(true);
+      f.up = false; dl.close(); dc.seg = f.scope === 'shared' ? 'shared' : f.scope === 'other' ? 'friends' : 'me'; if (f.scope === 'other') dc.open[f.owner.toLowerCase()] = true; toast(f.scope === 'other' ? `เพิ่มเอกสารให้ ${f.owner} แล้ว` : 'เพิ่มเอกสารแล้ว'); await docsRefresh(true);
     } catch (x) {
       f.up = false; q('#dfProg').hidden = true; q('#dfOk').textContent = 'บันทึกเอกสาร';
       err(x.nosql ? DOC_NOSQL : docNetErr(x) ? 'ออฟไลน์ — เชื่อมต่ออินเทอร์เน็ตก่อนจึงจะเพิ่มเอกสารได้' : x.refused ? 'เซิร์ฟเวอร์ปฏิเสธ — ' + x.message : x.message); sync();
@@ -1957,7 +1975,7 @@ function openViewer(o) {
   if (dv.open) return; const ov = dvEl();
   dv.open = true; dv.mode = o.mode; dv.s = 1; dv.x = dv.y = 0; dv.r = 0; ov.hidden = false; document.documentElement.classList.add('noscroll'); history.pushState({ dov: 1 }, ''); dv.pop = false;
   if (o.mode === 'taxi') { const st = data.stay || {}; ov.innerHTML = `<div class="dov-bar"><div class="dov-t"><small>โชว์ให้คนขับแท็กซี่</small><b>กรุณาพาไปที่นี่</b></div><button class="ov-btn" id="dvClose" aria-label="ปิด">✕</button></div><div class="dov-stage taxi" id="dvStage"><div class="tx-n">${esc(st.name || '')}</div><div class="tx-a">${esc(st.address || '')}</div></div>`; $('#dvClose').onclick = () => closeViewer(); dvWake(); return; }
-  dv.list = docsOf(dc.seg === 'shared' ? 'shared' : 'me'); dv.i = Math.max(0, dv.list.findIndex(d => d.id === o.id));
+  dv.list = docsOf(dc.seg); dv.i = Math.max(0, dv.list.findIndex(d => d.id === o.id));
   ov.innerHTML = `<div class="dov-bar"><div class="dov-t"><small id="dvOwner"></small><b id="dvTitle"></b></div><button class="ov-btn" id="dvRot" aria-label="หมุน">⟳</button><button class="ov-btn" id="dvClose" aria-label="ปิด">✕</button></div>
     <div class="dov-stage" id="dvStage"><div class="dov-msg" id="dvMsg"></div></div>
     <div class="dov-foot"><div class="dov-hint" id="dvHint" hidden>เพิ่มความสว่าง/ปิดล็อกหน้าจออัตโนมัติ</div><div class="dov-nav"><button class="ov-btn" id="dvPrev" aria-label="ก่อนหน้า">‹</button><span id="dvCount"></span><button class="ov-btn" id="dvNext" aria-label="ถัดไป">›</button><button class="btn" id="dvShare">ดาวน์โหลด/แชร์</button></div></div>`;
@@ -1966,7 +1984,7 @@ function openViewer(o) {
 }
 async function dvShow() {
   const d = dv.list[dv.i], st = $('#dvStage'); if (!d || !st) return; const ep = dc.epoch, idx = dv.i;
-  $('#dvOwner').textContent = (d.scope === 'shared' ? 'ส่วนกลาง' : me); $('#dvTitle').textContent = d.title; $('#dvCount').textContent = `${dv.i + 1}/${dv.list.length}`;
+  $('#dvOwner').textContent = d.scope === 'shared' ? 'ส่วนกลาง' : ownerName(d.owner); $('#dvTitle').textContent = d.title; $('#dvCount').textContent = `${dv.i + 1}/${dv.list.length}`;
   $('#dvPrev').disabled = dv.i <= 0; $('#dvNext').disabled = dv.i >= dv.list.length - 1; dv.s = 1; dv.x = dv.y = 0; dv.r = 0;
   $$('#dvStage > :not(.dov-msg)').forEach(n => n.remove()); const msg = $('#dvMsg'); msg.textContent = 'กำลังโหลด…'; msg.hidden = false;
   try {

@@ -340,3 +340,5 @@ html.noscroll,html.noscroll body{overflow:hidden}
 .dov-nav{display:flex;align-items:center;gap:8px}.dov-nav span{flex:1;text-align:center;color:#555}.dov-nav .ov-btn[disabled]{opacity:.35}.dov-nav .btn{min-height:44px;background:#eef2ff;color:#111}
 
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+.dgrp{margin:8px 0}.dgh{display:flex;align-items:center;gap:8px;width:100%;min-height:48px;padding:6px 12px;background:var(--card);border-radius:14px;box-shadow:0 1px 4px #0001;text-align:left}.dgh b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dgh i{font-style:normal;color:var(--mut)}
+#dfScope button{padding:7px 2px;font-size:.8rem}#dfWho .tag{display:inline-flex;align-items:center;gap:4px}

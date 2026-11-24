@@ -59,14 +59,34 @@ eq  "doc_put unknown name => -1"   -1 "$(asanon "select public.doc_put('Zed','hA
 eq  "doc_list wrong PIN => null"    t "$(asanon "select public.doc_list('Ann','bad') is null")"
 eq  "doc_list unknown name => null" t "$(asanon "select public.doc_list('Zed','hA') is null")"
 eq  "owner sees own + shared (2)"   2 "$(asanon "select jsonb_array_length(public.doc_list('Ann','hA'))")"
-eq  "other member sees only shared (1)" 1 "$(asanon "select jsonb_array_length(public.doc_list('Bob','hB'))")"
+eq  "other member sees everyone's docs too (2)" 2 "$(asanon "select jsonb_array_length(public.doc_list('Bob','hB'))")"
+eq  "list shows owner of a personal doc" ann "$(asanon "select (select x->>'owner' from jsonb_array_elements(public.doc_list('Bob','hB')) x where x->>'id'='$PA')")"
 eq  "list has no chunk data"        f "$(asanon "select (public.doc_list('Ann','hA')->0) ? 'data'")"
 eq  "owner gets own chunks (2)"     2 "$(asanon "select jsonb_array_length(public.doc_get('Ann','hA','$PA')->'chunks')")"
-eq  "other member cannot get a personal doc" t "$(asanon "select public.doc_get('Bob','hB','$PA') is null")"
+eq  "other member CAN get a personal doc (group policy)" 2 "$(asanon "select jsonb_array_length(public.doc_get('Bob','hB','$PA')->'chunks')")"
+eq  "doc_get unknown id => null" t "$(asanon "select public.doc_get('Bob','hB','00000000-0000-4000-8000-0000000000ff') is null")"
 eq  "other member gets a shared doc" 1 "$(asanon "select jsonb_array_length(public.doc_get('Bob','hB','$PS')->'chunks')")"
 eq  "doc_get wrong PIN => null"      t "$(asanon "select public.doc_get('Ann','bad','$PA') is null")"
-eq  "other member cannot rename personal doc" 0 "$(asanon "select public.doc_rename('Bob','hB','$PA','Hacked')")"
-eq  "other member cannot delete personal doc" 0 "$(asanon "select public.doc_delete('Bob','hB','$PA')")"
+eq  "non-owner non-uploader cannot rename personal doc" 0 "$(asanon "select public.doc_rename('Bob','hB','$PA','Hacked')")"
+eq  "non-owner non-uploader cannot delete personal doc" 0 "$(asanon "select public.doc_delete('Bob','hB','$PA')")"
+# add-for-someone-else: Bob uploads for Ann
+$P -c "insert into sheet_rows values ('Users',103,'[\"Cy\"]') on conflict do nothing;" >/dev/null; asanon "select public.set_first_pin('Cy','hC')" >/dev/null
+PB=$(asanon "select public.doc_put('Bob','hB','person','','For Ann','other','image/png','','[\"QUJD\"]'::jsonb,'Ann')")
+has "member can add a doc for another member" "^[0-9a-f-]\{36\}\$" "$PB"
+eq  "doc for Ann has owner=ann"       ann "$(val "select owner from member_docs where id='$PB'")"
+eq  "doc for Ann has created_by=bob"  bob "$(val "select created_by from member_docs where id='$PB'")"
+eq  "unknown owner => -6"             -6 "$(asanon "select public.doc_put('Bob','hB','person','','T','other','image/png','','[\"a\"]'::jsonb,'Nobody')")"
+asanon "select public.doc_put('Bob','hB','shared','','Sh','other','image/png','','[\"a\"]'::jsonb,'Ann')" >/dev/null
+eq  "shared doc has no owner"         1 "$(val "select count(*) from member_docs where title='Sh' and owner='' and scope='shared'")"
+eq  "third member cannot rename it"   0 "$(asanon "select public.doc_rename('Cy','hC','$PB','x')")"
+eq  "third member cannot delete it"   0 "$(asanon "select public.doc_delete('Cy','hC','$PB')")"
+eq  "uploader can rename it"          1 "$(asanon "select public.doc_rename('Bob','hB','$PB','For Ann 2')")"
+eq  "owner can rename it"             1 "$(asanon "select public.doc_rename('Ann','hA','$PB','For Ann 3')")"
+eq  "uploader can delete it"          1 "$(asanon "select public.doc_delete('Bob','hB','$PB')")"
+PB=$(asanon "select public.doc_put('Bob','hB','person','','For Ann','other','image/png','','[\"QUJD\"]'::jsonb,'Ann')")
+eq  "owner can delete a doc others added" 1 "$(asanon "select public.doc_delete('Ann','hA','$PB')")"
+eq  "only one doc_put overload exists" 1 "$(val "select count(*) from pg_proc where proname='doc_put'")"
+eq  "new doc_put signature is executable by anon (PIN-checked inside)" t "$(val "select has_function_privilege('anon','public.doc_put(text,text,text,text,text,text,text,text,jsonb,text)','execute')")"
 eq  "non-creator cannot rename shared doc"    0 "$(asanon "select public.doc_rename('Bob','hB','$PS','Hacked')")"
 eq  "non-creator cannot delete shared doc"    0 "$(asanon "select public.doc_delete('Bob','hB','$PS')")"
 eq  "rename wrong PIN => -1"        -1 "$(asanon "select public.doc_rename('Ann','bad','$PA','x')")"
@@ -82,12 +102,13 @@ eq  "bad scope => -5"               -5 "$(asanon "select public.doc_put('Ann','h
 eq  "empty chunks => -5"            -5 "$(asanon "select public.doc_put('Ann','hA','person','','T','other','image/png','','[]'::jsonb)")"
 eq  "doc > 6 MB => -3"              -3 "$(asanon "select public.doc_put('Ann','hA','person','','Big','other','image/png','',jsonb_build_array(repeat('a',3000000),repeat('a',3000001)))")"
 eq  "doc of exactly 6 MB accepted"   1 "$(asanon "select (public.doc_put('Ann','hA','person','','Edge','other','image/png','',jsonb_build_array(repeat('a',3000000),repeat('a',3000000)))) ~ '^[0-9a-f-]{36}\$'::text and true" | sed 's/t/1/')"
-eq  "rejected docs wrote nothing"    t "$(val "select count(*) = 3 from member_docs")"
+eq  "rejected docs wrote nothing"    t "$(val "select count(*) = 4 from member_docs")"
 eq  "chunks removed with the doc"    1 "$(asanon "select public.doc_delete('Ann','hA','$PS')")"
 eq  "no orphan chunks"               0 "$(val "select count(*) from member_doc_chunks where doc_id='$PS'")"
 asanon "select public.doc_delete('Ann','hA',id) from (select id from public.member_docs where title='Edge') x" >/dev/null 2>&1; val "delete from member_docs where title='Edge'" >/dev/null
 $P -c "insert into member_docs(scope,owner,title,mime,created_by,chunks) select 'person','ann','f'||g,'image/png','ann',1 from generate_series(1,39) g; insert into member_doc_chunks select id,0,'a' from member_docs where title like 'f%';" >/dev/null
 eq  "41st personal doc refused => -4" -4 "$(asanon "select public.doc_put('Ann','hA','person','','Over','other','image/png','','[\"a\"]'::jsonb)")"
+eq  "limit counts the TARGET owner (Bob for Ann => -4)" -4 "$(asanon "select public.doc_put('Bob','hB','person','','Over','other','image/png','','[\"a\"]'::jsonb,'Ann')")"
 eq  "limit is per member (Bob can add)" t "$(asanon "select public.doc_put('Bob','hB','person','','Mine','other','image/png','','[\"a\"]'::jsonb) ~ '^[0-9a-f-]{36}\$'")"
 $P -c "insert into member_docs(scope,title,mime,created_by,chunks) select 'shared','s'||g,'image/png','ann',1 from generate_series(1,60) g;" >/dev/null
 eq  "61st shared doc refused => -4"   -4 "$(asanon "select public.doc_put('Bob','hB','shared','','Over','other','image/png','','[\"a\"]'::jsonb)")"
