@@ -334,7 +334,7 @@ function parseStay(rows) {
   const o = {}; rows.slice(1).forEach(r => { if (r[ki]) o[norm(r[ki])] = String(r[vi] || '').trim(); });
   if (!o.name && !o.address) return {};
   const la = num(o.lat)[0], lo = num(o.lng)[0];
-  return { name: o.name || '', platform: o.platform || '', address: o.address || '', lat: la != null ? la : null, lng: lo != null ? lo : null, checkin: o.checkin || '', checkout: o.checkout || '', ref: o.booking || o.bookingref || o.ref || o.confirmation || o.reservation || '', phone: o.phone || o.tel || o.โทร || '', rules: o.rules || '', note: o.note || '' };
+  return { name: o.name || '', platform: o.platform || '', address: o.address || '', lat: la != null ? la : null, lng: lo != null ? lo : null, checkin: o.checkin || '', checkout: o.checkout || '', ref: o.booking || o.bookingref || o.ref || o.confirmation || o.reservation || '', phone: o.phone || o.tel || o.โทร || '', rules: o.rules || '', note: o.note || '', chat: o.chat || '' };
 }
 function parseInfo(rows) {          // optional public tab `Info` (Key,Value): emergency numbers, embassy, Wi-Fi …
   const h = rows[0] || [], ki = colIndex(h, ['key', 'คีย์']), vi = colIndex(h, ['value', 'ค่า']); if (ki < 0 || vi < 0) return [];
@@ -367,9 +367,9 @@ function parseExpenses(rows) {
   const h = rows[0] || [];
   const ix = { date: colIndex(h, ['date', 'วันที่']), item: colIndex(h, ['item', 'รายการ']), cat: colIndex(h, ['category', 'หมวด', 'หมวดหมู่']), amt: colIndex(h, ['amount', 'จำนวนเงิน', 'จำนวน', 'ราคา']), cur: colIndex(h, ['currency', 'สกุลเงิน']), payer: colIndex(h, ['paidby', 'payer', 'ผู้จ่าย', 'คนจ่าย']), type: colIndex(h, ['type', 'ประเภท']), w: colIndex(h, ['splitwith', 'for', 'หารกับ', 'จ่ายให้', 'ให้ใคร']) };
   if (ix.amt < 0 || ix.payer < 0) return null;
-  return rows.slice(1).filter(r => num(r[ix.amt]).length && r[ix.payer]).map((r, i) => ({
-    id: 's' + i, date: r[ix.date] || '', item: r[ix.item] || '', cat: r[ix.cat] || '', amount: num(r[ix.amt])[0],
-    cur: (r[ix.cur] || trip().currency || 'THB').toUpperCase(), payer: r[ix.payer], type: normType(r[ix.type]),
+  return rows.slice(1).filter(r => num(r[ix.amt]).length).map((r, i) => ({
+    id: 's' + i, date: r[ix.date] || '', item: r[ix.item] || '', cat: r[ix.cat] || '', amount: num(r[ix.amt])[0], pending: !String(r[ix.payer] || '').trim(),
+    cur: (r[ix.cur] || trip().currency || 'THB').toUpperCase(), payer: String(r[ix.payer] || '').trim(), type: normType(r[ix.type]),
     with: (r[ix.w] || '').split(/[,;/、]/).map(x => x.trim()).filter(Boolean)
   }));
 }
@@ -667,11 +667,13 @@ function stayDialog() {
   const st = stayInfo(); if (!st) return;
   const L = navLinks({ name: st.address || st.name, lat: st.lat, lng: st.lng }, ''), rules = String(st.rules || '').split('\n').map(x => x.trim()).filter(Boolean);
   const row = (ico, k, v, act = '') => v ? `<div class="stf">${ic(ico)}<div><small>${k}</small><div class="stv">${esc(v)}</div></div>${act}</div>` : '';
+  const chat = /^https?:\/\//i.test(st.chat || '') ? st.chat : '';
   const d = openDlg(`<h3>${ic('home')} ${esc(st.name || 'ที่พัก')}</h3>${st.platform ? `<small>${esc(st.platform)}</small>` : ''}
-  <div id="stBody">${row('pin', 'ที่อยู่', st.address)}${row('mail', 'เช็คอิน', st.checkin)}${row('clock', 'เช็คเอาท์', st.checkout)}${row('ticket', 'เลขที่จอง', st.ref, `<button type="button" class="btn sm" data-cp="${esc(st.ref)}" aria-label="คัดลอกเลขที่จอง">คัดลอก</button>`)}${st.phone ? `<div class="stf">${ic('signal')}<div><small>โทรศัพท์</small><div class="stv"><a href="tel:${esc(String(st.phone).replace(/[^\d+]/g, ''))}">${esc(st.phone)}</a></div></div></div>` : ''}${row('note', 'โน้ต', st.note)}${rules.length ? `<div class="stf">${ic('warn')}<div><small>กฎของที่พัก</small><ul class="ideas">${rules.map(r => `<li>${esc(r)}</li>`).join('')}</ul></div></div>` : ''}</div>
+  <div id="stBody">${row('pin', 'ที่อยู่', st.address)}${row('mail', 'เช็คอิน', st.checkin)}${row('clock', 'เช็คเอาท์', st.checkout)}${row('ticket', 'เลขที่จอง', st.ref, `<button type="button" class="btn sm" data-cp="${esc(st.ref)}" aria-label="คัดลอกเลขที่จอง">คัดลอก</button>`)}${st.phone ? `<div class="stf">${ic('signal')}<div><small>โทรศัพท์</small><div class="stv"><a href="tel:${esc(String(st.phone).replace(/[^\d+]/g, ''))}">${esc(st.phone)}</a></div></div></div>` : ''}${row('note', 'โน้ต', st.note)}${chat ? `<div class="stf" id="stChatRow">${ic('mail')}<div><small>แชทกับที่พัก</small><div class="stv chatrow"><a class="btn pri" id="stChat" target="_blank" rel="noopener noreferrer" href="${esc(chat)}">เข้าร่วมแชท (Join)</a><button type="button" class="btn" id="stChatCp" aria-label="คัดลอกลิงก์แชท">${ic('copy')} คัดลอกลิงก์</button></div></div></div>` : ''}${rules.length ? `<div class="stf">${ic('warn')}<div><small>กฎของที่พัก</small><ul class="ideas">${rules.map(r => `<li>${esc(r)}</li>`).join('')}</ul></div></div>` : ''}</div>
   <div class="btns stb">${L.google ? `<a class="btn pri" id="stGo" target="_blank" rel="noopener" href="${L.google}">${ic('navigate')} นำทาง</a>` : ''}${st.address ? `<button type="button" class="btn" id="stCopy">${ic('copy')} คัดลอกที่อยู่</button>` : ''}<button type="button" class="btn" id="stTaxi">${ic('car')} โชว์ให้คนขับแท็กซี่</button><button type="button" class="btn" id="stX">ปิด</button></div>`);
   $('#stX', d).onclick = () => d.close();
   const c = $('#stCopy', d); if (c) c.onclick = () => copyText([st.name, st.address].filter(Boolean).join('\n'), 'คัดลอกที่อยู่แล้ว');
+  const cc = $('#stChatCp', d); if (cc) cc.onclick = () => copyText(chat, 'คัดลอกลิงก์แชทแล้ว');
   $('#stTaxi', d).onclick = () => { d.close(); openViewer({ mode: 'taxi' }); };
   $$('[data-cp]', d).forEach(b => b.onclick = () => copyText(b.dataset.cp, 'คัดลอกแล้ว'));
 }
@@ -929,26 +931,34 @@ function costExpenses() {
   });
   return out;
 }
-const allExpenses = () => [...data.expenses, ...costExpenses()];
+const allExpenses = () => [...data.expenses.filter(e => e.payer), ...costExpenses()];      // an item without a payer (sheet) is a pending central cost: never split, never a debt
+const pendingExpenses = () => data.expenses.filter(e => !e.payer);
+const money = (n, c) => (c === 'USD' ? '$' : '') + fmt(n) + ' ' + c;
 function renderExpenses(el) {
-  const ex = allExpenses();
+  const ex = [...allExpenses(), ...pendingExpenses()];
   const groups = {}, key = e => e.date || (e.src === 'cost' ? 'ค่าใช้จ่ายตามแผน' : 'ไม่ระบุวันที่'); ex.forEach(e => (groups[key(e)] = groups[key(e)] || []).push(e));
   let h = `<h2 class="sech">รายการ</h2>`;
-  h += Object.entries(groups).reverse().map(([d, list]) => `<div class="dgroup">${esc(d)}</div>` + list.slice().reverse().map(e => `<div class="ex">${e.payer ? avatar(e.payer) : `<span class="avatar" style="--c:#94a3b8">${ic('users')}</span>`}<div><div class="it">${esc(e.item || '—')}</div><small>${e.payer ? esc(e.payer) + ' · ' : ''}${TYPE_TH[e.type]}${e.cat ? ' · ' + esc(e.cat) : ''}${e.with.length ? ' · ' + esc(e.with.join(', ')) : ''}</small></div><div class="am">${fmt(e.amount)}<small style="display:block;font-weight:400">${esc(e.cur)}</small></div></div>`).join('')).join('') || '<div class="empty">ยังไม่มีรายการ<br><small>กด + เพื่อเพิ่มค่าใช้จ่าย</small></div>';
+  h += Object.entries(groups).reverse().map(([d, list]) => `<div class="dgroup">${esc(d)}</div>` + list.slice().reverse().map(e => `<div class="ex${e.pending ? ' pend' : ''}">${e.payer ? avatar(e.payer) : `<span class="avatar" style="--c:#94a3b8">${ic('users')}</span>`}<div><div class="it">${esc(e.item || '—')}</div><small>${e.pending ? 'ส่วนกลาง · ยังไม่แยกรายคน' : (e.payer ? esc(e.payer) + ' · ' : '') + TYPE_TH[e.type]}${e.cat ? ' · ' + esc(e.cat) : ''}${e.with.length ? ' · ' + esc(e.with.join(', ')) : ''}</small></div><div class="am">${fmt(e.amount)}<small style="display:block;font-weight:400">${esc(e.cur)}</small></div></div>`).join('')).join('') || '<div class="empty">ยังไม่มีรายการ<br><small>กด + เพื่อเพิ่มค่าใช้จ่าย</small></div>';
   el.innerHTML = h;
 }
 function summaryHtml() {
-  const { out, order } = calcAll(), cs = order.map(k => out[k]).filter(c => c.count);
-  if (!cs.length) return '<div class="card dpanel"><div class="dp-i">' + ic('users') + '</div><h2>ยังไม่มีค่าใช้จ่าย</h2><div class="mut">กดปุ่ม + เพื่อบันทึก แล้วระบบจะสรุปให้ว่าใครจ่ายไปเท่าไรและใครต้องจ่ายให้ใคร</div></div>';
+  const { out, order } = calcAll(), cs = order.map(k => out[k]).filter(c => c.count), pend = pendingHtml();
+  if (!cs.length) return pend || '<div class="card dpanel"><div class="dp-i">' + ic('users') + '</div><h2>ยังไม่มีค่าใช้จ่าย</h2><div class="mut">กดปุ่ม + เพื่อบันทึก แล้วระบบจะสรุปให้ว่าใครจ่ายไปเท่าไรและใครต้องจ่ายให้ใคร</div></div>';
   return cs.map(c => {
     const sharedUnpaid = allExpenses().filter(e => e.cur === c.cur && !e.payer).reduce((a, e) => a + e.amount, 0);
     return `<div class="card cur" data-cur="${esc(c.cur)}"><div class="row2"><h2>${ic('users')} จ่ายไปแล้วรายคน</h2><span class="chip">${esc(c.cur)}</span></div>`
       + c.list.map(u => `<div class="row pp" data-p="${esc(u.name)}">${avatar(u.name)}<div><b>${esc(u.name)}</b><small>ส่วนที่ต้องรับ ${fmt(u.share)} ${esc(c.cur)}</small></div><div class="amt big">${fmt(u.paid)} <small>${esc(c.cur)}</small></div></div>`).join('')
-      + (sharedUnpaid ? `<div class="mut unp">ส่วนกลางที่ยังไม่มีผู้จ่าย ${fmt(sharedUnpaid)} ${esc(c.cur)} (หารเท่ากันทุกคน ไม่นับเป็นหนี้)</div>` : '')
+      + (sharedUnpaid ? `<div class="mut unp">ส่วนกลางที่ยังไม่มีผู้จ่าย ${fmt(sharedUnpaid)} ${esc(c.cur)} (ยังไม่แยกรายคน ไม่นับเป็นหนี้)</div>` : '')
       + `<h2 class="sech">${ic('route')} ใครต้องจ่ายให้ใคร</h2>`
       + (c.pairs.length ? c.pairs.map(p => `<div class="tx" data-pair="${esc(p.from)}>${esc(p.to)}">${avatar(p.from, 'sm')}<b>${esc(p.from)}</b><span class="arr">ต้องจ่ายให้</span>${avatar(p.to, 'sm')}<b>${esc(p.to)}</b><b class="v">${fmt(p.v)} ${esc(c.cur)}</b></div>`).join('') : '<span class="mut">ไม่มีใครติดใคร (เคลียร์แล้ว)</span>')
       + '</div>';
-  }).join('');
+  }).join('') + pend;
+}
+function pendingHtml() {
+  const by = {}; pendingExpenses().forEach(e => (by[e.cur] = by[e.cur] || []).push(e));
+  const ks = Object.keys(by); if (!ks.length) return '';
+  return `<div class="card pendc" id="pendCard"><h2>${ic('users')} รอชำระ · ส่วนกลาง</h2><small class="mut">ยังไม่แยกรายคน ไม่นับในยอดรายคนและไม่เป็นหนี้</small>`
+    + ks.map(c => `<div class="pendcur" data-cur="${esc(c)}">${by[c].map(e => `<div class="pend-i"><div><div class="it">${esc(e.item || '—')}</div>${e.date ? `<span class="chip">${esc(e.date)}</span>` : ''}</div><b class="am">${esc(money(e.amount, c))}</b></div>`).join('')}${by[c].length > 1 ? `<div class="pend-t"><small>รวม ${esc(c)}</small><b>${esc(money(by[c].reduce((a, e) => a + e.amount, 0), c))}</b></div>` : ''}</div>`).join('') + '</div>';
 }
 function renderMoney() {
   const el = $('#tab-money');

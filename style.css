@@ -524,3 +524,5 @@ dialog h3 small{font-weight:400}
   .cd-stay .cdl{display:none}.cd-stay{padding:0;min-width:44px;justify-content:center}
 }
 .dpanel h2{justify-content:center;text-align:center}
+
+.pendc small.mut{display:block;margin:2px 0 6px}.pend-i{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)}.pend-i>div{min-width:0;overflow-wrap:anywhere}.pend-i .am{white-space:nowrap}.pend-t{display:flex;justify-content:space-between;padding-top:8px;border-top:1px solid var(--line)}.chatrow{display:flex;gap:8px;flex-wrap:wrap}.chatrow .btn{min-height:44px;flex:1 1 130px;text-align:center;text-decoration:none}
