@@ -1,14 +1,13 @@
 /* End-to-end system check (Playwright). Run via `bash tests/run.sh`. Real Supabase for public reads; private/write RPCs mocked with synthetic data. */
-const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
+const { open, settle, check, finish, FAKE, ALMATY } = require('./lib');
 
 (async () => {
   /* ---------- A. public data (real Supabase) ---------- */
   console.log('\n[A] public data load');
   let s = await open(), p = s.p;
   check('A1 fresh load opens straight to the plan: no login overlay, no PIN pad', await p.evaluate(() => !document.getElementById('login') && !document.querySelector('.pinpad, #loginPin, #loginUsers') && !document.getElementById('app').hidden && !!document.querySelector('#tl .step')));
-  await p.click('[data-tab=menu]'); await p.waitForTimeout(400); await p.click('#bSwitch'); await p.waitForTimeout(300);
-  check('A2 traveller list (names only) opens from the Menu members card', await p.evaluate(() => document.querySelectorAll('#whoList [data-u]').length) >= 2);
-  await p.click('#dlg button[value=x]'); await p.waitForTimeout(200);
+  await p.click('[data-tab=menu]'); await p.waitForTimeout(400);
+  check('A2 Menu members card is a plain list of every Users name (no switch-name UI)', await p.evaluate(() => document.querySelectorAll('#membersCard .mrow').length) >= 2 && await p.evaluate(() => !document.getElementById('bSwitch') && !document.querySelector('[data-who]')));
   check('A3 Almaty plan loaded (>= 1 day)', await p.evaluate(() => data.plan && data.plan.days.length) >= 1);
   check('A4 data comes from Supabase, not the Google Sheet', s.reqs.includes('SB') && !s.reqs.includes('SHEET'));
   check('A5 PIN hashes are not exposed in public Users rows', await p.evaluate(() => users().every(u => !u.pin)));
@@ -16,34 +15,30 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   check('A6 no PIN UI or PIN flow left in app.js / index.html', !/pinpad|loginPin|loginUsers|ตั้ง PIN|ลืม PIN|ใส่ PIN|verify_pin|set_first_pin|reset_pin|pin_status|tt\.ph|pendingPin/.test(src));
   await s.b.close();
 
-  /* ---------- B. travellers (no login / PIN) ---------- */
-  console.log('\n[B] travellers');
+  /* ---------- B. no identity: one constant API name ---------- */
+  console.log('\n[B] no identity');
   s = await open(); p = s.p;
   const names = await p.evaluate(() => users().map(u => u.name));
-  await p.evaluate(() => travellerPicker()); await p.waitForTimeout(300);
-  check('B1 Almaty list = every name in the Users tab, in order', JSON.stringify(await p.evaluate(() => [...document.querySelectorAll('#whoList [data-u]')].map(x => x.dataset.u))) === JSON.stringify(names));
-  const solo = names.find(n => !['nine', 'mew'].includes(n.toLowerCase())) || names[0];
-  await p.click(`#whoList [data-u="${solo}"]`); await p.waitForTimeout(800);
-  check('B2 choosing a name sets "me" and stores it in localStorage (plain text, not secret)', await p.evaluate(n => me === n && JSON.parse(localStorage.getItem('tt.me')) === n, solo));
+  await p.evaluate(() => { localStorage.setItem('tt.me', JSON.stringify('Mew')); }); await p.reload(); await p.waitForTimeout(3500);
+  check('B1 apiName() on Almaty = first name of the Users tab; a stale tt.me is ignored', await p.evaluate(n => apiName() === n[0] && typeof me === 'undefined' && typeof travellerPicker === 'undefined', names));
   check('B3 no PIN RPC or hash anywhere: only the constant dummy hash is ever sent', !s.rpc.some(r => ['verify_pin', 'set_first_pin', 'reset_pin', 'pin_status'].includes(r.fn)) && s.rpc.every(r => !('p_hash' in r.a) || r.a.p_hash === 'open') && await p.evaluate(() => !sessionStorage.getItem('tt.ph') && !localStorage.getItem('tt.ph')));
   await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
-  await p.evaluate(() => travellerPicker()); await p.waitForTimeout(300);
-  check('B4 a private trip lists exactly Nine and Mew', JSON.stringify(await p.evaluate(() => [...document.querySelectorAll('#whoList [data-u]')].map(x => x.dataset.u))) === '["Nine","Mew"]');
-  await p.click('#dlg button[value=x]'); await p.waitForTimeout(200);
-  check('B5 chosen name not on this trip: falls back to Nine, the choice itself is kept, trip loads', await p.evaluate(n => me === 'Nine' && JSON.parse(localStorage.getItem('tt.me')) === n && !!data.plan && data.plan.days.length > 0, solo));
-  check('B5b private RPCs use the fallback name and the dummy hash', s.rpc.filter(r => r.fn === 'get_private').every(r => r.a.p_name === 'Nine' && r.a.p_hash === 'open'));
-  await p.evaluate(() => travellerPicker()); await p.waitForTimeout(300); await p.click('#whoList [data-u=Mew]'); await p.waitForTimeout(1200);
-  check('B6 picking Mew on a private trip works', await p.evaluate(() => me === 'Mew' && /ฉัน/.test(document.querySelector('#tab-menu .mrow[data-n=Mew]').innerText) && !document.querySelector('#tab-menu .mrow[data-n=Nine] .chip')));
-  await p.evaluate(() => switchTrip(DEFAULT_TRIP.id)); await p.waitForTimeout(2300);
-  check('B7 back on Almaty "Mew" (a Users name) is still the effective name', await p.evaluate(() => me === 'Mew' || !users().some(u => u.name === 'Mew')));
-  await p.reload(); await p.waitForTimeout(3500);
-  check('B8 the choice survives a reload', await p.evaluate(() => JSON.parse(localStorage.getItem('tt.me')) === 'Mew'));
+  check('B4 a private trip has exactly Nine and Mew; API identity = Nine', await p.evaluate(() => JSON.stringify(travellers()) === '["Nine","Mew"]' && apiName() === 'Nine'));
+  check('B5 private RPCs always use Nine and the dummy hash, and the trip loads', await p.evaluate(() => !!data.plan && data.plan.days.length > 0) && s.rpc.filter(r => r.fn === 'get_private').every(r => r.a.p_name === 'Nine' && r.a.p_hash === 'open'));
+  const noSwitch = () => document.documentElement.innerText + document.querySelector('#dlg').innerHTML;
+  await p.click('[data-tab=menu]'); await p.waitForTimeout(400);
+  check('B6 Menu has no switch-name / "ฉัน" chip / who-am-I strings', await p.evaluate(() => !/สลับชื่อ|ใช้ชื่อนี้|ใครกำลังใช้งาน|เลือกชื่อของคุณ|ผู้เยี่ยมชม/.test(document.documentElement.innerText) && !document.querySelector('#membersCard .chip') && !/ฉัน/.test(document.getElementById('membersCard').innerText)));
+  await p.click('#btnCd'); await p.waitForTimeout(400);
+  check('B7 countdown sheet footer has no name / switch button', await p.evaluate(() => !document.getElementById('cdWho') && !document.querySelector('.cdf') && !/สลับชื่อ|ผู้เยี่ยมชม/.test(document.getElementById('cdSheet').innerText)));
+  await p.click('#cdClose'); await p.waitForTimeout(200);
+  const src2 = require('fs').readFileSync(__dirname + '/../app.js', 'utf8') + require('fs').readFileSync(__dirname + '/../index.html', 'utf8');
+  check('B8 source has no identity remnants (tt.me, lastMe, travellerPicker, syncMe, สลับชื่อ, ใช้ชื่อนี้)', !/tt\.me\b|lastMe|travellerPicker|syncMe|สลับชื่อ|ใช้ชื่อนี้|bSwitch|cdWho/.test(src2));
   await s.b.close();
   /* (dropped on purpose: checks of the PIN pad, wrong/mismatching PIN, hash storage and sessionStorage hash - those behaviours no longer exist) */
 
   /* ---------- C. trips ---------- */
   console.log('\n[C] trips, status, access');
-  s = await open(); p = s.p; await login(s, 'Mew'); const keys = Object.keys(FAKE);
+  s = await open(); p = s.p; await settle(s); const keys = Object.keys(FAKE);
   check('C1 every trip is listed (no login needed)', await p.evaluate(() => visibleTrips().length) === 1 + keys.length);
   check('C2 default list = Current + Upcoming only', await p.evaluate(() => tripList().every(t => tripStatus(t) !== 'past')));
   check('C3 Past filter = the finished trips, newest first', await p.evaluate(() => { ui.tripFilter = 'past'; return tripList().map(t => t.key).join(); }) === 'macau,nagoya,xian,kunming');
@@ -58,16 +53,16 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   check('C6 picture gallery opens and lazy-loads', await (async () => { await p.evaluate(() => openGallery()); await p.waitForTimeout(1500); return p.evaluate(() => [...document.querySelectorAll('.gimg')].some(b => b.style.backgroundImage.includes('data:image/jpeg'))); })());
   await p.evaluate(() => document.getElementById('dlg').close());
   await s.b.close();
-  s = await open({ clock: '2026-07-12T10:00:00' }); p = s.p; await login(s, 'Nine');
+  s = await open({ clock: '2026-07-12T10:00:00' }); p = s.p; await settle(s);
   check('C7 status follows the date (Macau is Current on 2026-07-12)', await p.evaluate(() => tripStatus(cfg.trips.find(t => t.key === 'macau'))) === 'current');
   await s.b.close();
   s = await open({ active: 'priv:macau' }); p = s.p;
-  check('C8 fresh load with a private trip saved as active opens it directly (no login, no fallback)', await p.evaluate(() => trip().key === 'macau' && data.plan && data.plan.days.length === 4 && me === 'Nine') && s.rpc.some(r => r.fn === 'get_private'));
+  check('C8 fresh load with a private trip saved as active opens it directly (no login, no fallback)', await p.evaluate(() => trip().key === 'macau' && data.plan && data.plan.days.length === 4 && apiName() === 'Nine') && s.rpc.some(r => r.fn === 'get_private'));
   await s.b.close();
 
   /* ---------- D. plan editing (deterministic synthetic trip) ---------- */
   console.log('\n[D] plan view & editing');
-  s = await open(); p = s.p; await login(s, 'Nine');
+  s = await open(); p = s.p; await settle(s);
   await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
   check('D1 day bar has one pill per day', await p.evaluate(() => document.querySelectorAll('#homeDays .pill[data-day]').length) === FAKE.macau.days);
   check('D2 cards show travel + stay durations', await p.evaluate(() => /เดินทาง 30 นาที/.test(document.getElementById('tl').innerText) && /อยู่ที่นั่น 1 ชม\. 30 น\./.test(document.getElementById('tl').innerText)));
@@ -88,7 +83,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await p.evaluate(() => { ui.edit = false; stepDialog(null); }); await p.waitForTimeout(300);
   check('D10 add-step form prefills the previous arrival time', /\d\d\.\d\d/.test(await p.inputValue('[name=st]')));
   await s.b.close();
-  s = await open(); p = s.p; await login(s, 'Nine');
+  s = await open(); p = s.p; await settle(s);
   await p.click('#editBtn'); await p.waitForTimeout(500);
   check('D11a public trip: edit mode opens straight away, no code dialog', await p.evaluate(() => ui.edit && !document.getElementById('dlg').open));
   await p.evaluate(() => { ui.day = 0; renderPlan(); stepDialog(0); }); await p.waitForTimeout(300);
@@ -105,7 +100,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
 
   /* ---------- E. money (synthetic expenses, independent arithmetic) ---------- */
   console.log('\n[E] money');
-  s = await open(); p = s.p; await login(s, 'Nine');
+  s = await open(); p = s.p; await settle(s);
   const r = await p.evaluate(() => {
     const names = users().map(u => u.name), a = names[0], b = names[1];
     data.expenses = [{ item: 'x', cat: 'x', amount: 1000, cur: 'THB', payer: a, type: 'personal', with: [] }, { item: 'y', cat: 'x', amount: 300, cur: 'THB', payer: a, type: 'shared', with: [] }, { item: 'z', cat: 'x', amount: 90, cur: 'THB', payer: b, type: 'split', with: [a, b] }];
@@ -119,7 +114,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
 
   /* ---------- F. other tabs ---------- */
   console.log('\n[F] other tabs');
-  s = await open(); p = s.p; await login(s, 'Nine');
+  s = await open(); p = s.p; await settle(s);
   await p.click('[data-tab=spots]'); await p.waitForTimeout(700);
   check('F1 places tab is ONE page: add box + (empty state or saved places), no segment switcher', await p.evaluate(() => !!document.getElementById('linkIn') && !!document.getElementById('addSpot') && (!!document.getElementById('spotEmpty') || !!document.querySelector('.spot')) && document.querySelectorAll('#tab-spots .seg button').length === 0));
   await p.evaluate(() => { ui.tipsOpen = true; renderSpots(); }); await p.waitForTimeout(300);
@@ -135,22 +130,22 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
 
   /* ---------- G. reminders & location window ---------- */
   console.log('\n[G] reminders & location window');
-  s = await open({ clock: '2027-02-13T09:50:00' }); p = s.p; await login(s, 'Nine');
+  s = await open({ clock: '2027-02-13T09:50:00' }); p = s.p; await settle(s);
   const first = await p.evaluate(() => { const st = data.plan.days[0].steps.find(x => x.time); return st ? st.time : null; });
   check('G0 Almaty first step has a time (data sanity)', !!first);
   await p.evaluate(() => { cfg.notif.on = true; cfg.notif.lead = 15; cfg.notif.fired = {}; checkReminders(); }); await p.waitForTimeout(400);
   check('G1 reminder fires shortly before the first timed step', /อีก \d+ นาที/.test(await p.evaluate(() => document.getElementById('toast').innerText)));
   check('G2 location gate before landing = before', await p.evaluate(() => gate().state) === 'before');
   await s.b.close();
-  s = await open({ clock: '2027-02-14T12:00:00' }); p = s.p; await login(s, 'Nine');
+  s = await open({ clock: '2027-02-14T12:00:00' }); p = s.p; await settle(s);
   check('G3 location gate while travelling = active', await p.evaluate(() => gate().state) === 'active'); await s.b.close();
-  s = await open({ clock: '2027-02-25T12:00:00' }); p = s.p; await login(s, 'Nine');
+  s = await open({ clock: '2027-02-25T12:00:00' }); p = s.p; await settle(s);
   check('G4 location gate after the last flight = after', await p.evaluate(() => gate().state) === 'after'); await s.b.close();
 
   /* ---------- H. layout ---------- */
   console.log('\n[H] layout');
   for (const [w, h] of [[360, 640], [390, 844], [430, 932]]) {
-    s = await open({ w, h, stepsPerDay: 10 }); p = s.p; await login(s, 'Nine');
+    s = await open({ w, h, stepsPerDay: 10 }); p = s.p; await settle(s);
     await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
     const bad = [];
     for (const t of ['plan', 'money', 'spots', 'docs', 'menu']) { await p.click(`[data-tab=${t}]`); await p.waitForTimeout(500); const o = await p.evaluate(() => document.documentElement.scrollWidth - innerWidth); if (o > 1) bad.push(t + '+' + o); }
@@ -175,22 +170,22 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   }
   /* ---------- I. refused / failing private reads + reminders on past trips ---------- */
   console.log('\n[I] refused reads & past-trip reminders');
-  s = await open(); p = s.p; await login(s, 'Nine');
+  s = await open(); p = s.p; await settle(s);
   await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
   s.flags.err500 = true; await p.evaluate(() => load()); await p.waitForTimeout(1500);
-  check('I2 transient HTTP error keeps the trip and the chosen name', await p.evaluate(() => me === 'Nine' && trip().key === 'macau' && !!data.plan));
+  check('I2 transient HTTP error keeps the trip and the API identity', await p.evaluate(() => apiName() === 'Nine' && trip().key === 'macau' && !!data.plan));
   s.flags.err500 = false; s.flags.nullPriv = true; await p.evaluate(() => load()); await p.waitForTimeout(2500);
-  const st = await p.evaluate(() => ({ me, act: cfg.active, err: document.getElementById('error').hidden ? '' : document.getElementById('error').textContent, toast: document.getElementById('toast').textContent, plan: !!data.plan, login: !!document.getElementById('login') }));
+  const st = await p.evaluate(() => ({ me: apiName(), act: cfg.active, err: document.getElementById('error').hidden ? '' : document.getElementById('error').textContent, toast: document.getElementById('toast').textContent, plan: !!data.plan, login: !!document.getElementById('login') }));
   check('I1 server refuses a private read (null): app stays on the trip with its last data, no sign-out, no PIN toast, no error box', st.me === 'Nine' && st.act === 'priv:macau' && st.plan && !st.err && !/PIN/.test(st.toast) && !st.login, JSON.stringify(st));
   s.flags.nullPriv = false; await p.evaluate(() => load()); await p.waitForTimeout(2300);
-  check('I3 reads work again afterwards', await p.evaluate(() => me === 'Nine' && trip().key === 'macau' && !!data.plan && data.plan.days.length > 0));
+  check('I3 reads work again afterwards', await p.evaluate(() => apiName() === 'Nine' && trip().key === 'macau' && !!data.plan && data.plan.days.length > 0));
   check('I4 past trip: menu shows "trip ended" note, no switch/ics buttons', await (async () => { await p.click('[data-tab=menu]'); await p.waitForTimeout(400); return p.evaluate(() => /ทริปนี้จบแล้ว/.test(document.getElementById('tab-menu').innerText) && !document.getElementById('nOn') && !document.getElementById('nIcs')); })());
   await s.b.close();
-  s = await open({ clock: '2026-07-01T10:00:00' }); p = s.p; await login(s, 'Nine');
+  s = await open({ clock: '2026-07-01T10:00:00' }); p = s.p; await settle(s);
   await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300); await p.click('[data-tab=menu]'); await p.waitForTimeout(400);
   check('I5 upcoming trip: card keeps count, switch, lead select, ics', await p.evaluate(() => !!document.getElementById('nOn') && !!document.getElementById('nLead') && !!document.getElementById('nIcs') && /\d+ รายการ/.test(document.getElementById('tab-menu').innerText)));
   s.flags.nullPriv = false; await s.b.close();
-  s = await open({ clock: '2026-07-12T10:30:00' }); p = s.p; await login(s, 'Nine');
+  s = await open({ clock: '2026-07-12T10:30:00' }); p = s.p; await settle(s);
   await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
   check('I6 count excludes events already over', await p.evaluate(() => { const all = planEvents().length, n = planEvents().filter(e => (e.end || e.dt) > Date.now()).length; return n < all && n > 0 && notifCard().includes(n + ' รายการ'); }));
   await s.b.close();
@@ -202,7 +197,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   s = await open({ init: CLS }); p = s.p;
   const cBoot = await cls(p);
   check('J1 CLS at boot <= 0.05', cBoot <= 0.05, String(cBoot));
-  await login(s, 'Nine'); await p.waitForTimeout(1500);
+  await settle(s); await p.waitForTimeout(1500);
   const cLogin = await cls(p) - cBoot;
   check('J2 CLS choosing a traveller <= 0.05', cLogin <= 0.05, String(cLogin));
   await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
@@ -214,7 +209,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await s.b.close();
 
   /* trip switch without blanking (slow private trip so the waiting window is visible) */
-  s = await open({ stepsPerDay: 10 }); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(800);
+  s = await open({ stepsPerDay: 10 }); p = s.p; await settle(s); await p.waitForTimeout(800);
   await p.evaluate(() => { window.__fr = []; const h0 = document.documentElement.scrollHeight, from = data._trip; (function f() { const tl = document.getElementById('tl'); window.__fr.push({ plan: !!tl && tl.children.length > 0, h: document.documentElement.scrollHeight, h0, old: data._trip === from, sub: document.getElementById('tripSub').textContent, dim: document.querySelector('main').classList.contains('busy') }); requestAnimationFrame(f); })(); });
   s.flags.delayMs = 1500; await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(3000);
   const fr = await p.evaluate(() => window.__fr), waiting = fr.filter(f => f.old);
@@ -222,7 +217,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   s.flags.delayMs = 0; await s.b.close();
 
   /* no-op refresh, changed refresh, dialog safety */
-  s = await open({ stepsPerDay: 10 }); p = s.p; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
+  s = await open({ stepsPerDay: 10 }); p = s.p; await settle(s); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
   await p.evaluate(() => { data.plan.days.forEach((_, d) => dayWaypoints(d).forEach(w => { gc.cache[gKey(w.q)] = { lat: 22.19, lng: 113.54 }; })); });          // stops already located: nothing left to geocode / route
   await p.waitForFunction(() => !gc.running && !Object.keys(trv.pending).length, null, { timeout: 30000 }); await p.waitForTimeout(600);
   await p.evaluate(() => { window.scrollTo(0, 700); window.__n = { draw: 0, all: 0, plan: 0 }; for (const k of ['drawMap', 'renderAll', 'renderPlan']) { const o = window[k], key = { drawMap: 'draw', renderAll: 'all', renderPlan: 'plan' }[k]; window[k] = (...a) => { window.__n[key]++; return o(...a); }; } for (const id of ['tl', 'homeDock']) document.getElementById(id).__keep = 1; });
@@ -244,7 +239,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await s.b.close();
 
   /* per-tab scroll memory */
-  s = await open({ stepsPerDay: 10 }); p = s.p; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
+  s = await open({ stepsPerDay: 10 }); p = s.p; await settle(s); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
   await p.evaluate(() => { window.scrollTo(0, 700); document.getElementById('tl').__keep = 1; }); await p.waitForTimeout(500);
   await p.click('[data-tab=money]'); await p.waitForTimeout(300); await p.evaluate(() => { document.getElementById('tab-money').firstElementChild.__keep = 1; });
   await p.click('[data-tab=menu]'); await p.waitForTimeout(300); await p.evaluate(() => window.scrollTo(0, 120)); await p.waitForTimeout(300);
@@ -257,7 +252,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await s.b.close();
 
   /* calm dock */
-  s = await open({ stepsPerDay: 10 }); p = s.p; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
+  s = await open({ stepsPerDay: 10 }); p = s.p; await settle(s); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
   const calm = await p.evaluate(async () => {
     const d = document.getElementById('homeDock'), bar = document.getElementById('homeDays'), w = ms => new Promise(r => setTimeout(r, ms)); let muts = 0;
     new MutationObserver(() => muts++).observe(d, { attributes: true }); new MutationObserver(() => muts++).observe(bar, { attributes: true, attributeFilter: ['class', 'style'] });
@@ -283,13 +278,13 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
     return { cls, barTop: Math.round(bar.top - document.querySelector('.top').getBoundingClientRect().bottom), headClear: hd.top >= bar.bottom - 1 || scrollY < 5, stepVis: !st || st.getBoundingClientRect().bottom > bar.bottom }; });
   check('J13d day change: day bar stays pinned, heading not covered, CLS <= 0.05', Math.abs(dc.barTop) <= 1 && dc.headClear && dc.cls <= 0.05, JSON.stringify(dc));
   await s.b.close();
-  s = await open({ reducedMotion: 'reduce' }); p = s.p; await login(s, 'Nine');
+  s = await open({ reducedMotion: 'reduce' }); p = s.p; await settle(s);
   check('J14 prefers-reduced-motion: no dock/day-bar transition, smooth scroll off', await p.evaluate(() => parseFloat(getComputedStyle(document.getElementById('homeDock')).transitionDuration) === 0 && parseFloat(getComputedStyle(document.getElementById('homeDays')).transitionDuration) === 0 && matchMedia('(prefers-reduced-motion: reduce)').matches));
   await s.b.close();
 
   /* full-screen map overlay: Leaflet is created lazily on the first "เปิดแผนที่" */
   console.log('\n[M] map overlay (lazy), friends, filters, navigation');
-  s = await open({ init: CLS }); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(1500);
+  s = await open({ init: CLS }); p = s.p; await settle(s); await p.waitForTimeout(1500);
   const pre = await p.evaluate(() => ({ cont: document.querySelectorAll('.leaflet-container,#map').length, noMap: typeof map === 'undefined' || !map, txt: document.getElementById('dockFull').innerText, ov: document.getElementById('mapOv').hidden, inline: document.querySelectorAll('#dockSize,#dockHide,#dockShow,#homeMapHolder').length }));
   check('M1 before the first tap: no Leaflet container / #map / old dock controls, no OSM tile request, the card says "เปิดแผนที่"', pre.cont === 0 && pre.noMap && /เปิดแผนที่/.test(pre.txt) && pre.ov && pre.inline === 0 && !s.reqs.includes('TILE'), JSON.stringify({ ...pre, tiles: s.reqs.includes('TILE') }));
   const mcls0 = await cls(p);
@@ -335,7 +330,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
       renderPlan();          // step buttons now know the coordinates
     });
   };
-  s = await open({ clock: '2026-07-12T10:30:00', active: 'priv:macau', init: CLS }); p = s.p; await login(s, 'Nine'); await seedMap(p, s);
+  s = await open({ clock: '2026-07-12T10:30:00', active: 'priv:macau', init: CLS }); p = s.p; await settle(s); await seedMap(p, s);
   await p.click('#dockFull'); await p.waitForTimeout(1500);
   const ovN = sel => p.evaluate(q => document.querySelectorAll('#ovHolder ' + q).length, sel);
   const ovChip = async k => { await p.click(`#ovFilters [data-f=${k}]`); await p.waitForTimeout(250); };
@@ -376,7 +371,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await p.evaluate(() => { ui.f = { ...F_DEF, hide: [] }; saveF(); }); await s.b.close();
 
   /* tap a pin / friend -> bottom card with Google Maps */
-  s = await open({ clock: '2026-07-12T10:30:00', active: 'priv:macau', init: CLS }); p = s.p; await login(s, 'Nine'); await seedMap(p, s);
+  s = await open({ clock: '2026-07-12T10:30:00', active: 'priv:macau', init: CLS }); p = s.p; await settle(s); await seedMap(p, s);
   await p.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: { writeText: async t => { (window.__cp = window.__cp || []).push(t); } }, configurable: true }); });
   await p.click('#dockFull'); await p.waitForTimeout(1300);
   const GM = /^https:\/\/www\.google\.com\/maps\/dir\/\?api=1&destination=(-?\d+\.\d{6}),(-?\d+\.\d{6})(&travelmode=(walking|transit|driving))?$/;
@@ -420,7 +415,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await s.b.close();
 
   /* sharing my location: opt-in, writes / clears the Locations row through the RPC (public trip) */
-  s = await open(); p = s.p; await login(s, 'Nine'); await s.ctx.grantPermissions(['geolocation']); await s.ctx.setGeolocation({ latitude: 43.2389, longitude: 76.8897, accuracy: 15 });
+  s = await open(); p = s.p; await settle(s); await s.ctx.grantPermissions(['geolocation']); await s.ctx.setGeolocation({ latitude: 43.2389, longitude: 76.8897, accuracy: 15 });
   await p.evaluate(() => { cfg.forceLoc = true; });
   const locRpc = () => s.rpc.filter(r => ['upsert_row', 'append_row'].includes(r.fn) && r.a.p_tab === 'Locations');
   await p.click('#dockFull'); await p.waitForTimeout(1200);
@@ -431,9 +426,14 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   check('M25 turning it on asks for explicit consent (what is sent, who can see it, how to stop); nothing is written yet', cs.open && /ชื่อ พิกัด และเวลา/.test(cs.t) && /ทุกคนที่มีลิงก์/.test(cs.t) && /หยุดแชร์/.test(cs.t) && locRpc().length === 0, cs.t);
   await p.click('#dlg button[value=x]'); await p.waitForTimeout(300);
   check('M25b declining keeps it off', await p.evaluate(() => !isSharing()) && locRpc().length === 0);
-  await p.click('#shSw'); await p.waitForTimeout(300); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(4000);
+  await p.click('#shSw'); await p.waitForTimeout(300);
+  check('M25c consent asks "แชร์ตำแหน่งของใคร" with one radio per traveller, none preselected', await p.evaluate(() => /แชร์ตำแหน่งของใคร/.test(dlg.innerText) && document.querySelectorAll('#shWho input[type=radio]').length === travellers().length && !document.querySelector('#shWho input:checked')));
+  await p.click('#dlg button[value=ok]'); await p.waitForTimeout(500);
+  check('M25d accepting without choosing a name does not start sharing', await p.evaluate(() => !isSharing()) && locRpc().length === 0);
+  await p.evaluate(() => { const r = document.querySelector('#shWho input[type=radio]'); r.checked = true; window.__shName = r.value; }); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(4000);
   const up = s.rpc.filter(r => r.fn === 'upsert_row' && r.a.p_tab === 'Locations');
-  const on1 = await p.evaluate(() => ({ on: document.getElementById('shSw').getAttribute('aria-checked'), t: document.getElementById('ovStatus').innerText, me: me }));
+  const on1 = await p.evaluate(() => ({ on: document.getElementById('shSw').getAttribute('aria-checked'), t: document.getElementById('ovStatus').innerText, me: window.__shName }));
+  check('M26a the chosen name is only a per-device label (tt.shareAs), never an identity', await p.evaluate(() => store.get('tt.shareAs', '') === window.__shName && localStorage.getItem('tt.me') === null));
   check('M26 after consent: upsert_row on the public tab Locations with Name, Lat, Lng, Label, Updated (ISO) and no edit code; switch shows ON', up.length >= 1 && up[0].a.p_key === on1.me && up[0].a.p_cells[0] === on1.me && Math.abs(+up[0].a.p_cells[1] - 43.2389) < 1e-4 && Math.abs(+up[0].a.p_cells[2] - 76.8897) < 1e-4 && !isNaN(Date.parse(up[0].a.p_cells[4])) && up[0].a.code === '' && on1.on === 'true' && /เปิดอยู่/.test(on1.t), JSON.stringify(up[0] && up[0].a) + JSON.stringify(on1));
   const n1 = locRpc().length; await p.evaluate(() => { geo.lastPush = Date.now() - 60000; }); await p.waitForTimeout(16500);
   check('M27 periodic update while the app is open (~45 s cadence)', locRpc().length > n1, n1 + ' -> ' + locRpc().length);
@@ -441,26 +441,26 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await p.evaluate(() => { geo.lastPush = 0; return pushLoc(); }); await p.evaluate(() => { geo.lastPush = Date.now() - 60000; }); await p.waitForTimeout(16500);
   check('M28 toggle off stops all writes (switch off, no more RPC)', await p.evaluate(() => !isSharing() && document.getElementById('shSw').getAttribute('aria-checked') === 'false') && locRpc().length === n2, n2 + ' -> ' + locRpc().length);
   await p.click('#shSw'); await p.waitForTimeout(300); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(3500);
-  await p.evaluate(() => { data.locs[me] = { lat: 43.2, lng: 76.9, label: '', at: new Date().toISOString() }; renderMapStatus(); });
-  check('M29 "หยุดแชร์ + ลบตำแหน่งของฉัน" button is there while sharing', await p.evaluate(() => /หยุดแชร์ \+ ลบตำแหน่งของฉัน/.test(document.getElementById('shDel').textContent)));
+  await p.evaluate(() => { data.locs[shareAs()] = { lat: 43.2, lng: 76.9, label: '', at: new Date().toISOString() }; renderMapStatus(); });
+  check('M29 "หยุดแชร์ + ลบตำแหน่ง" button is there while sharing', await p.evaluate(() => /หยุดแชร์ \+ ลบตำแหน่ง/.test(document.getElementById('shDel').textContent)));
   await p.click('#shDel'); await p.waitForTimeout(800);
   const del = s.rpc.filter(r => r.fn === 'upsert_row' && r.a.p_tab === 'Locations').pop();
-  check('M30 stop + delete: my row is blanked through upsert_row (Name only), sharing off, my marker/entry gone', !!del && del.a.p_cells[0] === del.a.p_key && del.a.p_cells.slice(1).every(x => x === '') && await p.evaluate(() => !isSharing() && !data.locs[me] && !document.getElementById('shDel')), JSON.stringify(del && del.a));
+  check('M30 stop + delete: my row is blanked through upsert_row (Name only), sharing off, my marker/entry gone', !!del && del.a.p_cells[0] === del.a.p_key && del.a.p_cells.slice(1).every(x => x === '') && await p.evaluate(() => !isSharing() && !data.locs[shareAs()] && !document.getElementById('shDel')), JSON.stringify(del && del.a));
   check('M30b a blanked row is not read back as a position (parseLocations)', await p.evaluate(() => Object.keys(parseLocations([['Name', 'Lat', 'Lng', 'Label', 'Updated'], ['Nine', '', '', '', ''], ['Mew', '1.5', '2.5', 'x', '2026-01-01T00:00:00Z']]) || {}).join()) === 'Mew');
   await s.b.close();
   /* private trip: same flow through private_write; sharing is per trip */
-  s = await open({ active: 'priv:macau' }); p = s.p; await login(s, 'Mew'); await s.ctx.grantPermissions(['geolocation']); await s.ctx.setGeolocation({ latitude: 22.19, longitude: 113.54, accuracy: 10 });
+  s = await open({ active: 'priv:macau' }); p = s.p; await settle(s); await s.ctx.grantPermissions(['geolocation']); await s.ctx.setGeolocation({ latitude: 22.19, longitude: 113.54, accuracy: 10 });
   await p.evaluate(() => { cfg.forceLoc = true; }); await p.click('#dockFull'); await p.waitForTimeout(1000);
-  await p.click('#shSw'); await p.waitForTimeout(300); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(4000);
+  await p.click('#shSw'); await p.waitForTimeout(300); await p.check('#shWho input[value=Mew]'); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(4000);
   const pw = s.rpc.filter(r => r.fn === 'private_write' && r.a.p_tab === 'Locations');
-  check('M31 private trip: private_write(tab Locations): header row once, then upsert keyed by my name', pw.some(r => r.a.p_op === 'append' && r.a.p_payload[0] === 'Name') && pw.some(r => r.a.p_op === 'upsert' && r.a.p_payload.key === 'Mew' && Math.abs(+r.a.p_payload.cells[1] - 22.19) < 1e-4 && r.a.p_name === 'Mew' && r.a.p_hash === 'open'), JSON.stringify(pw.map(r => r.a.p_op)));
+  check('M31 private trip: private_write(tab Locations): header row once, then upsert keyed by the chosen share name (Mew) while the API identity stays Nine', pw.some(r => r.a.p_op === 'append' && r.a.p_payload[0] === 'Name') && pw.some(r => r.a.p_op === 'upsert' && r.a.p_payload.key === 'Mew' && Math.abs(+r.a.p_payload.cells[1] - 22.19) < 1e-4 && r.a.p_name === 'Nine' && r.a.p_hash === 'open'), JSON.stringify(pw.map(r => r.a.p_op)));
   await p.click('#ovClose'); await p.waitForTimeout(300); await p.evaluate(() => switchTrip(DEFAULT_TRIP.id)); await p.waitForTimeout(2500);
   check('M32 sharing is per trip: another trip starts OFF', await p.evaluate(() => !isSharing()));
   await s.b.close();
 
   /* layout: 360 / 390 / 430, dark mode, reduced motion */
   for (const [w, h] of [[360, 640], [390, 844], [430, 932]]) {
-    s = await open({ w, h, clock: '2026-07-12T10:30:00', active: 'priv:macau', init: CLS }); p = s.p; await login(s, 'Nine'); await seedMap(p, s);
+    s = await open({ w, h, clock: '2026-07-12T10:30:00', active: 'priv:macau', init: CLS }); p = s.p; await settle(s); await seedMap(p, s);
     if (w === 390) await p.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
     await p.click('#dockFull'); await p.waitForTimeout(1200);
     await p.evaluate(() => showCard({ kind: 'place', title: 'ชื่อสถานที่ที่ยาวมากๆ ชื่อสถานที่ที่ยาวมากๆ ชื่อสถานที่ที่ยาวมากๆ Metro Station', lines: ['Day 2 10.00', 'มาโดย Metro'], lat: 22.2, lng: 113.5, name: 'x', how: 'Metro' })); await p.waitForTimeout(400);
@@ -476,20 +476,20 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
     check(`M37 ${w}x${h}: overlay open/close/day-change CLS <= 0.05`, await p.evaluate(() => window.__cls) <= 0.05, String(await p.evaluate(() => window.__cls)));
     await s.b.close();
   }
-  s = await open({ reducedMotion: 'reduce' }); p = s.p; await login(s, 'Nine'); await p.click('#dockFull'); await p.waitForTimeout(800);
+  s = await open({ reducedMotion: 'reduce' }); p = s.p; await settle(s); await p.click('#dockFull'); await p.waitForTimeout(800);
   await p.evaluate(() => showCard({ title: 'x', lat: 1, lng: 2, name: 'x' })); await p.click('#ovFilt');
   check('M38 prefers-reduced-motion: card and sheet do not animate, switch has no transition', await p.evaluate(() => getComputedStyle(document.getElementById('ovCard')).animationName === 'none' && getComputedStyle(document.querySelector('.ovs-in')).animationName === 'none' && parseFloat(getComputedStyle(document.getElementById('shSw')).transitionDuration) === 0));
   await s.b.close();
 
   /* nav with 4 (and 5) evenly spaced items */
-  s = await open(); p = s.p; await login(s, 'Nine');
+  s = await open(); p = s.p; await settle(s);
   const nv = await p.evaluate(() => { const r = [...document.querySelectorAll('#tabs button')].map(b => b.getBoundingClientRect()); return { n: r.length, labels: [...document.querySelectorAll('#tabs span')].map(x => x.textContent).join('|'), w: Math.max(...r.map(x => x.width)) - Math.min(...r.map(x => x.width)), gap: Math.max(...r.slice(1).map((x, i) => x.left - r[i].right)) - Math.min(...r.slice(1).map((x, i) => x.left - r[i].right)), h: Math.min(...r.map(x => x.height)), over: document.documentElement.scrollWidth - innerWidth }; });
   check('J21 nav: 5 evenly spaced items (แผน|ค่าใช้จ่าย|สถานที่|เอกสาร|เมนู) >= 44 px tall, no horizontal overflow', nv.n === 5 && nv.labels === 'แผน|ค่าใช้จ่าย|สถานที่|เอกสาร|เมนู' && nv.w < 1 && nv.gap < 1 && nv.h >= 44 && nv.over <= 1, JSON.stringify(nv));
   await s.b.close();
 
   /* home top compaction */
   for (const [w, h] of [[390, 844], [360, 640]]) {
-    s = await open({ w, h }); p = s.p; await login(s, 'Nine'); await p.evaluate(() => window.scrollTo(0, 0)); await p.waitForTimeout(600);
+    s = await open({ w, h }); p = s.p; await settle(s); await p.evaluate(() => window.scrollTo(0, 0)); await p.waitForTimeout(600);
     const g = await p.evaluate(() => { const nav = document.querySelector('nav').getBoundingClientRect().top, st = document.querySelector('#tl .step'), hd = document.querySelector('.dayh h2').getBoundingClientRect(), dk = document.getElementById('homeDays').getBoundingClientRect(), mp = document.querySelector('.mapcard').getBoundingClientRect(); return { nav, stepBottom: st ? st.getBoundingClientRect().bottom : null, headTop: hd.top, headBottom: hd.bottom, dockBottom: dk.bottom, map: mp.height, nx: !!document.getElementById('cd'), stayOpen: !!document.getElementById('stayPn') }; });
     if (w === 390) check('J22 390x844: first step card fully above the bottom nav at scroll 0; open-map card slim (60-80 px); stay collapsed', g.stepBottom != null && g.stepBottom <= g.nav && g.map >= 60 && g.map <= 80 && !g.stayOpen, JSON.stringify(g));
     else check('J23 360x640: day heading visible (below the dock, above the nav) at scroll 0', g.headTop >= g.dockBottom - 1 && g.headBottom <= g.nav, JSON.stringify(g));
@@ -497,7 +497,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   }
 
   /* offline cache (stale-while-revalidate) */
-  s = await open(); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(800);
+  s = await open(); p = s.p; await settle(s); await p.waitForTimeout(800);
   check('J24 last good data is cached per trip, without picture data', await p.evaluate(() => { const v = localStorage.getItem('tt.cache.' + trip().id); return !!v && v.length < 1.5e6 && !/data:image/.test(v); }));
   check('J25 cache is skipped above ~1.5 MB', await p.evaluate(() => { writeCache('big', 'x'.repeat(1.6e6)); const a = localStorage.getItem('tt.cache.big'); writeCache('small', '{}'); const b = localStorage.getItem('tt.cache.small'); localStorage.removeItem('tt.cache.small'); return a === null && b !== null; }));
   await s.ctx.route('**/rest/v1/sheet_rows*', async r => { await new Promise(x => setTimeout(x, 4000)); r.continue().catch(() => { }); });
@@ -512,10 +512,10 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await s.ctx.setOffline(false); await p.evaluate(() => load()); await p.waitForTimeout(3500);
   check('J28 back online: banner clears', await p.evaluate(() => !/ออฟไลน์/.test(document.getElementById('tripSub').textContent)));
   await s.b.close();
-  s = await open(); p = s.p; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
+  s = await open(); p = s.p; await settle(s); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
   check('J29 private trip cached while signed in', await p.evaluate(() => !!localStorage.getItem('tt.cache.priv:macau')));
-  await login(s, 'Mew');
-  check('J30 switching user clears private caches (public cache stays)', await p.evaluate(() => !Object.keys(localStorage).some(k => k.startsWith('tt.cache.priv:')) && !!localStorage.getItem('tt.cache.' + DEFAULT_TRIP.id)));
+  await settle(s);
+  check('J30 no user switch exists: the private cache and the public cache both stay', await p.evaluate(() => !!localStorage.getItem('tt.cache.priv:macau') && !!localStorage.getItem('tt.cache.' + DEFAULT_TRIP.id)));
   /* (J31 "stale PIN clears private caches" dropped: there is no PIN session to go stale any more) */
   await s.b.close();
 
@@ -528,8 +528,8 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]), c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([l, td, c]); };
   const png = (w, h) => { const ih = Buffer.alloc(13); ih.writeUInt32BE(w, 0); ih.writeUInt32BE(h, 4); ih[8] = 8; ih[9] = 2; const row = Buffer.alloc(1 + w * 3, 0x80); row[0] = 0; return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ih), chunk('IDAT', zlib.deflateSync(Buffer.concat(Array(h).fill(row)))), chunk('IEND', Buffer.alloc(0))]); };
   const CLSK = () => { window.__cls = 0; try { new PerformanceObserver(l => { for (const e of l.getEntries()) if (!e.hadRecentInput) window.__cls += e.value; }).observe({ type: 'layout-shift', buffered: true }); } catch { } };
-  const addDoc = async (p, { who, kind, title, file }) => {          // who: a traveller name or '__shared' (default = the chosen name / the open chip)
-    await p.click('#dcAdd'); await p.waitForSelector('#dfForm'); if (who) await p.click(`#dfWho [data-w="${who}"]`); if (kind) await p.click(`[data-k=${kind}]`);
+  const addDoc = async (p, { who, kind, title, file }) => {          // who: a traveller name or '__shared' (default = the open person chip, else Nine; nothing is preselected otherwise)
+    await p.click('#dcAdd'); await p.waitForSelector('#dfForm'); if (!who && !(await p.evaluate(() => !!document.querySelector('#dfWho .tag.sel')))) who = 'Nine'; if (who) await p.click(`#dfWho [data-w="${who}"]`); if (kind) await p.click(`[data-k=${kind}]`);
     if (title) await p.fill('#dfTitle', title); await p.setInputFiles('#dfFile', file); await p.waitForFunction(() => !document.getElementById('dfOk').disabled || document.getElementById('dfErr').textContent, null, { timeout: 8000 });
   };
   const seg = p => p.evaluate(() => Object.fromEntries([...document.querySelectorAll('#dcSeg button')].map(b => [b.dataset.seg, +((b.textContent.match(/\((\d+)\)/) || [])[1])])));          // chip -> count
@@ -538,11 +538,11 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   const docTab = async p => { await p.click('[data-tab=docs]'); await p.waitForTimeout(900); };
 
   /* K1: no name chosen -> everybody's documents are shown right away, no gate */
-  s = await open(); p = s.p; await p.evaluate(() => { pick = ''; syncMe(); renderDocs(); });
+  s = await open(); p = s.p; 
   const names0 = await p.evaluate(() => users().map(u => u.name));
   await docTab(p);
-  const k1 = await p.evaluate(() => ({ me, pick: !!document.getElementById('dcPick'), txt: document.getElementById('tab-docs').innerText, chips: [...document.querySelectorAll('#dcSeg button')].map(b => b.dataset.seg), add: !!document.getElementById('dcAdd') }));
-  check('K1 no name chosen: documents open straight away (no "เลือกชื่อ" gate, no PIN wording), doc_list goes out under the first traveller, chips = ทุกคน | each name | ส่วนกลาง', k1.me === '' && !k1.pick && !/เลือกชื่อของคุณ|PIN/.test(k1.txt) && k1.add && s.rpc.some(r => r.fn === 'doc_list' && r.a.p_name === names0[0]) && JSON.stringify(k1.chips) === JSON.stringify(['all', ...names0, 'shared']), JSON.stringify(k1));
+  const k1 = await p.evaluate(() => ({ pick: !!document.getElementById('dcPick'), txt: document.getElementById('tab-docs').innerText, chips: [...document.querySelectorAll('#dcSeg button')].map(b => b.dataset.seg), add: !!document.getElementById('dcAdd') }));
+  check('K1 no identity: documents open straight away (no "เลือกชื่อ" gate, no PIN wording), doc_list goes out under the first traveller, chips = ทุกคน | each name | ส่วนกลาง', !k1.pick && !/เลือกชื่อของคุณ|PIN/.test(k1.txt) && k1.add && s.rpc.some(r => r.fn === 'doc_list' && r.a.p_name === names0[0]) && JSON.stringify(k1.chips) === JSON.stringify(['all', ...names0, 'shared']), JSON.stringify(k1));
   s.flags.users = names0.map(n => n.toLowerCase());
   await p.click('#dcAdd'); await p.waitForSelector('#dfForm'); await p.setInputFiles('#dfFile', { name: 'a.png', mimeType: 'image/png', buffer: png(300, 200) }); await p.waitForTimeout(700);
   const dis0 = await p.evaluate(() => document.getElementById('dfOk').disabled && document.querySelectorAll('#dfWho .tag.sel').length === 0 && /เลือกว่าเอกสารนี้เป็นของใคร/.test(document.getElementById('dfScopeNote').innerText));
@@ -552,7 +552,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await s.b.close();
 
   /* K2-K: main flow */
-  s = await open({ init: CLSK }); p = s.p; await login(s, 'Nine');
+  s = await open({ init: CLSK }); p = s.p; await settle(s);
   const unamesK = await p.evaluate(() => users().map(u => u.name));
   await p.evaluate(() => { window.__cls = 0; });
   await docTab(p);
@@ -562,12 +562,12 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   check('K3 chips with counts: ทุกคน (0) | every traveller (0) | ส่วนกลาง (0) and a friendly empty state', JSON.stringify(Object.keys(cK0)) === JSON.stringify(['all', ...unamesK, 'shared']) && Object.values(cK0).every(v => v === 0) && /ยังไม่มีเอกสาร/.test(await p.innerText('#tab-docs')), JSON.stringify(cK0));
   await addDoc(p, { file: png1 });
   const pv = await p.innerText('#dfPrev');
-  check('K4 image is downscaled client-side to <= 1800 px (2400x1000 -> 1800x750) and previewed; "ของใคร" defaults to the chosen name', /1800×750/.test(pv) && await p.evaluate(() => !!document.querySelector('#dfPrev img') && document.querySelector('#dfWho .tag.sel').dataset.w === 'Nine'), pv);
+  check('K4 image is downscaled client-side to <= 1800 px (2400x1000 -> 1800x750) and previewed; "เอกสารของใคร" needed an explicit pick (Nine here)', /1800×750/.test(pv) && await p.evaluate(() => !!document.querySelector('#dfPrev img') && document.querySelector('#dfWho .tag.sel').dataset.w === 'Nine'), pv);
   await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open, null, { timeout: 8000 }); await p.waitForTimeout(500);
   const put = s.rpc.find(r => r.fn === 'doc_put');
   check('K5 uploaded as JPEG chunks (<= 300k chars each), personal scope for Nine, title auto-filled', !!put && put.a.p_mime === 'image/jpeg' && put.a.p_scope === 'person' && put.a.p_owner === 'Nine' && put.a.p_title === 'พาสปอร์ต' && put.a.p_chunks.every(c => c.length <= 300000) && put.a.p_chunks[0].startsWith('/9j/'), put && JSON.stringify({ m: put.a.p_mime, sc: put.a.p_scope, t: put.a.p_title }));
   const cK1 = await seg(p), tx1 = await p.innerText('#tab-docs');
-  check('K6 new document appears under its person (ทุกคน 1, Nine 1), grouped header with name + count, group-visible note', cK1.all === 1 && cK1.Nine === 1 && cK1.shared === 0 && /เห็นทั้งกลุ่ม/.test(tx1) && !/เห็นเฉพาะคุณ/.test(tx1) && await p.evaluate(() => document.querySelectorAll('.dcard[data-id]').length === 1 && document.querySelectorAll('.dgh').length === 1), JSON.stringify(cK1));
+  check('K6 new document appears under its person (ทุกคน 1, Nine 1), grouped header with name + count, card says "เอกสารของ Nine" (no "mine" wording)', cK1.all === 1 && cK1.Nine === 1 && cK1.shared === 0 && /เอกสารของ Nine/.test(tx1) && !/เห็นทั้งกลุ่ม|เห็นเฉพาะคุณ/.test(tx1) && await p.evaluate(() => document.querySelectorAll('.dcard[data-id]').length === 1 && document.querySelectorAll('.dgh').length === 1), JSON.stringify(cK1));
   /* a PDF as a shared doc + a second personal image */
   const PDF_BAD = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF');
   await addDoc(p, { who: '__shared', kind: 'hotel', file: { name: 'voucher.pdf', mimeType: 'application/pdf', buffer: PDF_BAD } });
@@ -639,46 +639,45 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   s.flags.forcePut = '-4'; await p.setInputFiles('#dfFile', png1); await p.waitForFunction(() => !document.getElementById('dfOk').disabled); await p.click('#dfOk'); await p.waitForTimeout(800);
   check('K28 server refusal (-4 full) shows a clear message and nothing is added', /เซิร์ฟเวอร์ปฏิเสธ/.test(await p.innerText('#dfErr')) && /เต็ม/.test(await p.innerText('#dfErr')));
   s.flags.forcePut = ''; await p.click('#dfX'); await p.waitForTimeout(200);
-  /* wipe on sign-out */
-  check('K29 cached files exist in IndexedDB before the user switch', (await p.evaluate(async () => (await idbKeys()).length)) > 0);
-  await p.click('[data-tab=plan]'); await p.waitForTimeout(300); await p.evaluate(() => travellerPicker()); await p.waitForTimeout(300); await p.click('#whoList [data-u=Mew]'); await p.waitForTimeout(800); await p.evaluate(() => dc.wiping);
+  /* local cache wipe (no sign-out any more) */
+  check('K29 cached files exist in IndexedDB before the manual wipe', (await p.evaluate(async () => (await idbKeys()).length)) > 0);
+  await p.click('[data-tab=plan]'); await p.waitForTimeout(300); await p.evaluate(() => { docsWipe(); return dc.wiping; }); await p.waitForTimeout(500);
   const wp = await p.evaluate(async () => ({ keys: (await idbKeys()).length, list: dc.list, urls: Object.keys(dc.urls).length }));
-  check('K30 user switch wipes every document cache (IndexedDB, memory, blob URLs)', wp.keys === 0 && wp.list === null && wp.urls === 0, JSON.stringify(wp));
-  /* group visibility: another member sees, opens and adds for others (policy: private group app) */
+  check('K30 docsWipe() wipes every document cache (IndexedDB, memory, blob URLs)', wp.keys === 0 && wp.list === null && wp.urls === 0, JSON.stringify(wp));
+  /* group visibility: anyone sees, opens and adds for others (central system) */
   const unames = await p.evaluate(() => users().map(u => u.name)), third = unames.find(n => n !== 'Nine' && n !== 'Mew');
   s.flags.users = unames.map(n => n.toLowerCase());
-  await login(s, 'Mew'); await p.waitForTimeout(500); await p.click('[data-tab=docs]'); await p.waitForTimeout(1200);
+  await settle(s); await p.waitForTimeout(500); await p.click('[data-tab=docs]'); await p.waitForTimeout(1200);
   const mine = await seg(p);
-  check('K31 another member sees the first member\'s docs under ทุกคน (2), Nine (1), ส่วนกลาง (1), Mew (0)', mine.all === 2 && mine.Nine === 1 && mine.Mew === 0 && mine.shared === 1, JSON.stringify(mine));
+  check('K31 the list shows everyone\'s docs under ทุกคน (2), Nine (1), ส่วนกลาง (1), Mew (0)', mine.all === 2 && mine.Nine === 1 && mine.Mew === 0 && mine.shared === 1, JSON.stringify(mine));
   const pid = s.docs.find(d => d.scope === 'person').id, sid = s.docs.find(d => d.scope === 'shared').id;
-  const px = await p.evaluate(async ([a, b]) => ({ get: !!(await sbRpc('doc_get', { p_name: me, p_hash: myHash(), p_id: a })), del: await sbRpc('doc_delete', { p_name: me, p_hash: myHash(), p_id: a }), ren: await sbRpc('doc_rename', { p_name: me, p_hash: myHash(), p_id: b, p_title: 'x' }) }), [pid, sid]);
-  check('K32 server mock: get works for others\' personal docs; delete/rename of docs you neither own nor uploaded return 0', px.get === true && px.del === 0 && px.ren === 0, JSON.stringify(px));
+  const px = await p.evaluate(async ([a, b]) => ({ get: !!(await sbRpc('doc_get', { p_name: apiName(), p_hash: myHash(), p_id: a })), ren: await sbRpc('doc_rename', { p_name: apiName(), p_hash: myHash(), p_id: b, p_title: 'x' }), renP: await sbRpc('doc_rename', { p_name: apiName(), p_hash: myHash(), p_id: a, p_title: 'พาสปอร์ต' }), stranger: await sbRpc('doc_delete', { p_name: 'stranger', p_hash: myHash(), p_id: a }) }), [pid, sid]);
+  check('K32 server mock (central rules): get works for anyone\'s personal docs; ANY member renames ANY doc (1); a stranger is refused (-1) and nothing is deleted', px.get === true && px.ren === 1 && px.renP === 1 && px.stranger === -1 && s.docs.length === 2, JSON.stringify(px));
   /* offline scope choice (before anything is opened/cached for this member) */
   const gets = () => s.rpc.filter(r => r.fn === 'doc_get').length; let g0 = gets();
   await p.click('#dcAll'); await p.waitForSelector('[data-p=all]');
-  check('K32a "ดาวน์โหลดทั้งหมด" asks for a scope: default (ของฉัน + ส่วนกลาง), เฉพาะของฉัน, ทั้งหมดในกลุ่ม', await p.evaluate(() => ['def', 'me', 'all', 'x'].every(k => !!document.querySelector(`[data-p=${k}]`)) && /ของฉัน \+ ส่วนกลาง/.test(document.getElementById('dlg').innerText)));
-  await p.click('[data-p=me]'); await p.waitForTimeout(800); const g1 = gets();
-  await p.click('#dcAll'); await p.click('[data-p=def]'); await p.waitForTimeout(1200); const g2 = gets();
-  await p.click('#dcAll'); await p.click('[data-p=all]'); await p.waitForTimeout(1200); const g3 = gets();
-  check('K32b scope choice downloads only what was chosen (mine: 0 files, default: +shared 1, all: 0 more because Nine\'s picture is already stored by its thumbnail)', g1 - g0 === 0 && g2 - g1 === 1 && g3 - g2 === 0 && /อยู่ในเครื่องแล้ว/.test(await p.innerText('#toast')), [g0, g1, g2, g3].join(','));
+  check('K32a "ดาวน์โหลดทั้งหมด" asks for a scope: ทั้งหมดในกลุ่ม, เฉพาะส่วนกลาง (no "mine" option)', await p.evaluate(() => ['all', 'shared', 'x'].every(k => !!document.querySelector(`[data-p=${k}]`)) && !document.querySelector('[data-p=me]') && !document.querySelector('[data-p=def]') && !/ของฉัน/.test(document.getElementById('dlg').innerText)));
+  await p.click('[data-p=shared]'); await p.waitForTimeout(1000); const g1 = gets();
+  await p.click('#dcAll'); await p.click('[data-p=all]'); await p.waitForTimeout(1200); const g2 = gets(), g3 = g2;
+  check('K32b scope choice downloads only what was chosen (shared: +1 file, all: 0 more because Nine\'s picture is already stored by its thumbnail)', g1 - g0 === 1 && g2 - g1 === 0 && /อยู่ในเครื่องแล้ว/.test(await p.innerText('#toast')), [g0, g1, g2, g3].join(','));
   const fg = await p.evaluate(() => ({ grp: document.querySelectorAll('.dgh').length, hdr: [...document.querySelectorAll('.dgh')].map(h => h.innerText.replace(/\s+/g, ' ')), av: !!document.querySelector('.dgh .avatar'), cards: document.querySelectorAll('.dcard[data-id]').length, txt: document.getElementById('tab-docs').innerText }));
   check('K33 ทุกคน view: one group per person who has documents (avatar + name + count) and one for ส่วนกลาง, all open, card says "ของ Nine"', fg.grp === 2 && /Nine/.test(fg.hdr[0]) && /1 รายการ/.test(fg.hdr[0]) && /ส่วนกลาง/.test(fg.hdr[1]) && fg.av && fg.cards === 2 && /ของ Nine/.test(fg.txt), JSON.stringify(fg));
   await p.click('[data-show]'); await p.waitForSelector('#dvImg', { timeout: 5000 });
   check('K33a viewer works on another member\'s doc and names the owner at the top', await p.evaluate(() => dv.open && document.getElementById('dvOwner').textContent === 'Nine' && !!document.getElementById('dvImg') && dv.list.length === 2));
   await p.keyboard.press('Escape'); await p.waitForTimeout(300);
   await p.click('[data-more]'); await p.waitForSelector('[data-a=save]');
-  check('K33b non-owner non-uploader: menu has save but NO rename/delete (hidden, not disabled)', await p.evaluate(() => !document.querySelector('[data-a=del]') && !document.querySelector('[data-a=ren]'))); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  check('K33b any member sees rename + delete on anyone\'s document (central system)', await p.evaluate(() => !!document.querySelector('[data-a=del]') && !!document.querySelector('[data-a=ren]'))); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
   await p.click('[data-seg=shared]'); await p.click('[data-more]'); await p.waitForSelector('[data-a=save]');
-  check('K33c non-creator sees no rename/delete on a shared document', await p.evaluate(() => !document.querySelector('[data-a=del]') && !document.querySelector('[data-a=ren]'))); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  check('K33c ... and on a shared document', await p.evaluate(() => !!document.querySelector('[data-a=del]') && !!document.querySelector('[data-a=ren]'))); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
   /* add for someone else */
-  await p.click('[data-seg=all]'); await addDoc(p, { who: 'Nine', title: 'For Nine', file: { name: 'o.png', mimeType: 'image/png', buffer: png(300, 200) } });
+  await p.click('[data-seg=all]'); await addDoc(p, { who: 'Mew', title: 'For Mew', file: { name: 'o.png', mimeType: 'image/png', buffer: png(300, 200) } });
   const wp0 = await p.evaluate(() => ({ n: document.querySelectorAll('#dfWho [data-w]').length, names: [...document.querySelectorAll('#dfWho [data-w]')].map(b => b.dataset.w), av: document.querySelectorAll('#dfWho .avatar').length, sel: document.querySelector('#dfWho .tag.sel').dataset.w }));
-  check('K34 add sheet: "เอกสารของใคร" chips = every traveller (me included, default me) + ส่วนกลาง', wp0.n === unames.length + 1 && wp0.names.includes('Mew') && wp0.names.includes('__shared') && wp0.av === unames.length, JSON.stringify(wp0));
+  check('K34 add sheet: "เอกสารของใคร" chips = every traveller + ส่วนกลาง', wp0.n === unames.length + 1 && wp0.names.includes('Mew') && wp0.names.includes('__shared') && wp0.av === unames.length, JSON.stringify(wp0));
   await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open, null, { timeout: 8000 }); await p.waitForTimeout(500);
-  const pu2 = s.rpc.filter(r => r.fn === 'doc_put').pop(), nd = s.docs.find(d => d.title === 'For Nine');
-  check('K35 saved with p_owner, owner=nine, created_by=mew, scope person; toast "เพิ่มเอกสารให้ Nine แล้ว"; shows under Nine', pu2.a.p_owner === 'Nine' && pu2.a.p_scope === 'person' && nd && nd.owner === 'nine' && nd.created_by === 'mew' && /เพิ่มเอกสารให้ Nine แล้ว/.test(await p.innerText('#toast')) && (await seg(p)).Nine === 2 && /For Nine/.test(await p.innerText('#tab-docs')) && /เพิ่มโดย Mew/.test(await p.innerText('#tab-docs')), JSON.stringify(pu2.a.p_owner) + JSON.stringify(nd));
-  await p.click('.dcard[data-id]:has-text("For Nine") [data-more]'); await p.waitForSelector('[data-a=save]');
-  check('K36 the uploader (Mew) sees rename + delete on a doc she added for Nine', await p.evaluate(() => !!document.querySelector('[data-a=del]') && !!document.querySelector('[data-a=ren]'))); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  const pu2 = s.rpc.filter(r => r.fn === 'doc_put').pop(), nd = s.docs.find(d => d.title === 'For Mew');
+  check('K35 saved with p_owner=Mew, owner=mew, created_by = the constant API name (nine), scope person; toast "เพิ่มเอกสารให้ Mew แล้ว"; shows under Mew with "เพิ่มโดย Nine"', pu2.a.p_owner === 'Mew' && pu2.a.p_scope === 'person' && pu2.a.p_name === 'Nine' && nd && nd.owner === 'mew' && nd.created_by === 'nine' && /เพิ่มเอกสารให้ Mew แล้ว/.test(await p.innerText('#toast')) && (await seg(p)).Mew === 1 && /For Mew/.test(await p.innerText('#tab-docs')) && /เพิ่มโดย Nine/.test(await p.innerText('#tab-docs')));
+  await p.click('.dcard[data-id]:has-text("For Mew") [data-more]'); await p.waitForSelector('[data-a=save]');
+  check('K36 rename + delete are offered on a doc added for Mew', await p.evaluate(() => !!document.querySelector('[data-a=del]') && !!document.querySelector('[data-a=ren]'))); await p.keyboard.press('Escape'); await p.waitForTimeout(200);
   /* a second person -> another group, toggle keeps layout stable */
   if (third) {
     await addDoc(p, { who: third, title: 'For third', file: { name: 'o2.png', mimeType: 'image/png', buffer: png(300, 200) } }); await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open, null, { timeout: 8000 }); await p.waitForTimeout(500);
@@ -686,29 +685,25 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
     await p.click('.dgh >> nth=0'); await p.waitForTimeout(200);
     const g2y = await p.evaluate(() => ({ ex: [...document.querySelectorAll('.dgh')].map(b => b.getAttribute('aria-expanded')), cards: document.querySelectorAll('.dcard[data-id]').length }));
     await p.click('.dgh >> nth=0'); await p.waitForTimeout(200);
-    check('K37 three groups (Nine, third, ส่วนกลาง) all open; a header collapses / expands its cards', g2x.length === 3 && g2x.every(x => x.open === 'true') && g2y.ex[0] === 'false' && g2y.ex[1] === 'true' && g2y.cards < 4 && await p.evaluate(() => document.querySelectorAll('.dcard[data-id]').length) === 4, JSON.stringify([g2x, g2y]));
+    check('K37 four groups (Nine, Mew, third, ส่วนกลาง) all open; a header collapses / expands its cards', g2x.length === 4 && g2x.every(x => x.open === 'true') && g2y.ex[0] === 'false' && g2y.ex[1] === 'true' && g2y.cards < 4 && await p.evaluate(() => document.querySelectorAll('.dcard[data-id]').length) === 4, JSON.stringify([g2x, g2y]));
   }
-  await p.evaluate(() => travellerPicker()); await p.waitForTimeout(500);
-  await login(s, 'Nine'); await p.waitForTimeout(500); await p.click('[data-tab=docs]'); await p.waitForTimeout(1200);
-  const nsg = await seg(p); await p.click('[data-seg="Nine"]'); await p.waitForTimeout(300);
-  const forMe = await p.evaluate(() => { const c = [...document.querySelectorAll('.dcard[data-id]')].find(x => /For Nine/.test(x.innerText)); return c && { t: c.innerText, more: !!c.querySelector('[data-more]') }; });
-  check('K38 the owner (Nine) sees the doc Mew added: "เพิ่มโดย Mew" and "เห็นทั้งกลุ่ม"', nsg.Nine === 2 && forMe && /เพิ่มโดย Mew/.test(forMe.t) && /เห็นทั้งกลุ่ม/.test(forMe.t), JSON.stringify(nsg) + JSON.stringify(forMe));
-  await p.click('.dcard[data-id]:has-text("For Nine") [data-more]'); await p.waitForSelector('[data-a=ren]'); await p.click('[data-a=ren]'); await p.fill('#rnT', 'For Nine ok'); await p.click('#rnOk'); await p.waitForTimeout(600);
-  check('K39 the owner may rename a doc someone else uploaded for them', s.docs.some(d => d.title === 'For Nine ok'));
+  await p.click('[data-seg="Mew"]'); await p.waitForTimeout(300);
+  await p.click('.dcard[data-id]:has-text("For Mew") [data-more]'); await p.waitForSelector('[data-a=ren]'); await p.click('[data-a=ren]'); await p.fill('#rnT', 'For Mew ok'); await p.click('#rnOk'); await p.waitForTimeout(600);
+  check('K39 any member may rename a doc someone else added (server twin: central rules)', s.docs.some(d => d.title === 'For Mew ok'));
   s.flags.users = ['nine']; await addDoc(p, { who: unames.find(n => n !== 'Nine'), file: png1 }); await p.click('#dfOk'); await p.waitForTimeout(800);
   check('K39a unknown owner (server -6) shows a clear Thai message', /ไม่พบสมาชิก/.test(await p.innerText('#dfErr'))); await p.click('#dfX'); await p.waitForTimeout(200); s.flags.users = null;
-  await p.evaluate(() => travellerPicker()); await p.waitForTimeout(500); await login(s, 'Mew'); await p.waitForTimeout(500); await p.click('[data-tab=docs]'); await p.waitForTimeout(1200);
+  await p.click('[data-tab=docs]'); await p.waitForTimeout(1200);
   /* the server does not know this name (null) -> message, stay put; transient errors -> retry panel */
   s.flags.nullDocs = true; await p.evaluate(() => docsRefresh(true)); await p.waitForTimeout(1500);
-  check('K40 doc_list null (name unknown to the server): Thai message, name kept, no sign-out screen', await p.evaluate(() => !!me && !document.getElementById('login') && /ไม่รู้จักชื่อนี้/.test(document.getElementById('toast').textContent)));
+  check('K40 doc_list null (API name unknown to the server): Thai message, no sign-out screen', await p.evaluate(() => !!apiName() && !document.getElementById('login') && /เซิร์ฟเวอร์ไม่รับคำขอ/.test(document.getElementById('toast').textContent)));
   await s.b.close();
-  s = await open(); p = s.p; await login(s, 'Nine'); await off(s, true); await docTab(p);
-  check('K35b network error with nothing cached: inline retry, name kept', await p.evaluate(() => !!me && !!document.getElementById('dcRetry') && !document.getElementById('app').hidden));
+  s = await open(); p = s.p; await settle(s); await off(s, true); await docTab(p);
+  check('K35b network error with nothing cached: inline retry', await p.evaluate(() => !!apiName() && !!document.getElementById('dcRetry') && !document.getElementById('app').hidden));
   await off(s, false); await p.click('#dcRetry'); await p.waitForTimeout(1500);
   check('K36b retry succeeds once the network is back', await p.evaluate(() => !!document.getElementById('dcSeg')));
   await s.b.close();
   /* SQL not applied */
-  s = await open(); p = s.p; s.flags.noDocsSql = true; await login(s, 'Nine'); await docTab(p);
+  s = await open(); p = s.p; s.flags.noDocsSql = true; await settle(s); await docTab(p);
   check('K37b SQL not applied: friendly "ยังไม่เปิดใช้งาน" message, no raw error, other tabs fine', /ฟีเจอร์เอกสารยังไม่เปิดใช้งาน — ผู้ดูแลต้องรัน docs\/supabase_docs\.sql/.test(await p.innerText('#tab-docs')) && !/Could not find/.test(await p.innerText('#tab-docs')) && await p.evaluate(() => document.getElementById('error').hidden));
   await p.click('[data-tab=money]'); await p.waitForTimeout(300);
   check('K38b other tabs still work when docs are not enabled', await p.evaluate(() => !document.getElementById('tab-money').hidden && document.getElementById('tab-money').innerText.length > 20));
@@ -718,7 +713,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   {
   console.log('\n[P] batch 2: ค่าใช้จ่าย, places, docs viewer, menu, day lock, stay + quick info');
   /* P1 ค่าใช้จ่าย */
-  s = await open(); p = s.p; await login(s, 'Nine');
+  s = await open(); p = s.p; await settle(s);
   const pm = await p.evaluate(() => {
     const [a, b] = travellers(); data.expenses = [{ item: 'dinner', cat: 'x', amount: 90, cur: 'THB', payer: a, type: 'split', with: [a, b] }, { item: 'taxi', cat: 'x', amount: 40, cur: 'USD', payer: b, type: 'split', with: [a, b] }, { item: 'solo', cat: 'x', amount: 10, cur: 'THB', payer: a, type: 'personal', with: [] }]; data.costs = [['รายการ', 'ราคา'], ['x', '1']];
     renderMoney(); const el = document.getElementById('tab-money');
@@ -728,7 +723,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   check('P1b ... and who pays whom per currency (net pair: THB b->a 45; USD a->b 20); no final table, no currency switcher', pm.thbPair.length === 1 && pm.thbPair[0].startsWith(pm.b + '>' + pm.a + ':45') && pm.usd.length === 1 && pm.usd[0].startsWith(pm.a + '>' + pm.b) && /20/.test(pm.usd[0]) && pm.tbl === 0 && pm.seg === 0, JSON.stringify(pm));
   await s.b.close();
   /* P1c: Cost tab with "นาย" / "มิว" columns on a private trip; rows without a person = shared */
-  s = await open({ active: 'priv:macau' }); p = s.p; await login(s, 'Nine');
+  s = await open({ active: 'priv:macau' }); p = s.p; await settle(s);
   s.trips.macau.Cost = [['รายการ', 'นาย', 'มิว', 'ราคา'], ['Ticket', '100', '50', ''], ['Hotel', '', '', '200'], ['รวม', '100', '50', '200']];
   await p.evaluate(() => load()); await p.waitForTimeout(1500); await p.click('[data-tab=money]'); await p.waitForTimeout(500);
   const pc = await p.evaluate(() => { const el = document.getElementById('tab-money'); return { rows: [...el.querySelectorAll('.card.cur .pp')].map(r => r.dataset.p + ':' + r.querySelector('.amt').innerText.replace(/\s+/g, ' ').trim() + '|' + r.querySelector('small').innerText), pairs: el.querySelectorAll('[data-pair]').length, unpaid: /ส่วนกลางที่ยังไม่มีผู้จ่าย 200/.test(el.innerText), list: el.querySelector('#moneyBody').innerText.replace(/\s+/g, ' '), ce: costExpenses().map(e => e.payer + e.amount + e.type).join(',') }; });
@@ -750,30 +745,50 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   const pg = await p.evaluate(() => ({ cards: [...document.querySelectorAll('#tab-money .card.cur')].map(c => c.dataset.cur).join(), pairs: document.querySelectorAll('#tab-money [data-pair]').length }));
   check('P1g real Cost shape: one card per currency (THB, CNY) and no invented debts', pg.cards === 'THB,CNY' && pg.pairs === 0, JSON.stringify(pg));
   /* adding an expense still works on a private trip: payers = Nine / Mew, written through private_write */
-  await p.evaluate(() => expenseDialog()); await p.waitForTimeout(300);
-  const pay = await p.evaluate(() => [...document.querySelectorAll('select[name=payer] option')].map(o => o.value).join());
-  await p.fill('[name=item]', 'Coffee'); await p.fill('[name=amount]', '55'); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(1200);
-  const ew = s.rpc.filter(r => r.fn === 'private_write' && r.a.p_tab === 'Expenses').pop();
-  check('P1e add expense (private trip): payer list = Nine, Mew; saved with private_write append to Expenses', pay === 'Nine,Mew' && !!ew && ew.a.p_op === 'append' && ew.a.p_payload[1] === 'Coffee' && +ew.a.p_payload[3] === 55, pay + JSON.stringify(ew && ew.a.p_payload));
+  const ewAll = () => s.rpc.filter(r => r.fn === 'private_write' && r.a.p_tab === 'Expenses');
+  const openEx = async () => { await p.evaluate(() => expenseDialog()); await p.waitForTimeout(300); };
+  await openEx();
+  const pay = await p.evaluate(() => ({ opts: [...document.querySelectorAll('select[name=payer] option')].map(o => o.value).join(), val: document.querySelector('select[name=payer]').value, req: document.querySelector('select[name=payer]').required, types: [...document.querySelectorAll('select[name=type] option')].map(o => o.value).join(), box: document.getElementById('whoBox').hidden, txt: document.getElementById('dlg').innerText }));
+  await p.fill('[name=item]', 'Coffee'); await p.fill('[name=amount]', '55'); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(600);
+  check('P1e1 add-expense form: "ใครจ่าย" is a REQUIRED picker (no default, no remembered name); without a payer nothing is sent and the dialog stays', pay.opts === ',Nine,Mew' && pay.val === '' && pay.req && ewAll().length === 0 && await p.evaluate(() => document.getElementById('dlg').open), JSON.stringify(pay));
+  check('P1e2 form offers ส่วนกลาง / ส่วนตัวของคนเดียว / แบ่งกับบางคน and hides the people list for ส่วนกลาง', pay.types === 'shared,personal,split' && pay.box && /ส่วนกลาง/.test(pay.txt) && /ส่วนตัวของคนเดียว/.test(pay.txt) && /แบ่งกับบางคน/.test(pay.txt));
+  await p.selectOption('select[name=payer]', 'Mew'); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(1200);
+  let ew = ewAll().pop();
+  check('P1e add expense (private trip, ส่วนกลาง): PaidBy = the chosen payer (Mew), saved with private_write append to Expenses', !!ew && ew.a.p_op === 'append' && ew.a.p_payload[1] === 'Coffee' && +ew.a.p_payload[3] === 55 && ew.a.p_payload[5] === 'Mew' && ew.a.p_payload[6] === 'shared' && ew.a.p_payload[7] === '', JSON.stringify(ew && ew.a.p_payload));
+  await openEx(); await p.fill('[name=item]', 'Taxi'); await p.fill('[name=amount]', '100'); await p.selectOption('select[name=payer]', 'Nine'); await p.selectOption('select[name=type]', 'personal');
+  await p.check('#whoChecks input[value=Nine]'); await p.check('#whoChecks input[value=Mew]');
+  const one = await p.evaluate(() => [...document.querySelectorAll('#whoChecks input:checked')].map(x => x.value).join());
+  await p.click('#dlg button[value=ok]'); await p.waitForTimeout(1200); ew = ewAll().pop();
+  check('P1e3 ส่วนตัวของคนเดียว: only ONE person can be picked (last pick wins); payer Nine paying for Mew is stored as split with Mew', one === 'Mew' && ew.a.p_payload[1] === 'Taxi' && ew.a.p_payload[5] === 'Nine' && ew.a.p_payload[6] === 'split' && ew.a.p_payload[7] === 'Mew', JSON.stringify(ew.a.p_payload));
+  await openEx(); await p.fill('[name=item]', 'Lunch'); await p.fill('[name=amount]', '90'); await p.selectOption('select[name=payer]', 'Nine'); await p.selectOption('select[name=type]', 'personal'); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(600);
+  check('P1e4 ส่วนตัว / แบ่งกับบางคน without picking anyone is refused (nothing sent)', ewAll().length === 2 && await p.evaluate(() => document.getElementById('dlg').open));
+  await p.check('#whoChecks input[value=Mew]'); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(1200); ew = ewAll().pop();
+  check('P1e5 ส่วนตัวของคนเดียว with the payer paying for someone else (Nine pays, for Mew) -> split with Mew', ewAll().length === 3 && ew.a.p_payload[5] === 'Nine' && ew.a.p_payload[6] === 'split' && ew.a.p_payload[7] === 'Mew', JSON.stringify(ew.a.p_payload));
+  await openEx(); await p.fill('[name=item]', 'Own'); await p.fill('[name=amount]', '10'); await p.selectOption('select[name=payer]', 'Mew'); await p.selectOption('select[name=type]', 'personal'); await p.check('#whoChecks input[value=Mew]'); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(1200); ew = ewAll().pop();
+  check('P1e6 ส่วนตัวของคนเดียว for the payer himself stays "personal"', ew.a.p_payload[5] === 'Mew' && ew.a.p_payload[6] === 'personal' && ew.a.p_payload[7] === '', JSON.stringify(ew.a.p_payload));
+  await openEx(); await p.fill('[name=item]', 'Dinner'); await p.fill('[name=amount]', '200'); await p.selectOption('select[name=payer]', 'Nine'); await p.selectOption('select[name=type]', 'split'); await p.check('#whoChecks input[value=Mew]'); await p.check('#whoChecks input[value=Nine]');
+  const prv = await p.evaluate(() => document.getElementById('preview').innerText); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(1200); ew = ewAll().pop();
+  check('P1e7 แบ่งกับบางคน (several): payer Nine, split with Nine, Mew; the preview says who owes whom', ew.a.p_payload[5] === 'Nine' && ew.a.p_payload[6] === 'split' && ew.a.p_payload[7] === 'Nine, Mew' && /Mew/.test(prv) && /ติด/.test(prv), prv + JSON.stringify(ew.a.p_payload));
+  const debts = await p.evaluate(() => { data.expenses = [{ item: 'a', cat: '', amount: 100, cur: 'THB', payer: 'Nine', type: 'split', with: ['Mew'] }, { item: 'b', cat: '', amount: 40, cur: 'THB', payer: 'Mew', type: 'shared', with: [] }]; const c = calcCur('THB', travellers()); return c.pairs.map(x => x.from + '>' + x.to + ':' + x.v).join(); });
+  check('P1e8 debts come from payer vs beneficiaries (Nine pays 100 for Mew, Mew pays 40 shared -> Mew owes Nine 80)', debts === 'Mew>Nine:80', debts);
   await s.b.close();
 
   /* P2 menu */
-  s = await open(); p = s.p; await login(s, 'Nine'); await p.click('[data-tab=menu]'); await p.waitForTimeout(1200);
+  s = await open(); p = s.p; await settle(s); await p.click('[data-tab=menu]'); await p.waitForTimeout(1200);
   const mn = await p.evaluate(() => ({ h: [...document.querySelectorAll('#tab-menu > .card h2')].map(x => x.textContent.trim()), last: document.querySelector('#tab-menu').lastElementChild.id, txt: document.getElementById('tab-menu').innerText, rows: document.querySelectorAll('#tab-menu .mrow').length, names: travellers().length }));
   const iM = mn.h.findIndex(x => /สมาชิก/.test(x)), iT = mn.h.indexOf('ทริป'), iN = mn.h.indexOf('การแจ้งเตือน'), iD = mn.h.indexOf('โหมดมืด'), iQ = mn.h.findIndex(x => /โควตาฟรี Supabase/.test(x));
   check('P2 menu order: สมาชิก -> ทริป -> การแจ้งเตือน -> โหมดมืด ... -> โควตาฟรี Supabase LAST; no "โปรไฟล์ของฉัน", no "แก้ไขทริป" card', iM === 0 && iT === 1 && iN === 2 && iD > iN && iQ === mn.h.length - 1 && mn.last === 'usageBox' && !/โปรไฟล์ของฉัน|แก้ไขทริป/.test(mn.txt) && mn.rows === mn.names, JSON.stringify(mn.h) + mn.last);
-  await p.click('#tab-menu .mrow[data-n=Mew] [data-who]'); await p.waitForTimeout(800);
-  check('P2b members card: every traveller has a photo action; "ใช้ชื่อนี้" selects who I am', await p.evaluate(() => me === 'Mew' && document.querySelectorAll('#tab-menu .mrow [data-avp]').length === travellers().length && !!document.querySelector('#tab-menu .mrow[data-n=Mew] .chip') && !document.querySelector('#tab-menu .mrow[data-n=Mew] [data-who]')));
+  check('P2b members card: every traveller row has a photo action and nothing else (no chip, no other button)', await p.evaluate(() => document.querySelectorAll('#tab-menu .mrow [data-avp]').length === travellers().length && !document.querySelector('#membersCard .chip') && [...document.querySelectorAll('#membersCard button')].every(b => b.hasAttribute('data-avp') || b.hasAttribute('data-avd'))));
   await s.b.close();
 
   /* P3 day lock */
-  s = await open({ init: CLSK }); p = s.p; await login(s, 'Nine'); await p.click('[data-tab=plan]'); await p.waitForTimeout(500);
+  s = await open({ init: CLSK }); p = s.p; await settle(s); await p.click('[data-tab=plan]'); await p.waitForTimeout(500);
   const L0 = await p.evaluate(() => ({ label: data.plan.days[ui.day].label, btn: document.getElementById('lockBtn').innerText.trim(), edit: !document.getElementById('editBtn').disabled, badge: !!document.getElementById('lockBadge') }));
   check('P3 each day has a "ล็อกวัน" toggle next to แก้ไข (not locked yet: edit enabled, no badge)', L0.btn === 'ล็อกวัน' && L0.edit && !L0.badge, JSON.stringify(L0));
   await p.evaluate(() => { window.__cls = 0; }); await p.click('#lockBtn'); await p.waitForTimeout(900);
   const hdr = s.rpc.filter(r => r.fn === 'append_row' && r.a.p_tab === 'Locks'), up = s.rpc.filter(r => r.fn === 'upsert_row' && r.a.p_tab === 'Locks').pop();
   const L1 = await p.evaluate(() => ({ btn: document.getElementById('lockBtn').innerText.trim(), dis: document.getElementById('editBtn').disabled, badge: document.getElementById('lockBadge') && document.getElementById('lockBadge').innerText, tl: document.getElementById('tl').classList.contains('locked'), cls: window.__cls, h: document.getElementById('lockBtn').getBoundingClientRect().height }));
-  check('P3b lock: written to the shared tab Locks (header row once + upsert Day|1|who|time), button becomes "ปลดล็อก", edit disabled, badge "ล็อกอยู่ · Nine"', hdr.length === 1 && hdr[0].a.p_cells[0] === 'Day' && !!up && up.a.p_key === L0.label && up.a.p_cells[0] === L0.label && up.a.p_cells[1] === '1' && up.a.p_cells[2] === 'Nine' && !isNaN(Date.parse(up.a.p_cells[3])) && up.a.code === '' && L1.btn === 'ปลดล็อก' && L1.dis && /ล็อกอยู่ · Nine/.test(L1.badge) && L1.tl && L1.h >= 44, JSON.stringify({ hdr: hdr.length, up: up && up.a, L1 }));
+  check('P3b lock: written to the shared tab Locks (header row once + upsert Day|1|who|time), button becomes "ปลดล็อก", edit disabled, badge "ล็อกอยู่" (nobody is recorded: no identity)', hdr.length === 1 && hdr[0].a.p_cells[0] === 'Day' && !!up && up.a.p_key === L0.label && up.a.p_cells[0] === L0.label && up.a.p_cells[1] === '1' && up.a.p_cells[2] === '' && !isNaN(Date.parse(up.a.p_cells[3])) && up.a.code === '' && L1.btn === 'ปลดล็อก' && L1.dis && /ล็อกอยู่/.test(L1.badge) && !/Nine/.test(L1.badge) && L1.tl && L1.h >= 44, JSON.stringify({ hdr: hdr.length, up: up && up.a, L1 }));
   check('P3c locking causes no layout shift (CLS <= 0.05)', L1.cls <= 0.05, String(L1.cls));
   await p.evaluate(() => toggleEdit()); await p.waitForTimeout(200);
   check('P3d a locked day cannot be edited: toggleEdit refuses with a toast, edit mode stays off', await p.evaluate(() => !ui.edit && /ถูกล็อก/.test(document.getElementById('toast').textContent)));
@@ -786,20 +801,20 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   check('P3g unlock: row written with Locked = 0, edit enabled again', up2.a.p_cells[1] === '0' && await p.evaluate(() => !document.getElementById('editBtn').disabled && document.getElementById('lockBtn').innerText.trim() === 'ล็อกวัน' && !document.getElementById('lockBadge')));
   /* the lock is loaded for everybody (server rows) */
   await s.b.close();
-  s = await open({ active: 'priv:macau' }); p = s.p; await login(s, 'Mew');
+  s = await open({ active: 'priv:macau' }); p = s.p; await settle(s);
   const lab = await p.evaluate(() => data.plan.days[1].label); s.trips.macau.Locks = [['Day', 'Locked', 'By', 'Time'], [lab, '1', 'Nine', '2026-07-01T10:00:00Z']];
   await p.evaluate(() => load()); await p.waitForTimeout(1500); await p.click('.pill[data-day="1"]'); await p.waitForTimeout(400);
   check('P3h a lock written by someone else is read from the Locks tab: day 2 shows "ล็อกอยู่ · Nine", day 1 does not', await p.evaluate(() => /ล็อกอยู่ · Nine/.test(document.getElementById('tab-plan').innerText) && document.getElementById('editBtn').disabled) && await (async () => { await p.click('.pill[data-day="0"]'); await p.waitForTimeout(300); return p.evaluate(() => !document.getElementById('lockBadge') && !document.getElementById('editBtn').disabled); })());
   await p.click('.pill[data-day="1"]'); await p.waitForTimeout(300); await p.click('#lockBtn'); await p.waitForTimeout(800);
   const pw = s.rpc.filter(r => r.fn === 'private_write' && r.a.p_tab === 'Locks' && r.a.p_op === 'upsert').pop();
-  check('P3i private trip: unlock goes through private_write(upsert) with the day key and my name; the tab already had its header, so no header append', !!pw && pw.a.p_payload.key === lab && pw.a.p_payload.cells[1] === '0' && pw.a.p_payload.cells[2] === 'Mew' && pw.a.p_name === 'Mew' && !s.rpc.some(r => r.fn === 'private_write' && r.a.p_tab === 'Locks' && r.a.p_op === 'append'), JSON.stringify(pw && pw.a));
+  check('P3i private trip: unlock goes through private_write(upsert) with the day key and the constant API name (Nine); the tab already had its header, so no header append', !!pw && pw.a.p_payload.key === lab && pw.a.p_payload.cells[1] === '0' && pw.a.p_payload.cells[2] === '' && pw.a.p_name === 'Nine' && !s.rpc.some(r => r.fn === 'private_write' && r.a.p_tab === 'Locks' && r.a.p_op === 'append'), JSON.stringify(pw && pw.a));
   /* a failing write: toast, nothing pretends to be locked, the app keeps working */
   s.flags.failWrites = true; await p.click('#lockBtn'); await p.waitForTimeout(1200);
   check('P3j lock write fails: toast "บันทึกการล็อกไม่สำเร็จ", the day is NOT shown as locked, editing still possible', await p.evaluate(() => /บันทึกการล็อกไม่สำเร็จ/.test(document.getElementById('toast').textContent) && !document.getElementById('lockBadge') && !document.getElementById('editBtn').disabled && !isLocked(data.plan.days[ui.day])));
   s.flags.failWrites = false; await s.b.close();
 
   /* P4 stay badge + quick info */
-  s = await open({ active: 'priv:macau', w: 360, h: 640 }); p = s.p; await login(s, 'Nine');
+  s = await open({ active: 'priv:macau', w: 360, h: 640 }); p = s.p; await settle(s);
   const noStay = await p.evaluate(() => ({ badges: document.querySelectorAll('#tl .stlink').length, info: !!document.getElementById('infoBtn') }));
   s.trips.macau.Stay = [['Key', 'Value'], ['name', 'Test Hotel'], ['address', '1 Test Road, Sample City'], ['lat', '22.19'], ['lng', '113.54'], ['checkin', 'Check-in 15.00'], ['checkout', 'Check-out 11.00'], ['booking', 'BK-12345'], ['phone', '+853 1234 5678'], ['note', 'Ask for a high floor'], ['rules', 'No smoking\nQuiet after 22.00']];
   s.trips.macau.Info = [['Key', 'Value'], ['Police', '999'], ['Wi-Fi', 'guest1234']];
@@ -825,7 +840,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await s.b.close();
 
   /* P5 places: one page, empty state, add -> instant insight + suggestion */
-  s = await open({ clock: '2026-07-10T10:00:00', active: 'priv:macau', init: CLSK }); p = s.p; await login(s, 'Nine');
+  s = await open({ clock: '2026-07-10T10:00:00', active: 'priv:macau', init: CLSK }); p = s.p; await settle(s);
   await s.ctx.route(/nominatim\.openstreetmap\.org/, r => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(/Named%20Cafe|Named Cafe/.test(decodeURIComponent(r.request().url())) ? [{ lat: '22.2105', lon: '113.5525' }] : []) }));
   await p.evaluate(() => {
     let i = 0; data.plan.days.forEach((_, d) => dayWaypoints(d).forEach(w => { if (!gc.cache[gKey(w.q)]) gc.cache[gKey(w.q)] = { lat: 22.19 + 0.01 * (++i), lng: 113.54 + 0.012 * i }; }));
@@ -860,7 +875,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   check('P5g one page: no tab segments on the Places tab, CLS <= 0.05', await p.evaluate(() => document.querySelectorAll('#tab-spots .seg').length === 0 && window.__cls <= 0.05), String(await p.evaluate(() => window.__cls)));
   await s.b.close();
   /* geocoding fails -> clear message, nothing saved */
-  s = await open({ active: 'priv:macau' }); p = s.p; await login(s, 'Nine'); await p.click('[data-tab=spots]'); await p.waitForTimeout(600);
+  s = await open({ active: 'priv:macau' }); p = s.p; await settle(s); await p.click('[data-tab=spots]'); await p.waitForTimeout(600);
   await p.evaluate(() => spotDialog()); await p.fill('#dlg input[name=u]', 'Nowhere Land'); await p.waitForFunction(() => /ไม่พบสถานที่นี้/.test(document.getElementById('detect').textContent), null, { timeout: 15000 });
   await p.fill('#dlg input[name=name]', 'x'); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(300);
   check('P5h unknown name: "ไม่พบสถานที่นี้" and saving is refused (no row written)', await p.evaluate(() => /ยังไม่มีพิกัด/.test(document.getElementById('toast').textContent)) && !s.rpc.some(r => r.fn === 'private_write' && r.a.p_tab === 'Places'));
@@ -868,7 +883,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
 
   /* P6 documents viewer: PDF inline, cached pages, offline */
   const pdfOf = n => { const objs = []; objs.push('<< /Type /Catalog /Pages 2 0 R >>'); objs.push(`<< /Type /Pages /Kids [${Array.from({ length: n }, (_, i) => `${3 + i * 2} 0 R`).join(' ')}] /Count ${n} >>`); for (let i = 0; i < n; i++) { const t = `BT /F1 36 Tf 60 400 Td (Page ${i + 1}) Tj ET`; objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 500] /Contents ${4 + i * 2} 0 R /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>`); objs.push(`<< /Length ${t.length} >>\nstream\n${t}\nendstream`); } let out = '%PDF-1.4\n'; const off = []; objs.forEach((o, i) => { off.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; }); const x = out.length; out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + off.map(o => String(o).padStart(10, '0') + ' 00000 n \n').join('') + `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${x}\n%%EOF`; return Buffer.from(out, 'latin1'); };
-  s = await open({ init: CLSK }); p = s.p; await login(s, 'Nine'); await docTab(p);
+  s = await open({ init: CLSK }); p = s.p; await settle(s); await docTab(p);
   await addDoc(p, { kind: 'hotel', title: 'Voucher', file: { name: 'v.pdf', mimeType: 'application/pdf', buffer: pdfOf(3) } }); await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open, null, { timeout: 8000 }); await p.waitForTimeout(600);
   const pdfReq0 = s.reqs.filter(x => x === 'PDFJS').length, g00 = s.rpc.filter(r => r.fn === 'doc_get').length;
   await p.click('.dcard[data-id]:has-text("Voucher") [data-show]');
@@ -898,7 +913,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   check('P6f CLS <= 0.05 while the PDF pages arrive and while re-opening / deleting (the deliberate zoom resize driven by the synthetic pinch is excluded)', clsA <= 0.05 && (await p.evaluate(() => window.__cls)) - clsB <= 0.05, clsA + ' / ' + clsB + ' / ' + await p.evaluate(() => window.__cls));
   await s.b.close();
   /* chips are sticky under the header, and an image opened is marked offline */
-  s = await open({ w: 390, h: 700 }); p = s.p; await login(s, 'Nine'); await docTab(p);
+  s = await open({ w: 390, h: 700 }); p = s.p; await settle(s); await docTab(p);
   for (let i = 0; i < 6; i++) { await addDoc(p, { title: 'Doc ' + i, file: { name: 'd.png', mimeType: 'image/png', buffer: png(200, 100) } }); await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open, null, { timeout: 8000 }); await p.waitForTimeout(300); }
   await p.evaluate(() => window.scrollTo(0, 500)); await p.waitForTimeout(300);
   const stk = await p.evaluate(() => { const c = document.querySelector('.dsegw'), r = c.getBoundingClientRect(), h = document.querySelector('.top').getBoundingClientRect().bottom, bs = [...document.querySelectorAll('#dcSeg button')].map(b => b.getBoundingClientRect().height); return { pos: getComputedStyle(c).position, gap: Math.round(r.top - h), minH: Math.min(...bs), y: scrollY }; });
@@ -912,7 +927,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
     const EMO = /(?![©®™])\p{Extended_Pictographic}|️/u, fsx = require('fs'), root = require('path').join(__dirname, '..');
     const staticTxt = fsx.readFileSync(root + '/index.html', 'utf8') + (fsx.readFileSync(root + '/style.css', 'utf8').match(/content:\s*["'][^"']*["']/g) || []).join(' ');
     check('L1 index.html / style.css content: have no emoji', !EMO.test(staticTxt));
-    s = await open(); p = s.p; await login(s, 'Nine');
+    s = await open(); p = s.p; await settle(s);
     const bad = {};
     const scan = async name => { const t = await p.evaluate(() => [...document.querySelectorAll('body *')].filter(e => e.offsetParent !== null || e.closest('dialog[open]')).map(e => (e.childNodes.length ? [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.nodeValue).join('') : '') + ' ' + (e.getAttribute('aria-label') || '') + ' ' + (e.title || '')).join('\n')); const m = t.match(EMO); if (m) bad[name] = m[0]; };
     for (const tab of ['plan', 'money', 'spots', 'docs', 'menu']) { await p.click(`[data-tab=${tab}]`); await p.waitForTimeout(700); await scan(tab); }
@@ -927,7 +942,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   }
   /* layouts */
   for (const [w, h] of [[360, 640], [390, 844], [430, 932]]) {
-    s = await open({ w, h, init: CLSK }); p = s.p; await login(s, 'Nine'); await docTab(p);
+    s = await open({ w, h, init: CLSK }); p = s.p; await settle(s); await docTab(p);
     for (const f of [png1, { name: 'c.png', mimeType: 'image/png', buffer: png(200, 100) }]) { await addDoc(p, { file: f, title: 'เอกสารที่มีชื่อยาวมากๆ สำหรับทดสอบการตัดบรรทัดในมือถือ ' + w }); await p.click('#dfOk'); await p.waitForFunction(() => !document.getElementById('dlg').open); await p.waitForTimeout(300); }
     await p.waitForTimeout(600);
     const L = await p.evaluate(() => { const nav = document.querySelector('nav').getBoundingClientRect(), cs = [...document.querySelectorAll('.dcard[data-id]')]; window.scrollTo(0, document.body.scrollHeight); const last = cs[cs.length - 1].getBoundingClientRect(); return { over: document.documentElement.scrollWidth - innerWidth, n: cs.length, under: last.bottom > nav.top + 1 ? last.bottom - nav.top : 0, cardOver: cs.some(c => c.scrollWidth > c.clientWidth + 1), btnH: Math.min(...[...document.querySelectorAll('.dact .btn')].map(b => b.getBoundingClientRect().height)), cls: window.__cls }; });
@@ -942,14 +957,14 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   console.log('\n[N] countdown chip');
   const chip = () => p.evaluate(() => ({ l: document.getElementById('cdL').textContent, v: document.getElementById('cdV').textContent, c: document.getElementById('btnCd').className, a: document.getElementById('btnCd').getAttribute('aria-label') }));
   for (const [w, h] of [[360, 640], [390, 844], [430, 932]]) {
-    s = await open({ w, h, clock: '2026-07-01T10:00:00', init: CLSK, active: 'priv:macau' }); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(500);
+    s = await open({ w, h, clock: '2026-07-01T10:00:00', init: CLSK, active: 'priv:macau' }); p = s.p; await settle(s); await p.waitForTimeout(500);
     let c = await chip();
     check(`N1 ${w}: upcoming trip -> "อีก 10 วัน", no #btnMe in the header`, c.v === 'อีก 10 วัน' && /up/.test(c.c) && await p.evaluate(() => !document.getElementById('btnMe')), JSON.stringify(c));
     const g = await p.evaluate(() => { const b = document.getElementById('btnCd').getBoundingClientRect(), t = document.getElementById('tripTitle').getBoundingClientRect(); return { bw: b.width, bh: b.height, over: t.right > b.left + 0.5, out: b.right > innerWidth + 0.5 || b.left < 0 }; });
     check(`N2 ${w}: chip fixed 112x44, inside the screen, title does not overlap`, Math.abs(g.bw - 112) < 0.5 && Math.abs(g.bh - 44) < 0.5 && !g.over && !g.out, JSON.stringify(g));
     await p.click('#btnCd'); await p.waitForTimeout(400);
     const sh = await p.evaluate(() => ({ t: document.getElementById('cdSheet').innerText, n: document.querySelectorAll('#cdSheet [data-cdtrip]').length, ids: [...document.querySelectorAll('#cdSheet [data-cdtrip]')].map(x => x.dataset.cdtrip) }));
-    check(`N3 ${w}: sheet lists this trip + upcoming trips (soonest first) + name switch`, /นับถอยหลัง/.test(sh.t) && /อีก 10 วัน/.test(sh.t) && sh.n >= 1 && /สลับชื่อ/.test(sh.t), JSON.stringify(sh).slice(0, 300));
+    check(`N3 ${w}: sheet lists this trip + upcoming trips (soonest first), no name footer`, /นับถอยหลัง/.test(sh.t) && /อีก 10 วัน/.test(sh.t) && sh.n >= 1 && !/สลับชื่อ|ผู้เยี่ยมชม/.test(sh.t), JSON.stringify(sh).slice(0, 300));
     if (w === 390) {
       await p.evaluate(() => { cfg.dates = Object.assign(cfg.dates || {}, { 'priv:xian': { s: '2026-08-01', e: '2026-08-05' }, 'priv:nagoya': { s: '2026-07-20', e: '2026-07-25' } }); document.getElementById('dlg').close(); });
       await p.click('#btnCd'); await p.waitForTimeout(300);
@@ -962,7 +977,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
     await s.b.close();
   }
   /* current trip: next stop; tick updates only text */
-  s = await open({ clock: '2026-07-12T08:30:00', init: CLSK, active: 'priv:macau' }); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(500);
+  s = await open({ clock: '2026-07-12T08:30:00', init: CLSK, active: 'priv:macau' }); p = s.p; await settle(s); await p.waitForTimeout(500);
   let c = await chip();
   check('N7 current trip -> "ถัดไป · 09.00" and "30 น."', /^ถัดไป · 09\.00$/.test(c.l) && c.v === '30 น.' && /cur/.test(c.c), JSON.stringify(c));
   await p.evaluate(() => { document.getElementById('tab-plan').dataset.mark = '1'; window.__cd0 = document.getElementById('btnCd'); });
@@ -974,29 +989,27 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await p.click('#btnCd'); await p.waitForTimeout(400);
   const stx = await p.evaluate(() => document.getElementById('cdSheet').innerText);
   check('N9 sheet (current trip): next stops with time + "อีก", trip day "วันที่ 2 จาก 4"', /จุดถัดไป/.test(stx) && /09\.30|11\.00|09\.00/.test(stx) && /อีก 29 น\./.test(stx) && /วันที่ 2 จาก 4/.test(stx), stx.slice(0, 300));
-  /* N9b: a tap spanning the 30 s refresh must not be lost (Close, then who) */
+  /* N9b: a tap spanning the 30 s refresh must not be lost (Close) */
   await p.locator('#cdClose').hover(); await p.mouse.down(); await p.clock.runFor(30500); await p.mouse.up(); await p.waitForTimeout(200);
   check('N9b tap on Close spanning a 30 s refresh still closes the sheet', await p.evaluate(() => !document.getElementById('dlg').open), '');
   await p.click('#btnCd'); await p.waitForTimeout(300);
-  await p.locator('#cdWho').hover(); await p.mouse.down(); await p.clock.runFor(30500); await p.mouse.up(); await p.waitForTimeout(300);
-  check('N9c tap on #cdWho spanning a refresh opens the picker', await p.evaluate(() => !!document.getElementById('whoList')));
-  check('N10 sheet footer switches the traveller name (picker opens)', await p.evaluate(() => !!document.getElementById('whoList')));
+  check('N9c the sheet has only Close at the bottom (no name footer, no switch button)', await p.evaluate(() => !document.getElementById('cdWho') && !document.querySelector('.cdf') && !!document.getElementById('cdClose')));
   await s.b.close();
   /* past trip */
-  s = await open({ clock: '2026-08-20T10:00:00', active: 'priv:macau' }); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(500);
+  s = await open({ clock: '2026-08-20T10:00:00', active: 'priv:macau' }); p = s.p; await settle(s); await p.waitForTimeout(500);
   c = await chip(); check('N11 finished trip -> muted "สิ้นสุดแล้ว"', c.v === 'สิ้นสุดแล้ว' && /end/.test(c.c), JSON.stringify(c));
   await p.click('#btnCd'); await p.waitForTimeout(300);
   check('N12 sheet says "เสร็จสิ้นแล้ว" for the trip', /เสร็จสิ้นแล้ว/.test(await p.evaluate(() => document.getElementById('cdSheet').innerText)));
   await s.b.close();
   /* hidden tab: no tick work */
-  s = await open({ clock: '2026-07-12T08:30:00', active: 'priv:macau' }); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(500);
-  check('N13 menu still reaches the avatar chooser ("สลับ") and avatars remain in the Menu', await p.evaluate(() => { renderMenu(); return !!document.getElementById('bSwitch') && !!document.querySelector('#tab-menu .mrow .avatar'); }));
+  s = await open({ clock: '2026-07-12T08:30:00', active: 'priv:macau' }); p = s.p; await settle(s); await p.waitForTimeout(500);
+  check('N13 the Menu members card stays a plain list with avatars and no switch button', await p.evaluate(() => { renderMenu(); return !document.getElementById('bSwitch') && !!document.querySelector('#tab-menu .mrow .avatar'); }));
   await s.b.close();
 
   /* ---------- M. profile photos (central; anyone sets / removes anyone's photo) ---------- */
   console.log('\n[M] profile photos');
   for (const [w, h] of [[360, 640], [390, 844], [430, 932]]) {
-    s = await open({ w, h, init: CLSK }); p = s.p; await login(s, 'Nine');
+    s = await open({ w, h, init: CLSK }); p = s.p; await settle(s);
     const un = await p.evaluate(() => users().map(u => u.name)), other = un.find(n => n !== 'Nine'); s.flags.users = un.map(n => n.toLowerCase());
     const before = await p.evaluate(() => document.getElementById('btnCd').getBoundingClientRect().width);
     await p.click('[data-tab=menu]'); await p.waitForTimeout(700);
@@ -1010,9 +1023,8 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
     await p.click('[data-tab=money]'); await p.waitForTimeout(500);
     await p.evaluate(() => { data.expenses = [{ item: 'x', cat: 'x', amount: 10, cur: 'THB', payer: 'Nine', type: 'personal', with: [] }]; renderMoney(); });
     check(`M5 ${w}: money rows show the photo`, await p.evaluate(() => document.querySelectorAll('#tab-money .avatar img').length >= 1));
-    await p.evaluate(() => travellerPicker()); await p.waitForTimeout(400);
-    check(`M6 ${w}: chooser shows photos + per-traveller actions`, await p.evaluate(() => document.querySelectorAll('#whoList .avatar img').length >= 1 && document.querySelectorAll('#avList [data-avp]').length >= 2));
-    await p.click('#dlg button[value=x]'); await p.waitForTimeout(200);
+    await p.click('[data-tab=menu]'); await p.waitForTimeout(400);
+    check(`M6 ${w}: the Menu members card shows photos + a photo action per traveller (no chooser dialog)`, await p.evaluate(() => document.querySelectorAll('#membersCard .avatar img').length >= 1 && document.querySelectorAll('#membersCard [data-avp]').length >= 2 && !document.getElementById('whoList')));
     s.docs.push({ id: '00000000-0000-4000-8000-0000000000aa', scope: 'person', owner: other.toLowerCase(), trip: '', title: 'Synthetic doc', kind: 'other', mime: 'image/png', size_bytes: 3, note: '', created_by: other.toLowerCase(), created_at: new Date().toISOString(), chunks: 1, chunkData: ['QUJD'] });
     await p.click('[data-tab=docs]'); await p.waitForTimeout(1500);
     check(`M7 ${w}: docs person groups show the photo`, await p.evaluate(() => { dc.seg = 'all'; renderDocs(); return true; }) && await p.evaluate(() => document.querySelectorAll('#tab-docs .dgh .avatar img, #tab-docs .avatar img').length >= 1));
@@ -1030,13 +1042,13 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
     }
     await s.b.close();
   }
-  s = await open(); p = s.p; s.flags.noAvSql = true; await login(s, 'Nine');
+  s = await open(); p = s.p; s.flags.noAvSql = true; await settle(s);
   await p.click('[data-tab=menu]'); await p.waitForTimeout(700);
   check('M12 SQL not applied: initials only, app fine', await p.evaluate(() => document.querySelectorAll('.avatar img').length === 0 && document.querySelectorAll('#tab-menu .mrow[data-n=Nine] .avatar').length === 1));
   const fc3 = p.waitForEvent('filechooser'); await p.click('#tab-menu .mrow[data-n=Nine] [data-avp]'); (await fc3).setFiles({ name: 'me.png', mimeType: 'image/png', buffer: png(300, 300) }); await p.waitForTimeout(1500);
   check('M13 SQL not applied: trying to upload shows a Thai hint about supabase_avatars.sql', /supabase_avatars\.sql/.test(await p.evaluate(() => document.getElementById('toast').innerText)));
   await s.b.close();
-  s = await open(); p = s.p; s.flags.users = ['nine']; await login(s, 'Nine');
+  s = await open(); p = s.p; s.flags.users = ['nine']; await settle(s);
   await p.click('[data-tab=menu]'); await p.waitForTimeout(600);
   const un2 = await p.evaluate(() => users().map(u => u.name)), stranger = un2.find(n => !['nine', 'mew'].includes(n.toLowerCase()));
   const avBad = await p.evaluate(async n => { try { return await sbRpc('avatar_put', { p_name: n, p_hash: 'open', p_mime: 'image/jpeg', p_data: 'QUJD' }); } catch (e) { return String(e); } }, stranger);

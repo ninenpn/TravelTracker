@@ -42,11 +42,11 @@ function finish() {
   process.exit(state.fails.length ? 1 : 0);
 }
 
-/* In-memory twin of docs/supabase_docs.sql (same rules: every member sees/gets every doc, p_owner = add for someone else, rename/delete by owner or uploader, MIME/size/count/title limits). SYNTHETIC data only. */
+/* In-memory twin of docs/supabase_docs.sql (same rules: every member sees/gets every doc, p_owner = add for someone else, rename/delete by ANY accepted member (docs/supabase_central.sql), MIME/size/count/title limits). SYNTHETIC data only. */
 function mockDocs(fn, a, docs, flags) {
   if (flags.noDocsSql) return { status: 404, body: { message: `Could not find the function public.${fn} in the schema cache` } };
-  const me = String(a.p_name || '').toLowerCase(), ok = !!me && !flags.nullDocs, vis = () => true, meta = ({ chunkData, ...m }) => m;
-  const mine = d => d.created_by === me || (d.scope === 'person' && d.owner === me);
+  const me = String(a.p_name || '').toLowerCase(), ok = !!me && !flags.nullDocs && (!flags.users || ['nine', 'mew', ...flags.users].includes(me)), vis = () => true, meta = ({ chunkData, ...m }) => m;
+  const mine = () => true;          // central rules: any accepted member may rename/delete any document
   if (fn === 'doc_list') return { status: 200, body: ok ? docs.filter(vis).map(meta) : null };
   if (fn === 'doc_get') { const d = docs.find(x => x.id === a.p_id && vis(x)); return { status: 200, body: ok && d ? { id: d.id, scope: d.scope, owner: d.owner, title: d.title, kind: d.kind, mime: d.mime, note: d.note, chunks: d.chunkData } : null }; }
   if (fn === 'doc_put') {
@@ -107,13 +107,10 @@ async function open(opts = {}) {
   if (opts.init) await p.addInitScript(opts.init);
   if (opts.clock) await p.clock.install({ time: new Date(opts.clock) });
   await p.addInitScript(([c]) => { if (!localStorage.getItem('tt.cfg')) localStorage.setItem('tt.cfg', JSON.stringify(c)); },
-    [{ v: 5, trips: [ALMATY], active: opts.active || ALMATY.id, lastMe: '', googleClientId: '' }]);
+    [{ v: 5, trips: [ALMATY], active: opts.active || ALMATY.id, googleClientId: '' }]);
   await p.goto(BASE); if (opts.clock) await p.clock.runFor(4000); await p.waitForTimeout(4500);
   return { b, ctx, p, rpc, reqs, trips, flags, docs, avs };
 }
-/* "log in" = choose who you are from the plain traveller list (no PIN anywhere) */
-async function login(s, who) {
-  if (!(await s.p.isVisible('#whoList'))) { await s.p.evaluate(() => travellerPicker()); await s.p.waitForTimeout(250); }
-  await s.p.click(`#whoList [data-u=${who}]`); await s.p.waitForTimeout(1500);
-}
-module.exports = { open, login, check, finish, fakeTrip, ALMATY, SB, FAKE, state };
+/* there is no login / identity any more: just let the app finish loading */
+async function settle(s, ms = 1500) { await s.p.waitForTimeout(ms); }
+module.exports = { open, settle, check, finish, fakeTrip, ALMATY, SB, FAKE, state };

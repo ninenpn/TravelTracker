@@ -172,6 +172,29 @@ has "anon still cannot write sheet_rows"     "violates row-level\|denied" "$(asa
 has "anon still cannot delete sheet_rows"    "denied" "$(asanon "delete from sheet_rows")"
 has "anon still cannot read sheet_history"   "denied" "$(asanon "select count(*) from sheet_history")"
 has "anon still cannot write sheet_history"  "denied" "$(asanon "insert into sheet_history(tab,rows) values ('x','[]')")"
+# ---- central system (supabase_central.sql): any accepted member renames / deletes ANY document ----
+val "delete from member_docs" >/dev/null          # throw-away DB: drop the earlier limit-test documents
+CA=$(asanon "select public.doc_put('Ann','','person','','Ann doc','other','image/png','','[\"QUJD\"]'::jsonb)")
+CS=$(asanon "select public.doc_put('Ann','','shared','','Shared doc','other','image/png','','[\"QUJD\"]'::jsonb)")
+eq  "before central: Bob cannot rename Ann's doc (owner/uploader rule)" 0 "$(asanon "select public.doc_rename('Bob','','$CA','x')")"
+for i in 1 2; do $P -v ON_ERROR_STOP=1 -f "$ROOT/docs/supabase_central.sql" 2>&1 | grep -v NOTICE; done          # twice = idempotent
+eq  "any member renames another member's personal doc"  1 "$(asanon "select public.doc_rename('Bob','','$CA','Renamed by Bob')")"
+eq  "the new title is stored"                          "Renamed by Bob" "$(val "select title from member_docs where id='$CA'")"
+eq  "any member renames a shared doc made by someone else" 1 "$(asanon "select public.doc_rename('Cy','whatever','$CS','Shared 2')")"
+eq  "rename: stranger refused (-1), title unchanged"    -1 "$(asanon "select public.doc_rename('Zed','','$CA','Hacked')")"
+eq  "rename: empty name refused (-1)"                   -1 "$(asanon "select public.doc_rename('','','$CA','Hacked')")"
+eq  "rename: title rules kept (-5 empty)"               -5 "$(asanon "select public.doc_rename('Bob','','$CA','  ')")"
+eq  "rename: title rules kept (-5 too long)"            -5 "$(asanon "select public.doc_rename('Bob','','$CA','$(printf 'x%.0s' $(seq 81))')")"
+eq  "rename: unknown id => 0"                            0 "$(asanon "select public.doc_rename('Bob','','00000000-0000-4000-8000-0000000000ff','x')")"
+eq  "stranger cannot delete (-1) and the doc is still there" "-1,1" "$(asanon "select public.doc_delete('Zed','','$CA')" | tr -d '\n'),$(val "select count(*) from member_docs where id='$CA'")"
+eq  "any member deletes another member's personal doc"  1 "$(asanon "select public.doc_delete('Bob','','$CA')")"
+eq  "any member deletes a shared doc made by someone else" 1 "$(asanon "select public.doc_delete('Cy','','$CS')")"
+eq  "delete again => 0"                                  0 "$(asanon "select public.doc_delete('Bob','','$CA')")"
+eq  "chunks removed with the doc (no orphans)"           0 "$(val "select count(*) from member_doc_chunks where doc_id in ('$CA','$CS')")"
+eq  "doc_rename / doc_delete signatures unchanged and executable by anon" t "$(val "select has_function_privilege('anon','public.doc_rename(text,text,uuid,text)','execute') and has_function_privilege('anon','public.doc_delete(text,text,uuid)','execute')")"
+eq  "only one overload each"                             2 "$(val "select count(*) from pg_proc where proname in ('doc_rename','doc_delete')")"
+has "anon still cannot read member_docs"   "permission denied" "$(asanon 'select count(*) from member_docs')"
+has "anon still cannot delete member_docs" "permission denied" "$(asanon "delete from member_docs")"
 # ---- avatars (supabase_avatars.sql): central photos, any traveller may set/remove any traveller's photo ----
 for i in 1 2; do $P -v ON_ERROR_STOP=1 -f "$ROOT/docs/supabase_avatars.sql" 2>&1 | grep -v NOTICE; done          # twice = idempotent
 has "anon cannot read member_avatars"   "permission denied" "$(asanon 'select count(*) from member_avatars')"

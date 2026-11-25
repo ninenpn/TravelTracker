@@ -88,14 +88,13 @@ const sess = {
   get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch { } }
 };
-let cfg = store.get('tt.cfg', null) || { trips: [DEFAULT_TRIP], active: DEFAULT_TRIP.id, lastMe: '' };
+let cfg = store.get('tt.cfg', null) || { trips: [DEFAULT_TRIP], active: DEFAULT_TRIP.id };
 if (cfg.v !== 5) {
   cfg.v = 5;
   cfg.trips = cfg.trips.filter(t => !OLD_PRESETS.includes(t.id) || t.id === cfg.active);
   if (!cfg.trips.some(t => t.id === DEFAULT_TRIP.id)) cfg.trips.unshift(DEFAULT_TRIP);
   cfg.trips.forEach(t => { t.placesTab = t.placesTab || 'Places'; });
-  cfg.lastMe = cfg.lastMe || cfg.me || '';
-  delete cfg.rates;
+    delete cfg.rates;
 }
 cfg.trips = cfg.trips.filter(t => !t.priv && !t.id.startsWith('priv:')); cfg.trips.push(...PRIV_TRIPS);
 if (cfg.active && cfg.active.startsWith('priv:') && !cfg.trips.some(t => t.id === cfg.active)) cfg.active = DEFAULT_TRIP.id;
@@ -103,22 +102,15 @@ const saveCfg = () => store.set('tt.cfg', cfg);
 function applyTheme() { const d = cfg.theme === 'dark'; document.documentElement.dataset.theme = d ? 'dark' : 'light'; const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = d ? '#0b1220' : '#f3f8ff'; }
 applyTheme();
 const trip = () => cfg.trips.find(t => t.id === cfg.active) || cfg.trips[0];
-/* Open access: no login. "Who am I" is just a remembered name (localStorage, not secret) picked from a plain list of travellers.
-   RPCs still take (name, hash); the hash is a constant dummy and the server ignores it (docs/supabase_open.sql). */
+/* Open access, NO identity: there is no "who am I". RPCs keep (name, hash) signatures; the client always sends ONE constant API identity
+   (apiName(): first traveller of the trip) and the dummy hash; the server ignores the hash and any member may edit anything (docs/supabase_central.sql). */
 const OPEN_HASH = 'open';
 const PRIV_TRAVELLERS = ['Nine', 'Mew'];
-let pick = store.get('tt.me', '') || '';          // the name the user chose (persists across trips)
-let me = pick;                                     // effective name for the active trip (see syncMe)
 const myHash = () => OPEN_HASH;
 const visibleTrips = () => cfg.trips;
 /* travellers of the active trip: Almaty = every name in its Users tab; any other trip = Nine and Mew only */
 const travellers = () => trip().priv ? PRIV_TRAVELLERS : users().map(u => u.name);
-function syncMe() {
-  const list = travellers(), old = me, eq = a => String(a).toLowerCase() === String(pick).toLowerCase();
-  me = list.find(eq) || (trip().priv ? list[0] : (users().length ? '' : pick));          // a name that is not on this trip's list falls back (first traveller on private trips, nobody on Almaty)
-  if (me !== old) { try { docsWipe(); } catch { } }
-  return me;
-}
+const apiName = () => travellers()[0] || '';          // constant API identity (never user-chosen)
 /* trip status from its dates: Current (today is inside), Upcoming (starts later), Past (already ended) */
 const ymd = x => { const [y, m, d] = x.split('-').map(Number); return new Date(y, m - 1, d); };
 const isoD = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -147,7 +139,7 @@ function tripItems(attr) {
   return list.map(t => { const st = tripStatus(t), [lb, cl] = STAT[st]; return `<button type="button" class="li ${t.id === cfg.active ? 'on' : ''}" ${attr}="${esc(t.id)}"><span class="radio"></span><div><b>${esc(t.name)}</b><small style="display:block">${esc(tripRangeText(t))}</small></div><span class="chip ${cl}">${lb}</span></button>`; }).join('');
 }
 let data = { plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: {}, stay: {}, info: [], locks: {}, me: null, meLabel: '' };
-const ui = { tab: 'plan', day: null, exFilter: 'all', cur: null, edit: false, dirty: false, saving: false, loaded: false, ver: 0, tabVer: {}, scroll: {}, sync: '', sig: null };
+const ui = { tab: 'plan', day: null, cur: null, edit: false, dirty: false, saving: false, loaded: false, ver: 0, tabVer: {}, scroll: {}, sync: '', sig: null };
 
 /* ---------- CSV / Sheets ---------- */
 function parseCSV(text) {
@@ -174,7 +166,7 @@ async function fetchSb(tab) {
   } catch { return null; }
 }
 async function fetchPriv(t, tab) {
-  const j = await sbRpc('get_private', { p_trip: t.key, p_tab: tab, p_name: me || PRIV_TRAVELLERS[0], p_hash: myHash() });
+  const j = await sbRpc('get_private', { p_trip: t.key, p_tab: tab, p_name: apiName() || PRIV_TRAVELLERS[0], p_hash: myHash() });
   if (j === null) throw new Error('เปิดทริปนี้ไม่ได้ — ชื่อนี้ไม่ใช่สมาชิกของทริป');
   return j.map(r => Array.isArray(r) ? r.map(v => v == null ? '' : String(v)) : []);
 }
@@ -219,7 +211,7 @@ const sheetApi = {
     const T = trip();
     if (T.priv) {                                   // private trip: identity = the chosen traveller name, no PIN
       const pt = p.gid ? 'plan' : p.tab, pstr = a => a.map(v => v == null ? '' : String(v));
-      const W = async (op, payload) => { const n = await sbRpc('private_write', { p_trip: T.key, p_tab: pt, p_op: op, p_payload: payload, p_name: me || PRIV_TRAVELLERS[0], p_hash: myHash() }); if (n === -1) throw new Error('ไม่มีสิทธิ์แก้ไขทริปนี้'); return n; };
+      const W = async (op, payload) => { const n = await sbRpc('private_write', { p_trip: T.key, p_tab: pt, p_op: op, p_payload: payload, p_name: apiName() || PRIV_TRAVELLERS[0], p_hash: myHash() }); if (n === -1) throw new Error('ไม่มีสิทธิ์แก้ไขทริปนี้'); return n; };
       if (action === 'append') { await W('append', pstr(p.values)); return { ok: true }; }
       if (action === 'upsert') { await W('upsert', { key: String(p.key), cells: pstr(p.values) }); return { ok: true }; }
       if (action === 'savePlan') {
@@ -496,7 +488,6 @@ const SNAP = ['plan', 'costs', 'extra', 'users', 'expenses', 'locs', 'places', '
 const snapOf = d => JSON.stringify(Object.fromEntries(SNAP.map(k => [k, d[k]])), (k, v) => k === 'dt' ? undefined : v);      // `dt` is derived from today's date, not data
 function writeCache(id, snap) { try { if (snap.length > CACHE_MAX) localStorage.removeItem(CK + id); else localStorage.setItem(CK + id, Date.now() + '\n' + snap); } catch { } }
 function readCache(id) { try { const v = localStorage.getItem(CK + id), i = v ? v.indexOf('\n') : -1; return i < 0 ? null : { t: +v.slice(0, i), snap: v.slice(i + 1), d: JSON.parse(v.slice(i + 1)) }; } catch { return null; } }
-const clearPrivCaches = () => { try { docsWipe(); } catch { } try { Object.keys(localStorage).filter(k => k.startsWith(CK + 'priv:')).forEach(k => localStorage.removeItem(k)); } catch { } };
 const blankData = () => ({ plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: {}, stay: {}, tips: [], media: [], info: [], locks: {} });
 const dataFromCache = (id, c) => { const d = { ...blankData(), ...c.d, _trip: id, me: data.me, meLabel: data.meLabel }; if (d.plan) planDates(d.plan); return d; };
 const dim = on => $('main').classList.toggle('busy', on);
@@ -526,7 +517,6 @@ function applyData(nd, snap, top) {
     try { if (data.plan && data.plan.days.length) { planDates(data.plan); const ds = data.plan.days.filter(d => d.dt); if (ds.length) { cfg.dates = cfg.dates || {}; const r = { s: isoD(ds[0].dt), e: isoD(ds[ds.length - 1].dt) }, o = cfg.dates[nd._trip]; if (!o || o.s !== r.s || o.e !== r.e) { cfg.dates[nd._trip] = r; saveCfg(); } } } } catch { }
     showErr(!data.plan ? 'โหลดแผนไม่ได้ — ตรวจว่าชีตแชร์เป็น "ทุกคนที่มีลิงก์ดูได้" แล้วลองโหลดใหม่' : '');
     ui.loaded = true;
-    syncMe();
     renderAll();
   }, top);
 }
@@ -540,7 +530,7 @@ function loadFailed(t, next) {
   renderSub();
 }
 async function load() {
-  const t = allowedTrip(); syncMe();
+  const t = allowedTrip();
   $('#tripTitle').innerHTML = esc(t.name) + (visibleTrips().length > 1 ? ' <span class="chev">▾</span>' : '');
   const tripChanged = data._trip !== t.id;
   ui.sync = tripChanged ? 'switch' : 'loading'; renderSub();
@@ -571,24 +561,12 @@ async function load() {
   if (!tripChanged && ui.loaded && snap === ui.sig) { dim(false); showErr(''); renderSub(); renderUpd(); return; }          // identical data: touch nothing
   if (busy()) { ui.stale = true; dim(false); renderSub(); return; }          // never re-render under an open dialog / text field / picture; retried when it closes
   ui.stale = false; applyData(next, snap, tripChanged); writeCache(t.id, snap);
-  if (me && geo.state === 'idle') startLocation();
+  if (isSharing() && geo.state === 'idle') startLocation();
 }
 
-/* ---------- traveller (no login) ---------- */
+/* ---------- helpers (no login, no identity) ---------- */
 const lc = x => String(x || '').trim().toLowerCase();
 const colLetter = i => { let t = '', n = i + 1; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = Math.floor((n - 1) / 26); } return t; };
-function choose(name) {
-  const changed = lc(name) !== lc(pick);
-  pick = name; store.set('tt.me', name); if (name) { cfg.lastMe = name; saveCfg(); }
-  if (changed) clearPrivCaches();          // another person on this phone must not see the previous person's cached documents / trips
-  syncMe(); renderAll();
-  if (name) startLocation();
-}
-function travellerPicker() {
-  const list = travellers(), cur = me;
-  openDlg(`<form method="dialog"><h3>ใครกำลังใช้งาน?</h3><div class="mut" style="margin:4px 0 8px">แตะชื่อของคุณ (ไม่ต้องมีรหัสผ่าน) — ใช้กับบัญชีค่าใช้จ่ายและเอกสาร</div><div class="login-grid" id="whoList">${list.map(n => `<button type="button" data-u="${esc(n)}" class="${lc(n) === lc(cur) ? 'last' : ''}">${avatar(n, 'lg')}<span>${esc(n)}</span>${lc(n) === lc(cur) ? '<small>ใช้อยู่</small>' : ''}</button>`).join('') || '<span class="mut">ยังไม่พบรายชื่อ</span>'}</div>${list.length ? `<h4 class="avh">รูปโปรไฟล์ (ทุกคนเปลี่ยนรูปให้ใครก็ได้)</h4><div id="avList">${list.map(n => `<div class="row">${avatar(n, 'sm')}<b>${esc(n)}</b>${avActions(n)}</div>`).join('')}</div>` : ''}<div class="btns"><button value="x" class="btn">ปิด</button></div></form>`);
-  $$('#whoList [data-u]', dlg).forEach(b => b.onclick = () => { dlg.close(); choose(b.dataset.u); });
-}
 
 /* ---------- plan view ---------- */
 const link = s => esc(s).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">เปิดลิงก์</a>');
@@ -716,7 +694,7 @@ function nextCard() {
 const isLocked = d => !!(d && (data.locks || {})[d.label] && data.locks[d.label].locked);
 const LOCKED_MSG = 'วันนี้ถูกล็อกอยู่ — ปลดล็อกก่อนจึงจะแก้ไขได้';
 async function setDayLock(d, on) {
-  const key = d.label, prev = (data.locks || {})[key], who = me || '', at = new Date().toISOString();
+  const key = d.label, prev = (data.locks || {})[key], who = '', at = new Date().toISOString();
   data.locks = { ...(data.locks || {}), [key]: { locked: on, who, at } }; ui.ver++; renderPlan();
   try {
     if (!sheetApi.on()) throw new Error('ยังไม่ได้ตั้งค่า Supabase');
@@ -953,13 +931,11 @@ function costExpenses() {
 }
 const allExpenses = () => [...data.expenses, ...costExpenses()];
 function renderExpenses(el) {
-  let ex = allExpenses(); if (ui.exFilter === 'mine' && me) ex = ex.filter(e => e.payer === me || e.with.includes(me) || (e.type === 'shared' && !e.with.length));
+  const ex = allExpenses();
   const groups = {}, key = e => e.date || (e.src === 'cost' ? 'ค่าใช้จ่ายตามแผน' : 'ไม่ระบุวันที่'); ex.forEach(e => (groups[key(e)] = groups[key(e)] || []).push(e));
   let h = `<h2 class="sech">รายการ</h2>`;
-  if (me) h += `<div class="seg"><button data-f="all" class="${ui.exFilter === 'all' ? 'on' : ''}">ทั้งหมด</button><button data-f="mine" class="${ui.exFilter === 'mine' ? 'on' : ''}">เกี่ยวกับฉัน</button></div>`;
   h += Object.entries(groups).reverse().map(([d, list]) => `<div class="dgroup">${esc(d)}</div>` + list.slice().reverse().map(e => `<div class="ex">${e.payer ? avatar(e.payer) : `<span class="avatar" style="--c:#94a3b8">${ic('users')}</span>`}<div><div class="it">${esc(e.item || '—')}</div><small>${e.payer ? esc(e.payer) + ' · ' : ''}${TYPE_TH[e.type]}${e.cat ? ' · ' + esc(e.cat) : ''}${e.with.length ? ' · ' + esc(e.with.join(', ')) : ''}</small></div><div class="am">${fmt(e.amount)}<small style="display:block;font-weight:400">${esc(e.cur)}</small></div></div>`).join('')).join('') || '<div class="empty">ยังไม่มีรายการ<br><small>กด + เพื่อเพิ่มค่าใช้จ่าย</small></div>';
   el.innerHTML = h;
-  $$('[data-f]', el).forEach(b => b.onclick = () => { ui.exFilter = b.dataset.f; renderExpenses(el); });
 }
 function summaryHtml() {
   const { out, order } = calcAll(), cs = order.map(k => out[k]).filter(c => c.count);
@@ -967,10 +943,10 @@ function summaryHtml() {
   return cs.map(c => {
     const sharedUnpaid = allExpenses().filter(e => e.cur === c.cur && !e.payer).reduce((a, e) => a + e.amount, 0);
     return `<div class="card cur" data-cur="${esc(c.cur)}"><div class="row2"><h2>${ic('users')} จ่ายไปแล้วรายคน</h2><span class="chip">${esc(c.cur)}</span></div>`
-      + c.list.map(u => `<div class="row pp" data-p="${esc(u.name)}">${avatar(u.name)}<div><b>${esc(u.name)}${u.name === me ? ' <span class="chip">ฉัน</span>' : ''}</b><small>ส่วนที่ต้องรับ ${fmt(u.share)} ${esc(c.cur)}</small></div><div class="amt big">${fmt(u.paid)} <small>${esc(c.cur)}</small></div></div>`).join('')
+      + c.list.map(u => `<div class="row pp" data-p="${esc(u.name)}">${avatar(u.name)}<div><b>${esc(u.name)}</b><small>ส่วนที่ต้องรับ ${fmt(u.share)} ${esc(c.cur)}</small></div><div class="amt big">${fmt(u.paid)} <small>${esc(c.cur)}</small></div></div>`).join('')
       + (sharedUnpaid ? `<div class="mut unp">ส่วนกลางที่ยังไม่มีผู้จ่าย ${fmt(sharedUnpaid)} ${esc(c.cur)} (หารเท่ากันทุกคน ไม่นับเป็นหนี้)</div>` : '')
       + `<h2 class="sech">${ic('route')} ใครต้องจ่ายให้ใคร</h2>`
-      + (c.pairs.length ? c.pairs.map(p => `<div class="tx" data-pair="${esc(p.from)}>${esc(p.to)}">${avatar(p.from, 'sm')}<b>${esc(p.from)}</b><span class="arr">ต้องจ่ายให้</span>${avatar(p.to, 'sm')}<b>${esc(p.to)}</b><b class="v ${p.from === me ? 'neg' : p.to === me ? 'pos' : ''}">${fmt(p.v)} ${esc(c.cur)}</b></div>`).join('') : '<span class="mut">ไม่มีใครติดใคร (เคลียร์แล้ว)</span>')
+      + (c.pairs.length ? c.pairs.map(p => `<div class="tx" data-pair="${esc(p.from)}>${esc(p.to)}">${avatar(p.from, 'sm')}<b>${esc(p.from)}</b><span class="arr">ต้องจ่ายให้</span>${avatar(p.to, 'sm')}<b>${esc(p.to)}</b><b class="v">${fmt(p.v)} ${esc(c.cur)}</b></div>`).join('') : '<span class="mut">ไม่มีใครติดใคร (เคลียร์แล้ว)</span>')
       + '</div>';
   }).join('');
 }
@@ -998,20 +974,29 @@ function expenseDialog() {
   <label>รายการ</label><input name="item" required placeholder="เช่น ข้าวเย็น, Yandex Go">
   <label>จำนวนเงิน</label><input name="amount" type="number" step="any" inputmode="decimal" required>
   <label>สกุลเงิน (แยกคำนวณ ไม่แปลงค่าเงิน)</label><div class="seg" id="curSeg">${curs.map(c => `<button type="button" data-c="${esc(c)}" class="${c === main ? 'on' : ''}">${esc(c)}</button>`).join('')}</div><input type="hidden" name="cur" value="${esc(main)}">
-  <label>ใครจ่าย</label><select name="payer">${us.map(n => `<option ${n === me ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
-  <label>ประเภท</label><select name="type"><option value="shared">ส่วนกลาง — หารเท่ากันทุกคน</option><option value="personal">ส่วนตัว — จ่ายให้ตัวเอง</option><option value="split">ออกให้ — หารเฉพาะคนที่เลือก</option></select>
-  <div id="whoBox"><label>หารกับใคร (ว่าง = ทุกคนสำหรับส่วนกลาง)</label><div class="checks">${us.map(n => `<label><input type="checkbox" name="w" value="${esc(n)}">${esc(n)}</label>`).join('')}</div></div>
+  <label>ใครจ่าย (จำเป็น)</label><select name="payer" required><option value="" selected disabled>เลือกคนที่จ่าย</option>${us.map(n => `<option>${esc(n)}</option>`).join('')}</select>
+  <label>จ่ายให้ใคร</label><select name="type"><option value="shared">ส่วนกลาง — หารเท่ากันทุกคน</option><option value="personal">ส่วนตัวของคนเดียว — เลือกว่าของใคร</option><option value="split">แบ่งกับบางคน — เลือกหลายคน</option></select>
+  <div id="whoBox" hidden><label id="whoLbl">เลือกคน</label><div class="checks" id="whoChecks">${us.map(n => `<label><input type="checkbox" name="w" value="${esc(n)}">${esc(n)}</label>`).join('')}</div></div>
   <label>หมวด</label><input name="cat" placeholder="อาหาร / เดินทาง / ที่พัก">
   <div class="card preview" id="preview"></div>
   <div class="btns"><button value="ok" class="btn pri">${sheetApi.on() ? 'บันทึก' : 'คัดลอกแถว'}</button><button value="x" class="btn" formnovalidate>ยกเลิก</button></div></form>`);
   const form = $('form', d);
-  const vals = () => { const f = new FormData(form); return { amount: f.get('amount'), cur: f.get('cur'), payer: f.get('payer'), type: f.get('type'), with: f.getAll('w') }; };
-  const upd = () => { const v = vals(); $('#whoBox').hidden = v.type === 'personal'; $('#preview').innerHTML = expensePreview(v); };
+  const vals = () => { const f = new FormData(form); return { amount: f.get('amount'), cur: f.get('cur'), payer: f.get('payer') || '', type: f.get('type'), with: f.getAll('w') }; };
+  const upd = () => {
+    const v = vals(); $('#whoBox').hidden = v.type === 'shared';
+    $('#whoLbl').textContent = v.type === 'personal' ? 'ส่วนตัวของใคร (เลือกคนเดียว)' : 'แบ่งกับใคร (เลือกได้หลายคน)';
+    $('#preview').innerHTML = !v.payer ? '<small>เลือกคนที่จ่ายก่อน</small>' : v.type !== 'shared' && !v.with.length ? '<small>เลือกคนที่ได้ประโยชน์</small>' : expensePreview(v);
+  };
+  form.addEventListener('change', e => { if (e.target.name === 'w' && form.elements.type.value === 'personal' && e.target.checked) $$('input[name=w]', form).forEach(x => { if (x !== e.target) x.checked = false; }); }, true);
   $$('#curSeg button', d).forEach(b => b.onclick = () => { form.elements.cur.value = b.dataset.c; $$('#curSeg button', d).forEach(x => x.classList.toggle('on', x === b)); upd(); });
   form.addEventListener('input', upd); form.addEventListener('change', upd); upd();
   form.onsubmit = async ev => {
     if (ev.submitter && ev.submitter.value !== 'ok') return; const f = new FormData(ev.target);
-    const row = [new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }), f.get('item'), f.get('cat'), +f.get('amount'), f.get('cur'), f.get('payer'), f.get('type'), f.getAll('w').join(', ')];
+    const ty = f.get('type'), w = f.getAll('w');
+    if (!f.get('payer')) { ev.preventDefault(); return toast('เลือกคนที่จ่ายก่อน'); }
+    if (ty !== 'shared' && !w.length) { ev.preventDefault(); return toast('เลือกคนที่ได้ประโยชน์อย่างน้อย 1 คน'); }
+    const kind = ty === 'personal' && w[0] === f.get('payer') ? 'personal' : ty === 'personal' ? 'split' : ty;          // one person other than the payer = the payer covers them
+    const row = [new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }), f.get('item'), f.get('cat'), +f.get('amount'), f.get('cur'), f.get('payer'), kind, kind === 'personal' ? '' : w.join(', ')];
     if (!sheetApi.on()) return copyText(row.join('\t'), 'คัดลอกแถวแล้ว — วางต่อท้ายแท็บ ' + trip().expensesTab + ' ในชีต');
     try { setSub('กำลังบันทึก…'); await sheetApi.call('append', { tab: trip().expensesTab, header: ['Date', 'Item', 'Category', 'Amount', 'Currency', 'PaidBy', 'Type', 'SplitWith'], values: row }); setSub('บันทึกแล้ว ✓', 2500); await load(); }
     catch (e) { setSub(''); toast(e.message); }
@@ -1058,12 +1043,14 @@ function onPos(pos) {
   data.me = { lat, lng, acc, at: new Date() }; geo.state = 'ok';
   const moved = !geo.lastPt || distM(geo.lastPt, data.me) > 80;
   if (moved && Date.now() - geo.lastGeo > 8000) { geo.lastGeo = Date.now(); geo.lastPt = { lat, lng }; reverse(lat, lng); }
-  if (isSharing() && me && Date.now() - geo.lastPush > SHARE_EVERY) pushLoc();
+  if (isSharing() && shareAs() && Date.now() - geo.lastPush > SHARE_EVERY) pushLoc();
   drawMap(!ui.centered); ui.centered = true; renderMapStatus();
 }
 /* ---- sharing my position with friends (opt-in per trip, off by default). Row in the public tab Locations: Name, Lat, Lng, Label, Updated. ---- */
 const SHARE_EVERY = 45000, LOC_HEAD = ['Name', 'Lat', 'Lng', 'Label', 'Updated'];
 const shareKey = () => 'tt.share.' + trip().id;
+/* the name a location is shared under: a per-device LABEL (localStorage, not a login) chosen from the trip's travellers when sharing is switched on */
+const shareAs = () => { const n = store.get('tt.shareAs', ''); return travellers().find(x => lc(x) === lc(n)) || ''; };
 const isSharing = () => !!store.get(shareKey(), false);
 const locTab = () => trip().locationsTab || 'Locations';
 async function locHeader() {          // an empty / header-less Locations tab gets its header row once (otherwise the reader cannot find the columns)
@@ -1073,11 +1060,11 @@ async function locHeader() {          // an empty / header-less Locations tab ge
   geo.hdr = t.id;
 }
 async function pushLoc() {
-  if (!data.me || !me || !isSharing() || geo.pushing) return;
+  if (!data.me || !shareAs() || !isSharing() || geo.pushing) return;
   geo.pushing = true; geo.lastPush = Date.now();
   try {
     await locHeader();
-    await sheetApi.call('upsert', { tab: locTab(), key: me, values: [me, +data.me.lat.toFixed(6), +data.me.lng.toFixed(6), data.meLabel || '', new Date().toISOString()] });
+    await sheetApi.call('upsert', { tab: locTab(), key: shareAs(), values: [shareAs(), +data.me.lat.toFixed(6), +data.me.lng.toFixed(6), data.meLabel || '', new Date().toISOString()] });
     geo.pushErr = ''; geo.pushed = Date.now();
   } catch (e) { geo.pushErr = e.message || 'error'; }
   finally { geo.pushing = false; renderMapStatus(); }
@@ -1085,6 +1072,7 @@ async function pushLoc() {
 function startShare() { store.set(shareKey(), true); geo.lastPush = 0; if (geo.state !== 'ok' && geo.state !== 'asking') { ui.centered = false; startLocation(); } else pushLoc(); renderMapStatus(); }
 async function stopShare(del) {
   store.set(shareKey(), false); geo.pushed = 0;
+  const me = shareAs();
   if (del && me) {
     try { await sheetApi.call('upsert', { tab: locTab(), key: me, values: [me, '', '', '', ''] }); delete data.locs[me]; toast('หยุดแชร์และลบตำแหน่งของคุณแล้ว'); }
     catch (e) { toast('ลบตำแหน่งไม่สำเร็จ: ' + e.message, 5000); }
@@ -1092,12 +1080,13 @@ async function stopShare(del) {
   renderMapStatus(); if (ui.ov) drawMap(false);
 }
 function consentDialog() {
-  const d = openDlg(`<form method="dialog"><h3>แชร์ตำแหน่งของฉัน</h3>
+  const d = openDlg(`<form method="dialog"><h3>แชร์ตำแหน่ง</h3>
   <p>เมื่อเปิด แอปจะบันทึก <b>ชื่อ พิกัด และเวลา</b> ของคุณลงในแท็บ Locations ของทริปนี้ ทุก ๆ ประมาณ 45 วินาที ขณะที่เปิดแอปอยู่</p>
   <p><b>ทุกคนที่มีลิงก์ของทริปนี้มองเห็นตำแหน่งนี้ได้</b> ไม่ใช่เฉพาะเพื่อนร่วมทริป</p>
-  <p class="mut">ปิดได้ทุกเมื่อ และกด “หยุดแชร์ + ลบตำแหน่งของฉัน” เพื่อลบแถวของคุณออกจากชีต</p>
-  <div class="btns"><button value="ok" class="btn pri">ยอมรับและเริ่มแชร์</button><button value="x" class="btn">ไม่แชร์</button></div></form>`);
-  $('form', d).onsubmit = ev => { if (ev.submitter && ev.submitter.value === 'ok') startShare(); };
+  <p class="mut">ปิดได้ทุกเมื่อ และกด “หยุดแชร์ + ลบตำแหน่ง” เพื่อลบแถวของชื่อนี้ออกจากชีต</p>
+  <label>แชร์ตำแหน่งของใคร (จำเป็น)</label><div class="checks" id="shWho">${travellers().map(n => `<label><input type="radio" name="sw" value="${esc(n)}" required ${n === shareAs() ? 'checked' : ''}>${esc(n)}</label>`).join('') || '<span class="mut">ยังไม่พบรายชื่อสมาชิก</span>'}</div>
+  <div class="btns"><button value="ok" class="btn pri">ยอมรับและเริ่มแชร์</button><button value="x" class="btn" formnovalidate>ไม่แชร์</button></div></form>`);
+  $('form', d).onsubmit = ev => { if (ev.submitter && ev.submitter.value === 'ok') { const n = new FormData(ev.target).get('sw'); if (!n) { ev.preventDefault(); return; } store.set('tt.shareAs', n); startShare(); } };
 }
 const distM = (a, b) => { const R = 6371e3, r = x => x * Math.PI / 180, dLa = r(b.lat - a.lat), dLo = r(b.lng - a.lng), q = Math.sin(dLa / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(q)); };
 async function reverse(lat, lng) {
@@ -1121,7 +1110,7 @@ const STALE_MIN = 30;
 const agoMin = at => { const t = Date.parse(at); return Number.isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 60000)) : null; };
 const agoTxt = m => m == null ? '' : m < 1 ? 'เมื่อสักครู่' : m < 60 ? `${m} นาทีที่แล้ว` : m < 1440 ? `${Math.floor(m / 60)} ชม.ที่แล้ว` : `${Math.floor(m / 1440)} วันที่แล้ว`;
 /* friend marker: avatar in a circle + "x นาทีที่แล้ว" (muted when older than 30 min) */
-const friendIcon = (n, mine, ago) => L.divIcon({ className: '', iconSize: [76, 66], iconAnchor: [38, 24], html: `<div class="fpin ${mine ? 'me' : ''} ${!mine && ago != null && ago > STALE_MIN ? 'stale' : ''}" style="--c:${colorOf(n)}">${avatar(n)}<small>${esc(mine ? 'ฉัน' : agoTxt(ago))}</small></div>` });
+const friendIcon = (n, mine, ago) => L.divIcon({ className: '', iconSize: [76, 66], iconAnchor: [38, 24], html: `<div class="fpin ${mine ? 'me' : ''} ${!mine && ago != null && ago > STALE_MIN ? 'stale' : ''}" style="--c:${colorOf(n)}">${avatar(n)}<small>${esc(mine ? 'กำลังแชร์' : agoTxt(ago))}</small></div>` });
 const SPOT = { food: ['food', '#f97316', 'ร้านอาหาร'], sight: ['sight', '#0ea5e9', 'ที่เที่ยว'], other: ['pin', '#8b5cf6', 'อื่นๆ'] };
 const spotIcon = (type, soft, hot) => L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -14], html: `<div class="spin ${soft ? 'soft' : ''} ${hot ? 'hot' : ''}" style="--c:${SPOT[type][1]}">${ic(SPOT[type][0])}</div>` });
 const sugIcon = kind => L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -12], html: `<div class="spin sug">${ic(kind === 'sight' ? 'sight' : kind === 'cafe' ? 'cafe' : 'food')}</div>` });
@@ -1139,15 +1128,15 @@ function ensureMap() {
 function drawMap(fit) {
   if (!ui.ov || !ensureMap()) return;
   layer.clearLayers(); const pts = [];
-  const all = { ...data.locs }; if (data.me && me) all[me] = { ...data.me, label: data.meLabel || '' };
+  const all = { ...data.locs }; if (data.me && isSharing() && shareAs()) all[shareAs()] = { ...data.me, label: data.meLabel || '' };
   for (const [n, p] of Object.entries(all)) {
-    const mine = n === me;
+    const mine = n === shareAs();
     if (!mine && (!ui.f.friends || ui.f.hide.includes(n))) continue;
     pts.push([p.lat, p.lng]);
     if (mine && p.acc) L.circle([p.lat, p.lng], { radius: p.acc, color: '#2f7bff', weight: 1, fillOpacity: .08 }).addTo(layer);
     const ago = mine && data.me ? 0 : agoMin(p.at);
     L.marker([p.lat, p.lng], { icon: friendIcon(n, mine, ago), zIndexOffset: 1000, title: n }).addTo(layer)
-      .on('click', () => showCard({ kind: 'friend', title: n, avatar: n, lines: [p.label, mine ? 'ตำแหน่งของฉัน' : agoTxt(ago)], lat: p.lat, lng: p.lng, name: n }));
+      .on('click', () => showCard({ kind: 'friend', title: n, avatar: n, lines: [p.label, mine ? 'ตำแหน่งที่กำลังแชร์จากเครื่องนี้' : agoTxt(ago)], lat: p.lat, lng: p.lng, name: n }));
   }
   const route = drawPlaces(), spots = drawSpots();
   let focus = route.length ? [...pts.slice(0, 1), ...route] : [...pts, ...spots];
@@ -1171,14 +1160,14 @@ const GEO_MSG = {
 function renderMapStatus() {
   const el = $('#ovStatus'); if (!el) return;
   let [ico, t, sub] = GEO_MSG[geo.state] || GEO_MSG.idle;
-  if (geo.state === 'ok' && data.me) { ico = 'pin'; t = data.meLabel || (me || 'คุณ') + ' อยู่ที่นี่'; sub = `แม่นยำ ±${Math.round(data.me.acc)} ม.`; }
+  if (geo.state === 'ok' && data.me) { ico = 'pin'; t = data.meLabel || (shareAs() || 'คุณ') + ' อยู่ที่นี่'; sub = `แม่นยำ ±${Math.round(data.me.acc)} ม.`; }
   else if (geo.state === 'before') { const w = gate().w; sub = w ? `จะขอสิทธิ์เมื่อบินถึง${w.where ? ' ' + w.where : ''} (${dtTh(w.start)})` : ''; }
-  const on = isSharing(), mine = (data.locs || {})[me];
+  const on = isSharing(), mine = (data.locs || {})[shareAs()];
   const shSub = !on ? 'ปิดอยู่ — เพื่อนจะไม่เห็นตำแหน่งของคุณ' : geo.pushErr ? 'ส่งไม่สำเร็จ — จะลองใหม่' : geo.pushed ? `เปิดอยู่ · ส่งล่าสุด ${hhmm(new Date(geo.pushed))}` : data.me ? 'เปิดอยู่ · กำลังส่ง…' : 'เปิดอยู่ · รอตำแหน่งจากอุปกรณ์';
   el.innerHTML = `<div class="ovs-row"><span>${ic(ico)} <b>${esc(t)}</b>${sub ? `<br><small>${esc(sub)}</small>` : ''}</span>${['idle', 'denied', 'error'].includes(geo.state) ? '<button class="btn pri sm" id="bAsk">ขอสิทธิ์ตำแหน่ง</button>' : ''}</div>`
-    + `<div class="ovs-row share"><button class="sw ${on ? 'on' : ''}" id="shSw" role="switch" aria-checked="${on}" aria-label="แชร์ตำแหน่งของฉันให้เพื่อน"><i></i></button><span><b>แชร์ตำแหน่งของฉัน</b><br><small id="shSub">${esc(shSub)}</small></span>${on || mine ? '<button class="btn sm danger" id="shDel">หยุดแชร์ + ลบตำแหน่งของฉัน</button>' : ''}</div>`;
+    + `<div class="ovs-row share"><button class="sw ${on ? 'on' : ''}" id="shSw" role="switch" aria-checked="${on}" aria-label="แชร์ตำแหน่งให้เพื่อน"><i></i></button><span><b>แชร์ตำแหน่ง</b><br><small id="shSub">${esc(shSub)}</small></span>${on || mine ? '<button class="btn sm danger" id="shDel">หยุดแชร์ + ลบตำแหน่ง</button>' : ''}</div>`;
   const b = $('#bAsk'); if (b) b.onclick = () => { stopLocation(); ui.centered = false; startLocation(); };
-  $('#shSw').onclick = () => { if (!me) return toast('เลือกชื่อของคุณก่อน (เมนู)'); if (isSharing()) stopShare(false); else consentDialog(); };
+  $('#shSw').onclick = () => { if (isSharing()) stopShare(false); else consentDialog(); };
   const dl = $('#shDel'); if (dl) dl.onclick = () => stopShare(true);
 }
 /* layer chips (top bar) + "ตัวกรอง" button badge */
@@ -1198,7 +1187,7 @@ function filtersChanged(refit) {
 function layerToggle(k) { ui.f[k] = !ui.f[k]; filtersChanged(false); }
 /* the "ตัวกรอง" bottom sheet: layers, day, friends, only-not-yet-visited, reset */
 function renderSheet() {
-  const sh = $('#ovSheet'), p = data.plan, f = ui.f, friends = Object.keys(data.locs || {}).filter(n => n !== me);
+  const sh = $('#ovSheet'), p = data.plan, f = ui.f, friends = Object.keys(data.locs || {}).filter(n => n !== shareAs());
   const dayOpts = [['sel', 'ตามวันที่เลือกในแผน'], ['all', 'ทุกวัน'], ['today', 'วันนี้'], ...(p ? p.days.map((d, i) => [i, dayTitle(d, i)]) : [])];
   const keep = $('.ovs-in', sh) ? $('.ovs-in', sh).scrollTop : 0;
   sh.innerHTML = `<div class="ovs-in"><div class="ovs-h"><b>ตัวกรอง</b><button class="btn sm" id="sfReset">รีเซ็ต</button></div>
@@ -1600,7 +1589,7 @@ function renderSpots() {
     if (ctx.pending) h += `<div class="mut" style="font-size:.82rem;margin:2px 4px">${ic('hourglass')} กำลังหาพิกัดจุดในแผนอีก ${ctx.pending} จุด…</div>`;
     h += `<h2 class="sech">${ic('spark')} แนะนำให้แทรกในแผน</h2>`;
     h += items.length ? items.map((it, i) => sugCard(it, i)).join('') : '<div class="mut" style="margin:2px 4px">ยังไม่มีช่วงเวลาว่างพอในแผน — เพิ่มสถานที่ใหม่ หรือแตะ “เลือกวันเอง” ที่สถานที่ด้านล่าง</div>';
-    h += `<h2 class="sech">${ic('pin')} สถานที่ของฉัน <small>(${all.length})</small></h2>`;
+    h += `<h2 class="sech">${ic('pin')} สถานที่ที่บันทึกไว้ <small>(${all.length})</small></h2>`;
     h += `<div class="chips">${[['all', '', 'ทั้งหมด', all.length], ['food', 'food', 'ร้านอาหาร', cnt('food')], ['sight', 'sight', 'ที่เที่ยว', cnt('sight')], ['other', 'pin', 'อื่นๆ', cnt('other')]].map(([k, i, l, n]) => `<button class="tag ${f === k ? 'on' : ''}" data-sf="${k}">${i ? ic(i) + ' ' : ''}${l} <small>${n}</small></button>`).join('')}</div>`;
     h += all.filter(s => f === 'all' || s.type === f).reverse().map(s => spotCard(s, ctx)).join('');
   }
@@ -1688,12 +1677,12 @@ async function saveSpot(s, dayIdx) {
 /* ---------- menu / settings / sheet connection ---------- */
 const updAt = () => ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '—';
 const renderUpd = () => { const u = $('#updAt'); if (u) u.textContent = updAt(); };
-/* Menu order: สมาชิก (who am I + anyone's photo) -> ทริป -> การแจ้งเตือน -> mode / pictures / extra tables -> refresh -> โควตาฟรี Supabase last */
+/* Menu order: สมาชิก (anyone's photo) -> ทริป -> การแจ้งเตือน -> mode / pictures / extra tables -> refresh -> โควตาฟรี Supabase last */
 function membersCard() {
   const list = travellers();
-  return `<div class="card members" id="membersCard"><div class="row2"><h2>${ic('users')} สมาชิก</h2><button class="btn sm" id="bSwitch">${ic('user')} สลับชื่อ</button></div><div class="mut" style="margin:2px 0 4px">แตะ “ใช้ชื่อนี้” เพื่อเลือกว่าคุณคือใคร (ไม่ต้องมีรหัส) · เปลี่ยนรูปให้ใครก็ได้</div>`
+  return `<div class="card members" id="membersCard"><div class="row2"><h2>${ic('users')} สมาชิก</h2></div><div class="mut" style="margin:2px 0 4px">เปลี่ยนหรือลบรูปให้ใครก็ได้</div>`
     + (list.map(n => { const u = users().find(x => x.name === n), bud = u ? Object.entries(u.budgets || {}).map(([k, v]) => fmt(v) + ' ' + k).join(' · ') : '';
-      return `<div class="row mrow" data-n="${esc(n)}">${avatar(n, 'sm')}<div><b>${esc(n)}</b>${lc(n) === lc(me) ? ' <span class="chip">ฉัน</span>' : ''}${bud ? `<div class="mut">${esc(bud)}</div>` : ''}${avActions(n)}</div>${lc(n) === lc(me) ? '' : `<button class="btn sm" data-who="${esc(n)}" aria-label="ใช้ชื่อ ${esc(n)}">ใช้ชื่อนี้</button>`}</div>`; }).join('') || '<span class="mut">ยังไม่มี — เพิ่มในแท็บ ' + esc(trip().usersTab) + '</span>')
+      return `<div class="row mrow" data-n="${esc(n)}">${avatar(n, 'sm')}<div><b>${esc(n)}</b>${bud ? `<div class="mut">${esc(bud)}</div>` : ''}${avActions(n)}</div></div>`; }).join('') || '<span class="mut">ยังไม่มี — เพิ่มในแท็บ ' + esc(trip().usersTab) + '</span>')
     + '</div>';
 }
 function renderMenu() {
@@ -1707,8 +1696,6 @@ function renderMenu() {
   h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด <span id="updAt">${updAt()}</span> · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
   h += usageCard();
   el.innerHTML = h;
-  $('#bSwitch').onclick = travellerPicker;
-  $$('[data-who]', el).forEach(b => b.onclick = () => choose(b.dataset.who));
   const bg = $('#bGallery'); if (bg) bg.onclick = openGallery;
   fillUsage();
   bindNotif(el);
@@ -1947,7 +1934,7 @@ function cdSheetHtml() {
   else h += row('check', t.name, tripRangeText(t), 'เสร็จสิ้นแล้ว');
   const ups = cfg.trips.filter(x => tripStatus(x) === 'upcoming' && tripRange(x)).sort((a, b) => tripRange(a).s - tripRange(b).s);
   h += `<h4 class="cdh">ทริปที่กำลังจะมาถึง</h4>` + (ups.length ? ups.map(x => row('plane', x.name, tripRangeText(x), 'อีก ' + fmtLeft(tripRange(x).s - now), `data-cdtrip="${esc(x.id)}"`, x.id === cfg.active)).join('') : '<div class="mut cdn">ยังไม่มีทริปที่กำลังจะมาถึง</div>');
-  h += `<div class="cdf"><span>${me ? avatar(me, 'sm') : ''} <b>${esc(me || 'ผู้เยี่ยมชม')}</b></span><button type="button" class="btn" id="cdWho">สลับชื่อ</button></div><div class="btns"><button type="button" class="btn" id="cdClose">ปิด</button></div>`;
+  h += `<div class="btns"><button type="button" class="btn" id="cdClose">ปิด</button></div>`;
   return h;
 }
 /* delegated once on the dialog: the sheet's buttons are not replaced while open, so a tap spanning a refresh is not lost */
@@ -1955,8 +1942,7 @@ dlg.addEventListener('click', e => {
   if (!dlg.classList.contains('cdsh')) return;
   const tb = e.target.closest('[data-cdtrip]');
   if (tb) { const id = tb.dataset.cdtrip; dlg.close(); if (id !== cfg.active) switchTrip(id); return; }
-  if (e.target.closest('#cdWho')) { dlg.close(); travellerPicker(); }
-  else if (e.target.closest('#cdClose')) dlg.close();
+  if (e.target.closest('#cdClose')) dlg.close();
 });
 /* refresh: update .cdt texts in place; rebuild only if the structure changed */
 function refreshCdSheet() {
@@ -1986,14 +1972,14 @@ const docIcon = k => ic((DOC_KINDS[k] || DOC_KINDS.other)[0]);
 const docDate = s => { try { return new Date(s).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; } };
 const docExt = m => ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' }[m] || 'bin');
 const docFileName = d => (String(d.title || 'document').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '').replace(/\s+/g, '_').trim().slice(0, 60) || 'document') + '.' + docExt(d.mime);
-/* IndexedDB: one store 'kv' — `l:<me>` = last document list, `f:<me>:<id>` = {blob}. Wiped as a whole on sign-out / user switch. */
+/* IndexedDB: one store 'kv' — `l:<api name>` = last document list, `f:<api name>:<id>` = {blob}. */
 let idbP = null;
 const idb = () => idbP || (idbP = new Promise((ok, no) => { try { const r = indexedDB.open('tt-docs', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); } catch (e) { no(e); } }));
 const idbDo = async (mode, fn) => { const d = await idb(); return new Promise((ok, no) => { const q = fn(d.transaction('kv', mode).objectStore('kv')); q.onsuccess = () => ok(q.result); q.onerror = () => no(q.error); }); };
 const idbGet = k => idbDo('readonly', s => s.get(k)).catch(() => undefined), idbSet = (k, v) => idbDo('readwrite', s => s.put(v, k)).catch(() => { }), idbDel = k => idbDo('readwrite', s => s.delete(k)).catch(() => { });
 const idbKeys = () => idbDo('readonly', s => s.getAllKeys()).catch(() => []);
-/* documents work without a chosen name: reads/uploads go out under the chosen name, else the first traveller of the trip (the server only checks that it is a member) */
-const dName = () => me || travellers()[0] || '';
+/* documents go out under the constant API identity (the first traveller of the trip; the server only checks that it is a member) */
+const dName = () => apiName();
 const dkey = () => lc(dName());
 function docsWipe() {
   dc.epoch++; Object.values(dc.urls).forEach(u => { try { URL.revokeObjectURL(u); } catch { } });
@@ -2017,8 +2003,8 @@ async function docBlob(d) {
 const docUrl = async d => { if (dc.urls[d.id]) return dc.urls[d.id]; const ep = dc.epoch, b = await docBlob(d); if (ep !== dc.epoch) throw new Error('cancelled'); return dc.urls[d.id] = URL.createObjectURL(b); };
 const docNetErr = e => !!e && (e.net || e instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test(e.message || ''));
 const docErrText = e => e.nosql ? DOC_NOSQL : e.gone ? e.message : docNetErr(e) ? 'ออฟไลน์ — เอกสารนี้ยังไม่ได้บันทึกไว้ในเครื่อง' : 'เปิดเอกสารไม่ได้ — ' + (e.message || 'ลองใหม่อีกครั้ง');
-function docsRejected() {          // the server refused this name (not in the Users list): keep the app as is, say so, let the user pick another name
-  dc.list = null; dc.status = 'error'; toast('เซิร์ฟเวอร์ไม่รู้จักชื่อนี้ — เลือกชื่ออื่นจากรายชื่อ', 4500);
+function docsRejected() {          // the server refused the API name (not in the Users list): keep the app as is and say so
+  dc.list = null; dc.status = 'error'; toast('เซิร์ฟเวอร์ไม่รับคำขอ — ตรวจรายชื่อสมาชิกในชีต', 4500);
 }
 function docsRefresh(force) {
   if (!dName()) return Promise.resolve();
@@ -2042,13 +2028,13 @@ function docsRefresh(force) {
   })().finally(() => { if (dc.epoch === ep) { dc.running = null; renderDocs(true); } });
 }
 const ownerName = o => { const u = travellers().find(x => lc(x) === lc(o)); return u || o; };
-const docCan = d => !!me && (d.created_by === lc(me) || (d.scope === 'person' && d.owner === lc(me)));          // owner or uploader may rename / delete
+const docCan = () => true;          // central system: anyone may rename / delete any document (docs/supabase_central.sql)
 function docCard(d) {
-  const u = dc.urls[d.id], img = d.mime !== 'application/pdf', own = !!me && d.scope === 'person' && d.owner === lc(me), by = d.created_by && (d.scope === 'shared' || d.created_by !== d.owner) ? ' · ' + (d.scope === 'shared' ? 'โดย ' : 'เพิ่มโดย ') + esc(ownerName(d.created_by)) : '';
+  const u = dc.urls[d.id], img = d.mime !== 'application/pdf', by = d.created_by && (d.scope === 'shared' || d.created_by !== d.owner) ? ' · ' + (d.scope === 'shared' ? 'โดย ' : 'เพิ่มโดย ') + esc(ownerName(d.created_by)) : '';
   return `<div class="dcard" data-id="${esc(d.id)}"><div class="dthumb ${img ? '' : 'pdf'}" data-th="${esc(d.id)}">${u && img ? `<img src="${u}" alt="">` : docIcon(d.kind)}</div>
   <div class="dbody"><div class="dt"><b>${docIcon(d.kind)} ${esc(d.title)}</b><button class="dmore" data-more="${esc(d.id)}" aria-label="เมนูเอกสาร">⋯</button></div>
-  ${d.note ? `<small class="dnote">${esc(d.note)}</small>` : ''}<small>${d.scope === 'person' && !own ? 'ของ ' + esc(ownerName(d.owner)) + ' · ' : ''}เพิ่ม ${esc(docDate(d.created_at))}${by}</small>
-  <small class="lock">${d.scope === 'shared' ? ic('users') + ' ทุกคนในทริปเห็น' : own ? ic('users') + ' เห็นทั้งกลุ่ม' : ic('user') + ' เอกสารของ ' + esc(ownerName(d.owner))}${dc.cached.has(d.id) ? ' · ' + ic('download') + ' ในเครื่อง' : ''}</small></div>
+  ${d.note ? `<small class="dnote">${esc(d.note)}</small>` : ''}<small>${d.scope === 'person' ? 'ของ ' + esc(ownerName(d.owner)) + ' · ' : ''}เพิ่ม ${esc(docDate(d.created_at))}${by}</small>
+  <small class="lock">${d.scope === 'shared' ? ic('users') + ' ทุกคนในทริปเห็น' : ic('user') + ' เอกสารของ ' + esc(ownerName(d.owner))}${dc.cached.has(d.id) ? ' · ' + ic('download') + ' ในเครื่อง' : ''}</small></div>
   <div class="dact"><button class="btn pri big" data-show="${esc(d.id)}">โชว์</button><button class="btn" data-dl="${esc(d.id)}">ดาวน์โหลด/แชร์</button></div></div>`;
 }
 const SHARED_K = '__shared';
@@ -2059,12 +2045,10 @@ function docGroups() {          // [{k, name, list}] in display order: each trav
   const sh = L.filter(d => d.scope === 'shared'); if (sh.length) out.push({ k: SHARED_K, name: 'ส่วนกลาง', list: sh });
   return out;
 }
-function docsOf(seg) {          // flat list of one chip (also: 'me' = mine, 'friends' = everybody else's personal documents)
+function docsOf(seg) {          // flat list of one chip
   const L = dc.list || [];
   if (seg === 'all') return docGroups().flatMap(g => g.list);
   if (seg === 'shared') return L.filter(d => d.scope === 'shared');
-  if (seg === 'me') return me ? L.filter(d => d.scope === 'person' && d.owner === lc(me)) : [];
-  if (seg === 'friends') return L.filter(d => d.scope === 'person' && (!me || d.owner !== lc(me)));
   return L.filter(d => d.scope === 'person' && d.owner === lc(seg));
 }
 function renderDocs(fromLoad) {
@@ -2108,11 +2092,11 @@ function bindDocs(el) {
 }
 function prefetchDialog() {
   if (dc.prefetch) return; const n = s => docsOf(s).length;
-  const dl = openDlg(`<h3>ดาวน์โหลดไว้ใช้ออฟไลน์</h3><div class="dmenu"><button class="btn pri block" data-p="def">ของฉัน + ส่วนกลาง (${n('me') + n('shared')})</button><button class="btn block" data-p="me">เฉพาะของฉัน (${n('me')})</button><button class="btn block" data-p="all">ทั้งหมดในกลุ่ม (${(dc.list || []).length})</button><button class="btn block" data-p="x">ยกเลิก</button></div>`);
+  const dl = openDlg(`<h3>ดาวน์โหลดไว้ใช้ออฟไลน์</h3><div class="dmenu"><button class="btn pri block" data-p="all">ทั้งหมดในกลุ่ม (${(dc.list || []).length})</button><button class="btn block" data-p="shared">เฉพาะส่วนกลาง (${n('shared')})</button><button class="btn block" data-p="x">ยกเลิก</button></div>`);
   $$('[data-p]', dl).forEach(b => b.onclick = () => { const k = b.dataset.p; dl.close(); if (k !== 'x') prefetchAll(k); });
 }
 async function prefetchAll(scope) {
-  if (dc.prefetch) return; const ep = dc.epoch, all = scope === 'all' ? (dc.list || []) : scope === 'me' ? docsOf('me') : [...docsOf('me'), ...docsOf('shared')], todo = all.filter(d => !dc.cached.has(d.id)); let n = 0;
+  if (dc.prefetch) return; const ep = dc.epoch, all = scope === 'all' ? (dc.list || []) : docsOf('shared'), todo = all.filter(d => !dc.cached.has(d.id)); let n = 0;
   for (const d of todo) {
     dc.prefetch = `กำลังบันทึก ${++n}/${todo.length}…`; renderDocs();
     try { await docBlob(d); } catch (e) { if (ep === dc.epoch) { dc.prefetch = ''; renderDocs(); toast(docErrText(e), 3500); } return; }
@@ -2171,8 +2155,7 @@ function dcPut(args, onProg) {
 }
 function addDocDialog() {
   const names = travellers(), cur = names.find(n => lc(n) === lc(dc.seg));
-  const f = { who: me && names.some(n => lc(n) === lc(me)) ? names.find(n => lc(n) === lc(me)) : dc.seg === 'shared' ? SHARED_K : cur || '', kind: 'passport', title: DOC_KINDS.passport[2], dirty: false, file: null, prep: null }, ep = dc.epoch;
-  if (cur && !(me && lc(cur) === lc(me))) f.who = cur;          // a person chip is selected: that person first
+  const f = { who: dc.seg === 'shared' ? SHARED_K : cur || '', kind: 'passport', title: DOC_KINDS.passport[2], dirty: false, file: null, prep: null }, ep = dc.epoch;
   const dl = openDlg(`<form method="dialog" id="dfForm"><h3>เพิ่มเอกสาร</h3>
     <label style="margin-top:0">เอกสารของใคร</label>
     <div class="chips reuse" id="dfWho">${names.map(n => `<button type="button" class="tag" data-w="${esc(n)}">${avatar(n, 'sm')} ${esc(n)}</button>`).join('')}<button type="button" class="tag" data-w="${SHARED_K}">${ic('users')} ส่วนกลาง</button></div>
@@ -2370,13 +2353,13 @@ $('#tabs').onclick = e => {
 };
 setInterval(() => { if (!document.hidden && !dlg.open && !ui.edit && !ui.dirty && !ui.saving) load(); }, 60000);
 setInterval(() => {
-  if (!me || !data.plan) return; const g = gate().state;
+  if (!isSharing() || !data.plan) return; const g = gate().state;
   if (g === 'active' && geo.watch == null && !['denied', 'unsupported'].includes(geo.state)) startLocation();
   else if (g !== 'active' && (geo.watch != null || geo.state === 'ok')) { stopLocation(); startLocation(); }
   else if (g === 'before' || g === 'after') { geo.state = g; renderMapStatus(); }
 }, 30000);
 setInterval(() => { if (!document.hidden) avLoad(); }, 300000);
-setInterval(() => { if (!document.hidden && me && isSharing() && data.me && Date.now() - geo.lastPush > SHARE_EVERY - 5000) pushLoc(); }, 15000);          // keep sharing while the app is open and the phone is still
+setInterval(() => { if (!document.hidden && isSharing() && data.me && Date.now() - geo.lastPush > SHARE_EVERY - 5000) pushLoc(); }, 15000);          // keep sharing while the app is open and the phone is still
 setInterval(tickCountdown, 1000);
 setInterval(() => { if (document.hidden || !map || !ui.ov || dlg.open) return; try { drawMap(false); } catch { } }, 30000);          // friends' "x minutes ago" + finished stops
 setInterval(() => { try { checkReminders(); } catch { } }, 15000);
@@ -2390,5 +2373,5 @@ dlg.addEventListener('close', retryStale); document.addEventListener('focusout',
   ui.refit = true;
   { const t = allowedTrip(), c = readCache(t.id); if (c) { ui.updated = new Date(c.t); applyData(dataFromCache(t.id, c), c.snap, true); } else renderAll(); }          // last good copy first, then refresh
   avLoad(); await load();
-  if (me) startLocation();
+  if (isSharing()) startLocation();
 })();

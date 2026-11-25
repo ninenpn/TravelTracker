@@ -1,7 +1,7 @@
 # Runbook
 
 ## One-time setup of a fresh Supabase project
-SQL Editor → run in order: `docs/supabase.sql` → `docs/supabase_edit.sql` → `docs/supabase_trips.sql` → `docs/supabase_trips_v2.sql` → `docs/supabase_docs.sql` (เอกสาร) → `docs/supabase_open.sql` → `docs/supabase_nocode.sql` (no edit code) → `docs/supabase_avatars.sql` (profile photos). Put the project URL + publishable key in `config.js`. All files are idempotent (safe to re-run). Verify: `node tests/live-smoke.js`.
+SQL Editor → run in order: `docs/supabase.sql` → `docs/supabase_edit.sql` → `docs/supabase_trips.sql` → `docs/supabase_trips_v2.sql` → `docs/supabase_docs.sql` (เอกสาร) → `docs/supabase_open.sql` → `docs/supabase_central.sql` (any member renames/deletes any document) → `docs/supabase_nocode.sql` (no edit code) → `docs/supabase_avatars.sql` (profile photos). Put the project URL + publishable key in `config.js`. All files are idempotent (safe to re-run). Verify: `node tests/live-smoke.js`.
 
 ## Everyday
 | Task | How |
@@ -30,11 +30,11 @@ Push to `main` → GitHub Actions "Deploy to GitHub Pages" (two jobs: `build` up
 |---|---|
 | App shows old design after a push | deploy failed or still running → `deploy-and-verify`; hard refresh; check `BUILD` at the bottom of Menu |
 | Plan "saved" but gone after reload | save refused (RPC error toast) or you are looking at stale cache → check the toast text; `sheet_history` has snapshots |
-| Cannot open other trips / documents ("ไม่รู้จักชื่อนี้") | `supabase_open.sql` not applied yet, or the chosen name is not in the `Users` tab → `node tests/live-smoke.js`, check `_pin_ok` / `_member` definitions |
+| Cannot open other trips / documents ("ไม่รู้จักชื่อนี้") | `supabase_open.sql` not applied yet, or the first name of the `Users` tab (the constant API name the app sends) is missing / misspelled → `node tests/live-smoke.js`, check `_pin_ok` / `_member` definitions |
 | (retired) PIN throttle | no longer used after `supabase_open.sql` |
 | Everything empty / HTTP 5xx | free project paused after 7 idle days → Dashboard → Restore |
 | Tab เอกสาร says "ฟีเจอร์เอกสารยังไม่เปิดใช้งาน" | `docs/supabase_docs.sql` not applied → run it in SQL Editor (idempotent). Doc caps: 40 personal per owner, 60 shared, 6 MB each (~ DB usage visible in Menu quota card) |
-| Delete someone's document | in the app only the owner or the uploader (shared: the creator) can; documents are visible to every signed-in member by design; as admin: `delete from member_docs where id = '<id>'` (chunks cascade) |
+| Delete someone's document | in the app anyone can (after `docs/supabase_central.sql`; before it only the owner/uploader, and since the app always sends one fixed API name that mostly means nobody); documents are visible to every member by design; as admin: `delete from member_docs where id = '<id>'` (chunks cascade) |
 | Almaty `ค่าใช้จ่าย` table missing | the tab is not in `sheet_rows` → apply `docs/supabase_trips_v2.sql` |
 
 ## Known limits
