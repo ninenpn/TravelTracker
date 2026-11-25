@@ -5,39 +5,46 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   /* ---------- A. public data (real Supabase) ---------- */
   console.log('\n[A] public data load');
   let s = await open(), p = s.p;
-  check('A1 login screen shown', await p.evaluate(() => !document.getElementById('login').hidden));
-  check('A2 members listed', await p.evaluate(() => document.querySelectorAll('#loginUsers [data-u]').length) >= 2);
+  check('A1 fresh load opens straight to the plan: no login overlay, no PIN pad', await p.evaluate(() => !document.getElementById('login') && !document.querySelector('.pinpad, #loginPin, #loginUsers') && !document.getElementById('app').hidden && !!document.querySelector('#tl .step')));
+  await p.click('#btnMe'); await p.waitForTimeout(300);
+  check('A2 traveller list (names only) opens from the header button', await p.evaluate(() => document.querySelectorAll('#whoList [data-u]').length) >= 2);
+  await p.click('#dlg button[value=x]'); await p.waitForTimeout(200);
   check('A3 Almaty plan loaded (>= 1 day)', await p.evaluate(() => data.plan && data.plan.days.length) >= 1);
   check('A4 data comes from Supabase, not the Google Sheet', s.reqs.includes('SB') && !s.reqs.includes('SHEET'));
   check('A5 PIN hashes are not exposed in public Users rows', await p.evaluate(() => users().every(u => !u.pin)));
+  const src = require('fs').readFileSync(__dirname + '/../app.js', 'utf8') + require('fs').readFileSync(__dirname + '/../index.html', 'utf8');
+  check('A6 no PIN UI or PIN flow left in app.js / index.html', !/pinpad|loginPin|loginUsers|ตั้ง PIN|ลืม PIN|ใส่ PIN|verify_pin|set_first_pin|reset_pin|pin_status|tt\.ph|pendingPin/.test(src));
   await s.b.close();
 
-  /* ---------- B. login / PIN ---------- */
-  console.log('\n[B] login & PIN');
-  s = await open({ goodHash: '__nobody__' }); p = s.p;
-  const names = await p.evaluate(() => [...document.querySelectorAll('#loginUsers [data-u]')].map(x => x.dataset.u));
-  const withPin = 'Nine', fresh = names.find(n => n !== withPin);
-  await p.click(`#loginUsers [data-u=${withPin}]`); await p.waitForTimeout(250);
-  check('B1 name with a PIN asks for it', /ใส่ PIN/.test(await p.innerText('#loginPin')));
-  for (const k of '9999') await p.click(`#loginPin [data-k="${k}"]`); await p.waitForTimeout(700);
-  check('B2 wrong PIN rejected', /ไม่ถูกต้อง/.test(await p.innerText('#loginPin')) && !(await p.evaluate(() => me)));
-  await p.click('#loginPin [data-a=back]'); await p.waitForTimeout(200);
-  await p.click(`#loginUsers [data-u=${fresh}]`); await p.waitForTimeout(250);
-  check('B3 name without a PIN offers to create one', /ตั้ง PIN/.test(await p.innerText('#loginPin')));
-  for (const k of '1234') await p.click(`#loginPin [data-k="${k}"]`); await p.waitForTimeout(250);
-  for (const k of '4321') await p.click(`#loginPin [data-k="${k}"]`); await p.waitForTimeout(600);
-  check('B4 mismatching confirmation refused', /ไม่ตรงกัน/.test(await p.innerText('#loginPin')));
-  for (const k of '1234') await p.click(`#loginPin [data-k="${k}"]`); await p.waitForTimeout(250);
-  for (const k of '1234') await p.click(`#loginPin [data-k="${k}"]`); await p.waitForTimeout(1800);
-  check('B5 PIN created -> signed in', await p.evaluate(() => me) === fresh);
-  check('B6 PIN stored server-side as a SHA-256 hash', s.rpc.some(r => r.fn === 'set_first_pin' && /^[0-9a-f]{64}$/.test(r.a.p_hash)));
-  check('B7 session hash only in sessionStorage', await p.evaluate(() => !!sessionStorage.getItem('tt.ph') && !localStorage.getItem('tt.ph') && !JSON.stringify(cfg).includes(sessionStorage.getItem('tt.ph'))));
+  /* ---------- B. travellers (no login / PIN) ---------- */
+  console.log('\n[B] travellers');
+  s = await open(); p = s.p;
+  const names = await p.evaluate(() => users().map(u => u.name));
+  await p.click('#btnMe'); await p.waitForTimeout(300);
+  check('B1 Almaty list = every name in the Users tab, in order', JSON.stringify(await p.evaluate(() => [...document.querySelectorAll('#whoList [data-u]')].map(x => x.dataset.u))) === JSON.stringify(names));
+  const solo = names.find(n => !['nine', 'mew'].includes(n.toLowerCase())) || names[0];
+  await p.click(`#whoList [data-u="${solo}"]`); await p.waitForTimeout(800);
+  check('B2 choosing a name sets "me" and stores it in localStorage (plain text, not secret)', await p.evaluate(n => me === n && JSON.parse(localStorage.getItem('tt.me')) === n, solo));
+  check('B3 no PIN RPC or hash anywhere: only the constant dummy hash is ever sent', !s.rpc.some(r => ['verify_pin', 'set_first_pin', 'reset_pin', 'pin_status'].includes(r.fn)) && s.rpc.every(r => !('p_hash' in r.a) || r.a.p_hash === 'open') && await p.evaluate(() => !sessionStorage.getItem('tt.ph') && !localStorage.getItem('tt.ph')));
+  await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
+  await p.click('#btnMe'); await p.waitForTimeout(300);
+  check('B4 a private trip lists exactly Nine and Mew', JSON.stringify(await p.evaluate(() => [...document.querySelectorAll('#whoList [data-u]')].map(x => x.dataset.u))) === '["Nine","Mew"]');
+  await p.click('#dlg button[value=x]'); await p.waitForTimeout(200);
+  check('B5 chosen name not on this trip: falls back to Nine, the choice itself is kept, trip loads', await p.evaluate(n => me === 'Nine' && JSON.parse(localStorage.getItem('tt.me')) === n && !!data.plan && data.plan.days.length > 0, solo));
+  check('B5b private RPCs use the fallback name and the dummy hash', s.rpc.filter(r => r.fn === 'get_private').every(r => r.a.p_name === 'Nine' && r.a.p_hash === 'open'));
+  await p.click('#btnMe'); await p.waitForTimeout(300); await p.click('#whoList [data-u=Mew]'); await p.waitForTimeout(1200);
+  check('B6 picking Mew on a private trip works', await p.evaluate(() => me === 'Mew' && document.getElementById('btnMe').textContent === 'M'));
+  await p.evaluate(() => switchTrip(DEFAULT_TRIP.id)); await p.waitForTimeout(2300);
+  check('B7 back on Almaty "Mew" (a Users name) is still the effective name', await p.evaluate(() => me === 'Mew' || !users().some(u => u.name === 'Mew')));
+  await p.reload(); await p.waitForTimeout(3500);
+  check('B8 the choice survives a reload', await p.evaluate(() => JSON.parse(localStorage.getItem('tt.me')) === 'Mew'));
   await s.b.close();
+  /* (dropped on purpose: checks of the PIN pad, wrong/mismatching PIN, hash storage and sessionStorage hash - those behaviours no longer exist) */
 
   /* ---------- C. trips ---------- */
   console.log('\n[C] trips, status, access');
   s = await open(); p = s.p; await login(s, 'Mew'); const keys = Object.keys(FAKE);
-  check('C1 signed-in member sees all trips', await p.evaluate(() => visibleTrips().length) === 1 + keys.length);
+  check('C1 every trip is listed (no login needed)', await p.evaluate(() => visibleTrips().length) === 1 + keys.length);
   check('C2 default list = Current + Upcoming only', await p.evaluate(() => tripList().every(t => tripStatus(t) !== 'past')));
   check('C3 Past filter = the finished trips, newest first', await p.evaluate(() => { ui.tripFilter = 'past'; return tripList().map(t => t.key).join(); }) === 'macau,nagoya,xian,kunming');
   await p.evaluate(() => { ui.tripFilter = 'now'; });
@@ -55,7 +62,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   check('C7 status follows the date (Macau is Current on 2026-07-12)', await p.evaluate(() => tripStatus(cfg.trips.find(t => t.key === 'macau'))) === 'current');
   await s.b.close();
   s = await open({ active: 'priv:macau' }); p = s.p;
-  check('C8 logged out: private trip is never requested, falls back to the public trip', await p.evaluate(() => trip().priv) === undefined && !s.rpc.some(r => r.fn === 'get_private'));
+  check('C8 fresh load with a private trip saved as active opens it directly (no login, no fallback)', await p.evaluate(() => trip().key === 'macau' && data.plan && data.plan.days.length === 4 && me === 'Nine') && s.rpc.some(r => r.fn === 'get_private'));
   await s.b.close();
 
   /* ---------- D. plan editing (deterministic synthetic trip) ---------- */
@@ -65,7 +72,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   check('D1 day bar has one pill per day', await p.evaluate(() => document.querySelectorAll('#homeDays .pill[data-day]').length) === FAKE.macau.days);
   check('D2 cards show travel + stay durations', await p.evaluate(() => /เดินทาง 30 นาที/.test(document.getElementById('tl').innerText) && /อยู่ที่นั่น 1 ชม\. 30 น\./.test(document.getElementById('tl').innerText)));
   await p.click('#editBtn'); await p.waitForTimeout(400);
-  check('D3 private trip: edit mode needs no edit code (PIN session)', await p.evaluate(() => ui.edit));
+  check('D3 private trip: edit mode needs no edit code and no PIN', await p.evaluate(() => ui.edit));
   await p.evaluate(() => stepDialog(0)); await p.waitForTimeout(300);
   check('D4 dialog prefilled with travel 30 / stay across the free-text row', (await p.inputValue('[name=trav]')) === '30' && (await p.inputValue('[name=stay]')) === '90');
   await p.fill('[name=trav]', '45'); check('D5 travel minutes -> arrival (09.00 + 45 = 09.45)', (await p.inputValue('[name=at]')) === '09.45');
@@ -157,17 +164,17 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
     check(`H3 ${w}x${h}: last card not covered by the bottom bar`, m.lastClear);
     await s.b.close();
   }
-  /* ---------- I. stale PIN session + reminders on past trips ---------- */
-  console.log('\n[I] stale session & past-trip reminders');
+  /* ---------- I. refused / failing private reads + reminders on past trips ---------- */
+  console.log('\n[I] refused reads & past-trip reminders');
   s = await open(); p = s.p; await login(s, 'Nine');
   await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
   s.flags.err500 = true; await p.evaluate(() => load()); await p.waitForTimeout(1500);
-  check('I2 transient HTTP error does NOT sign the member out', await p.evaluate(() => !!me && !!sessionStorage.getItem('tt.ph') && document.getElementById('login').hidden));
+  check('I2 transient HTTP error keeps the trip and the chosen name', await p.evaluate(() => me === 'Nine' && trip().key === 'macau' && !!data.plan));
   s.flags.err500 = false; s.flags.nullPriv = true; await p.evaluate(() => load()); await p.waitForTimeout(2500);
-  const st = await p.evaluate(() => ({ me, ph: sessionStorage.getItem('tt.ph'), act: cfg.active, login: !document.getElementById('login').hidden, err: document.getElementById('error').hidden ? '' : document.getElementById('error').textContent, toast: document.getElementById('toast').textContent }));
-  check('I1 null get_private for signed-in member: signed out, public trip, login shown, Thai toast, no error box', !st.me && !st.ph && st.act === ALMATY.id && st.login && !st.err && /PIN/.test(st.toast) && /เข้าสู่ระบบ/.test(st.toast), JSON.stringify(st));
-  s.flags.nullPriv = false; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
-  check('I3 can sign in again and open the private trip', await p.evaluate(() => !!me && trip().key === 'macau' && !!data.plan && data.plan.days.length > 0));
+  const st = await p.evaluate(() => ({ me, act: cfg.active, err: document.getElementById('error').hidden ? '' : document.getElementById('error').textContent, toast: document.getElementById('toast').textContent, plan: !!data.plan, login: !!document.getElementById('login') }));
+  check('I1 server refuses a private read (null): app stays on the trip with its last data, no sign-out, no PIN toast, no error box', st.me === 'Nine' && st.act === 'priv:macau' && st.plan && !st.err && !/PIN/.test(st.toast) && !st.login, JSON.stringify(st));
+  s.flags.nullPriv = false; await p.evaluate(() => load()); await p.waitForTimeout(2300);
+  check('I3 reads work again afterwards', await p.evaluate(() => me === 'Nine' && trip().key === 'macau' && !!data.plan && data.plan.days.length > 0));
   check('I4 past trip: menu shows "trip ended" note, no switch/ics buttons', await (async () => { await p.click('[data-tab=menu]'); await p.waitForTimeout(400); return p.evaluate(() => /ทริปนี้จบแล้ว/.test(document.getElementById('tab-menu').innerText) && !document.getElementById('nOn') && !document.getElementById('nIcs')); })());
   await s.b.close();
   s = await open({ clock: '2026-07-01T10:00:00' }); p = s.p; await login(s, 'Nine');
@@ -185,10 +192,10 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   const cls = p => p.evaluate(() => +window.__cls.toFixed(4));
   s = await open({ init: CLS }); p = s.p;
   const cBoot = await cls(p);
-  check('J1 CLS boot -> login screen <= 0.05', cBoot <= 0.05, String(cBoot));
+  check('J1 CLS at boot <= 0.05', cBoot <= 0.05, String(cBoot));
   await login(s, 'Nine'); await p.waitForTimeout(1500);
   const cLogin = await cls(p) - cBoot;
-  check('J2 CLS login -> home <= 0.05', cLogin <= 0.05, String(cLogin));
+  check('J2 CLS choosing a traveller <= 0.05', cLogin <= 0.05, String(cLogin));
   await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
   await p.evaluate(() => switchTrip('priv:nagoya')); await p.waitForTimeout(2500);
   await p.evaluate(() => switchTrip(DEFAULT_TRIP.id)).catch(() => { }); await p.waitForTimeout(2500);
@@ -327,11 +334,9 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await s.b.close();
   s = await open(); p = s.p; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
   check('J29 private trip cached while signed in', await p.evaluate(() => !!localStorage.getItem('tt.cache.priv:macau')));
-  await p.click('#btnMe'); await p.waitForTimeout(300);
+  await login(s, 'Mew');
   check('J30 switching user clears private caches (public cache stays)', await p.evaluate(() => !Object.keys(localStorage).some(k => k.startsWith('tt.cache.priv:')) && !!localStorage.getItem('tt.cache.' + DEFAULT_TRIP.id)));
-  await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
-  s.flags.nullPriv = true; await p.evaluate(() => load()); await p.waitForTimeout(2500);
-  check('J31 stale PIN clears private caches', await p.evaluate(() => !Object.keys(localStorage).some(k => k.startsWith('tt.cache.priv:'))));
+  /* (J31 "stale PIN clears private caches" dropped: there is no PIN session to go stale any more) */
   await s.b.close();
 
 
@@ -353,9 +358,11 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   const docTab = async p => { await p.click('[data-tab=docs]'); await p.waitForTimeout(900); };
 
   /* K1-K2: signed out / guest sees the panel and no RPC is called */
-  s = await open(); p = s.p; await login(s, 'Nine'); await p.evaluate(() => { sess.set('tt.ph', null); renderDocs(); });
+  s = await open(); p = s.p; await p.evaluate(() => { pick = ''; syncMe(); renderDocs(); });
   await docTab(p);
-  check('K1 signed out: "เข้าสู่ระบบด้วย PIN เพื่อดูเอกสาร" panel, no doc_* RPC', /เข้าสู่ระบบด้วย PIN เพื่อดูเอกสาร/.test(await p.innerText('#tab-docs')) && !s.rpc.some(r => r.fn.startsWith('doc_')));
+  check('K1 no name chosen yet: "เลือกชื่อของคุณเพื่อดูเอกสาร" panel, no doc_* RPC, no login wording', /เลือกชื่อของคุณเพื่อดูเอกสาร/.test(await p.innerText('#tab-docs')) && !/PIN/.test(await p.innerText('#tab-docs')) && !s.rpc.some(r => r.fn.startsWith('doc_')));
+  await p.click('#dcPick'); await p.waitForTimeout(300); await p.click('#whoList [data-u=Nine]'); await p.waitForTimeout(1500);
+  check('K1b picking a name from that panel loads the documents', await p.evaluate(() => me === 'Nine' && dc.status === 'ok') && s.rpc.some(r => r.fn === 'doc_list'));
   await s.b.close();
 
   /* K2-K: main flow */
@@ -441,10 +448,10 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   check('K28 server refusal (-4 full) shows a clear message and nothing is added', /เซิร์ฟเวอร์ปฏิเสธ/.test(await p.innerText('#dfErr')) && /เต็ม/.test(await p.innerText('#dfErr')));
   s.flags.forcePut = ''; await p.click('#dfX'); await p.waitForTimeout(200);
   /* wipe on sign-out */
-  check('K29 cached files exist in IndexedDB before sign-out', (await p.evaluate(async () => (await idbKeys()).length)) > 0);
-  await p.click('#btnMe'); await p.waitForTimeout(500); await p.evaluate(() => dc.wiping);
+  check('K29 cached files exist in IndexedDB before the user switch', (await p.evaluate(async () => (await idbKeys()).length)) > 0);
+  await p.click('[data-tab=plan]'); await p.waitForTimeout(300); await p.click('#btnMe'); await p.waitForTimeout(300); await p.click('#whoList [data-u=Mew]'); await p.waitForTimeout(800); await p.evaluate(() => dc.wiping);
   const wp = await p.evaluate(async () => ({ keys: (await idbKeys()).length, list: dc.list, urls: Object.keys(dc.urls).length }));
-  check('K30 sign-out / user switch wipes every document cache (IndexedDB, memory, blob URLs)', wp.keys === 0 && wp.list === null && wp.urls === 0, JSON.stringify(wp));
+  check('K30 user switch wipes every document cache (IndexedDB, memory, blob URLs)', wp.keys === 0 && wp.list === null && wp.urls === 0, JSON.stringify(wp));
   /* group visibility: another member sees, opens and adds for others (policy: private group app) */
   const unames = await p.evaluate(() => users().map(u => u.name)), third = unames.find(n => n !== 'Nine' && n !== 'Mew');
   s.flags.users = unames.map(n => n.toLowerCase());
@@ -500,12 +507,12 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   s.flags.users = ['nine']; await p.evaluate(() => { dc.seg = 'friends'; }); await addDoc(p, { scope: 'other', owner: unames.find(n => n !== 'Nine'), file: png1 }); await p.click('#dfOk'); await p.waitForTimeout(800);
   check('K39a unknown owner (server -6) shows a clear Thai message', /ไม่พบสมาชิก/.test(await p.innerText('#dfErr'))); await p.click('#dfX'); await p.waitForTimeout(200); s.flags.users = null;
   await p.click('#btnMe'); await p.waitForTimeout(500); await login(s, 'Mew'); await p.waitForTimeout(500); await p.click('[data-tab=docs]'); await p.waitForTimeout(1200);
-  /* stale PIN -> clean sign-out; transient errors -> no sign-out */
+  /* the server does not know this name (null) -> message, stay put; transient errors -> retry panel */
   s.flags.nullDocs = true; await p.evaluate(() => docsRefresh(true)); await p.waitForTimeout(1500);
-  check('K40 doc_list null for a signed-in member signs out cleanly with the Thai message', await p.evaluate(() => !me && !document.getElementById('login').hidden && /PIN ของคุณใช้ไม่ได้แล้ว/.test(document.getElementById('toast').textContent)));
+  check('K40 doc_list null (name unknown to the server): Thai message, name kept, no sign-out screen', await p.evaluate(() => !!me && !document.getElementById('login') && /ไม่รู้จักชื่อนี้/.test(document.getElementById('toast').textContent)));
   await s.b.close();
   s = await open(); p = s.p; await login(s, 'Nine'); await off(s, true); await docTab(p);
-  check('K35 network error with nothing cached: inline retry, still signed in', await p.evaluate(() => !!me && !!document.getElementById('dcRetry') && !document.getElementById('app').hidden));
+  check('K35 network error with nothing cached: inline retry, name kept', await p.evaluate(() => !!me && !!document.getElementById('dcRetry') && !document.getElementById('app').hidden));
   await off(s, false); await p.click('#dcRetry'); await p.waitForTimeout(1500);
   check('K36 retry succeeds once the network is back', await p.evaluate(() => !!document.getElementById('dcSeg')));
   await s.b.close();

@@ -7,7 +7,7 @@ const COLORS = ['#2f7bff', '#ff6b6b', '#12b886', '#ffb020', '#9b6bff', '#ff6bb5'
 const fmt = n => (Math.round(n * 100) / 100).toLocaleString('th-TH', { maximumFractionDigits: 2 });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const DEFAULT_TRIP = { id: '1PW6xAogCla1lhb4wMwhOQeo2d8g_OXmaRONo1OMSlOw', name: 'Almaty Trip', planGid: '101963523', usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', placesTab: 'Places', costTab: 'ค่าใช้จ่าย', extraTabs: '', currency: 'THB' };
-/* Extra trips live in Supabase tables the public key cannot read; any member who is signed in with a verified PIN may open them (checked on the server) */
+/* Extra trips live in Supabase tables the public key cannot read; there is NO login/PIN any more (owner's explicit choice): a name that is a trip member (Nine / Mew) is accepted by the server with a constant dummy hash */
 const PRIV = { usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', placesTab: 'Places', costTab: 'Cost', currency: 'THB', priv: true, planGid: 'plan' };
 const PRIV_TRIPS = [
   { ...PRIV, id: 'priv:macau', key: 'macau', name: 'Macau Trip', extraTabs: '', start: '2026-07-11', end: '2026-07-14' },
@@ -95,10 +95,22 @@ const saveCfg = () => store.set('tt.cfg', cfg);
 function applyTheme() { const d = cfg.theme === 'dark'; document.documentElement.dataset.theme = d ? 'dark' : 'light'; const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = d ? '#0b1220' : '#f3f8ff'; }
 applyTheme();
 const trip = () => cfg.trips.find(t => t.id === cfg.active) || cfg.trips[0];
-let me = sess.get('tt.me') || '';
-const myHash = () => sess.get('tt.ph') || '';
-const canSeePriv = t => !!me && !!myHash();
-const visibleTrips = () => cfg.trips.filter(t => !t.priv || canSeePriv(t));
+/* Open access: no login. "Who am I" is just a remembered name (localStorage, not secret) picked from a plain list of travellers.
+   RPCs still take (name, hash); the hash is a constant dummy and the server ignores it (docs/supabase_open.sql). */
+const OPEN_HASH = 'open';
+const PRIV_TRAVELLERS = ['Nine', 'Mew'];
+let pick = store.get('tt.me', '') || '';          // the name the user chose (persists across trips)
+let me = pick;                                     // effective name for the active trip (see syncMe)
+const myHash = () => OPEN_HASH;
+const visibleTrips = () => cfg.trips;
+/* travellers of the active trip: Almaty = every name in its Users tab; any other trip = Nine and Mew only */
+const travellers = () => trip().priv ? PRIV_TRAVELLERS : users().map(u => u.name);
+function syncMe() {
+  const list = travellers(), old = me, eq = a => String(a).toLowerCase() === String(pick).toLowerCase();
+  me = list.find(eq) || (trip().priv ? list[0] : (users().length ? '' : pick));          // a name that is not on this trip's list falls back (first traveller on private trips, nobody on Almaty)
+  if (me !== old) { try { docsWipe(); } catch { } }
+  return me;
+}
 /* trip status from its dates: Current (today is inside), Upcoming (starts later), Past (already ended) */
 const ymd = x => { const [y, m, d] = x.split('-').map(Number); return new Date(y, m - 1, d); };
 const isoD = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -153,11 +165,9 @@ async function fetchSb(tab) {
     sbOk = true; return j.map(x => Array.isArray(x.cells) ? x.cells.map(v => v == null ? '' : String(v)) : []);
   } catch { return null; }
 }
-let staleSess = false;          // get_private returned null for a signed-in member = saved PIN hash no longer valid
 async function fetchPriv(t, tab) {
-  if (!myHash()) throw new Error('ต้องเข้าสู่ระบบด้วย PIN ถึงจะดูทริปนี้ได้');
-  const j = await sbRpc('get_private', { p_trip: t.key, p_tab: tab, p_name: me, p_hash: myHash() });
-  if (j === null) { staleSess = true; throw new Error('เปิดทริปนี้ไม่ได้ — ต้องเป็นสมาชิกและเข้าสู่ระบบด้วย PIN ที่ถูกต้อง'); }
+  const j = await sbRpc('get_private', { p_trip: t.key, p_tab: tab, p_name: me || PRIV_TRAVELLERS[0], p_hash: myHash() });
+  if (j === null) throw new Error('เปิดทริปนี้ไม่ได้ — ชื่อนี้ไม่ใช่สมาชิกของทริป');
   return j.map(r => Array.isArray(r) ? r.map(v => v == null ? '' : String(v)) : []);
 }
 async function fetchTab(t, { gid, name, noSheet }) {
@@ -188,12 +198,12 @@ async function sbRpc(fn, args) {
     const m = (j && j.message) || String(txt);
     if (/wrong code/i.test(m)) { cfg.editCode = ''; saveCfg(); throw new Error('รหัสแก้ไขไม่ถูกต้อง'); }
     if (/^doc_/.test(fn) && /Could not find the function|schema cache/i.test(m)) throw Object.assign(new Error('docs sql missing'), { nosql: true });
-    if (/Could not find the function|schema cache/i.test(m)) throw new Error(/private|verify_pin|pin_status|reset_pin/.test(fn) ? 'ยังไม่ได้รันสคริปต์ docs/supabase_trips.sql ใน Supabase' : 'ยังไม่ได้รันสคริปต์ docs/supabase_edit.sql ใน Supabase');
+    if (/Could not find the function|schema cache/i.test(m)) throw new Error(/private/.test(fn) ? 'ยังไม่ได้รันสคริปต์ docs/supabase_trips.sql ใน Supabase' : 'ยังไม่ได้รันสคริปต์ docs/supabase_edit.sql ใน Supabase');
     throw new Error(m);
   }
   return j;
 }
-const auth = { valid: () => trip().priv ? !!myHash() : !!cfg.editCode, email: '', token: '', name: '' };       // "signed in" = the edit code is known on this device
+const auth = { valid: () => trip().priv ? true : !!cfg.editCode, email: '', token: '', name: '' };       // "signed in" = the edit code is known on this device
 const clientId = () => '';
 const silentRenew = () => { };
 let askP = null;
@@ -217,13 +227,12 @@ const signIn = () => cfg.editCode ? Promise.resolve(true) : askEditCode();
 const signOut = () => { cfg.editCode = ''; saveCfg(); renderAll(); };
 const sheetApi = {
   on: () => !!SB(),                       // database configured
-  ready: () => trip().priv ? !!myHash() : !!cfg.editCode,            // edit code (public trip) or PIN session (private trip)
+  ready: () => trip().priv ? true : !!cfg.editCode,            // edit code (public trip); private trips need none
   async call(action, p) {
     const T = trip();
-    if (T.priv) {                                   // private trip: identity = the member's PIN session, no edit code needed
-      if (!myHash()) throw new Error('ต้องเข้าสู่ระบบด้วย PIN');
+    if (T.priv) {                                   // private trip: identity = the chosen traveller name, no edit code / PIN
       const pt = p.gid ? 'plan' : p.tab, pstr = a => a.map(v => v == null ? '' : String(v));
-      const W = async (op, payload) => { const n = await sbRpc('private_write', { p_trip: T.key, p_tab: pt, p_op: op, p_payload: payload, p_name: me, p_hash: myHash() }); if (n === -1) throw new Error('ไม่มีสิทธิ์แก้ไขทริปนี้'); return n; };
+      const W = async (op, payload) => { const n = await sbRpc('private_write', { p_trip: T.key, p_tab: pt, p_op: op, p_payload: payload, p_name: me || PRIV_TRAVELLERS[0], p_hash: myHash() }); if (n === -1) throw new Error('ไม่มีสิทธิ์แก้ไขทริปนี้'); return n; };
       if (action === 'append') { await W('append', pstr(p.values)); return { ok: true }; }
       if (action === 'upsert') { await W('upsert', { key: String(p.key), cells: pstr(p.values) }); return { ok: true }; }
       if (action === 'savePlan') {
@@ -463,7 +472,6 @@ let rawPlanHead = '';
 const sameAsPlan = r => rawPlanHead && (r[0] || []).join('|') === rawPlanHead;
 function allowedTrip() {
   let t = trip();
-  if (t.priv && !canSeePriv(t)) { cfg.active = DEFAULT_TRIP.id; saveCfg(); t = trip(); }          // not allowed (or not logged in with PIN) -> back to the public trip
   return t;
 }
 function applyData(nd, snap, top) {
@@ -472,8 +480,7 @@ function applyData(nd, snap, top) {
     try { if (data.plan && data.plan.days.length) { planDates(data.plan); const ds = data.plan.days.filter(d => d.dt); if (ds.length) { cfg.dates = cfg.dates || {}; const r = { s: isoD(ds[0].dt), e: isoD(ds[ds.length - 1].dt) }, o = cfg.dates[nd._trip]; if (!o || o.s !== r.s || o.e !== r.e) { cfg.dates[nd._trip] = r; saveCfg(); } } } } catch { }
     showErr(!data.plan ? 'โหลดแผนไม่ได้ — ตรวจว่าชีตแชร์เป็น "ทุกคนที่มีลิงก์ดูได้" แล้วลองโหลดใหม่' : '');
     ui.loaded = true;
-    if (me && users().length && !users().some(u => u.name === me)) { me = ''; sess.set('tt.me', null); sess.set('tt.ph', null); }
-    if (!me && !$('#login').hidden) renderLogin();
+    syncMe();
     renderAll();
   }, top);
 }
@@ -487,26 +494,18 @@ function loadFailed(t, next) {
   renderSub();
 }
 async function load() {
-  const t = allowedTrip();
+  const t = allowedTrip(); syncMe();
   $('#tripTitle').innerHTML = esc(t.name) + (visibleTrips().length > 1 ? ' <span class="chev">▾</span>' : '');
   const tripChanged = data._trip !== t.id;
   ui.sync = tripChanged ? 'switch' : 'loading'; renderSub();
   const same = !tripChanged, next = { media: same ? (data.media || []) : [], _trip: t.id, tips: same ? (data.tips || []) : [], plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: same ? (data.settings || {}) : {}, stay: same ? (data.stay || {}) : {}, info: same ? (data.info || []) : [], me: data.me, meLabel: data.meLabel };
   let planErr = null;
   const planP = fetchTab(t, { gid: t.planGid }).then(r => { rawPlanHead = (r[0] || []).join('|'); next.plan = parsePlan(r); }).catch(e => { planErr = e; });
-  staleSess = false;
   await planP;
   if (trip().id !== t.id) return;                    // the trip was switched while loading
-  if (staleSess && t.priv && me) {          // PIN was reset/deleted on the server -> sign out cleanly
-    staleSess = false; me = ''; sess.set('tt.me', null); sess.set('tt.ph', null); cfg.active = DEFAULT_TRIP.id; saveCfg(); ui.day = null; clearPrivCaches();
-    showErr(''); toast('PIN ของคุณใช้ไม่ได้แล้ว (อาจถูกรีเซ็ต) — กรุณาเข้าสู่ระบบใหม่อีกครั้ง', 5000);
-    $('#login').hidden = false; $('#loginPin').hidden = true; $('#loginPin').innerHTML = ''; $('#loginUsers').hidden = false; $('#loginSub').hidden = false; renderLogin();
-    return load();
-  }
   if (planErr) return loadFailed(t, next);
   const rest = [
     async () => { if (t.priv) { try { next.media = parseMedia(await fetchTab(t, { name: 'media' })); } catch { } } },
-    async () => { try { pinSet = new Set((await sbRpc('pin_status', {})).map(lc)); } catch { pinSet = null; } },
     async () => { try { next.tips = parseTips(await fetchTab(t, { name: t.tipsTab || 'Tips' })); } catch { } },
     async () => { try { next.stay = parseStay(await fetchTab(t, { name: 'Stay' })); } catch { } },
     async () => { next.users = parseUsers(await fetchTab(t, { name: t.usersTab })) || []; },
@@ -528,99 +527,22 @@ async function load() {
   if (me && geo.state === 'idle') startLocation();
 }
 
-/* ---------- login ---------- */
-function renderLogin() {
-  if (!$('#loginPin').hidden) return;
-  const us = users();
-  $('#loginSub').textContent = us.length ? 'ใครกำลังเข้าใช้งาน? แตะชื่อของคุณ' : (ui.loaded ? 'ยังไม่พบสมาชิกในชีต' : 'กำลังโหลดสมาชิก…');
-  $('#loginUsers').innerHTML = us.map(u => `<button data-u="${esc(u.name)}" class="${u.name === cfg.lastMe ? 'last' : ''}">${avatar(u.name, 'lg')}<span>${esc(u.name)}</span>${u.name === cfg.lastMe ? '<small>ใช้ล่าสุด</small>' : ''}</button>`).join('');
-  $('#loginGuest').hidden = !(ui.loaded && !us.length);
-}
-function enter(name) {
-  me = name; sess.set('tt.me', name); if (name) { cfg.lastMe = name; saveCfg(); }
-  if (cfg.cacheOwner !== name) { clearPrivCaches(); cfg.cacheOwner = name; saveCfg(); }          // another person on this phone must not see the previous person's cached trips
-  $('#login').hidden = true; $('#app').hidden = false; renderAll();
-  if (name) startLocation();
-  if (name && !sess.get('tt.picked') && tripStatus(trip()) === 'past') { const best = tripList('now')[0]; if (best && best.id !== cfg.active && tripStatus(best) !== 'past') switchTrip(best.id, true); }
-}
-/* PIN: stored as a salted SHA-256 hash in the sheet's Users tab (column "PIN") so it works on every device; remembered per device after the first success.
-   A 4-digit PIN only keeps friends from picking each other's name — anyone who can read the sheet could brute-force it. */
-const PIN_LEN = 4;
-cfg.pendingPin = cfg.pendingPin || {}; delete cfg.trusted;
-async function hashPin(name, pin) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${String(name).trim().toLowerCase()}|${pin}|traveltracker`));
-  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
-}
-const colLetter = i => { let t = '', n = i + 1; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = Math.floor((n - 1) / 26); } return t; };
-async function setPinInSheet(name, hash) {
-  if (hash && !cfg.editCode) { await sbRpc('set_first_pin', { p_name: name, p_hash: hash }); if (pinSet) pinSet.add(lc(name)); return; }          // first-time PIN needs no code
-  if (!hash && pinSet) { await sbRpc('reset_pin', { p_name: name, code: cfg.editCode || '' }); pinSet.delete(lc(name)); return; }
-  await sbRpc('set_cell', { p_tab: trip().usersTab, p_key: name, p_col: 'PIN', p_val: hash, code: cfg.editCode || '' });
-}
-let syncingPins = false;
-async function syncPendingPins(interactive) {
-  const names = Object.keys(cfg.pendingPin); if (!names.length || syncingPins || !sheetApi.on()) return;
-  syncingPins = true;
-  try {
-    for (const n of names) {
-      const u = users().find(x => x.name === n);
-      if ((u && u.pin) || (pinSet && pinSet.has(lc(n)))) { delete cfg.pendingPin[n]; continue; }          // somebody already set a PIN for this name
-      try { await setPinInSheet(n, cfg.pendingPin[n]); if (u) u.pin = cfg.pendingPin[n]; delete cfg.pendingPin[n]; }
-      catch (e) { if (interactive) toast('บันทึก PIN ไม่สำเร็จ: ' + e.message + ' — PIN ใช้ได้เฉพาะเครื่องนี้', 5000); break; }
-    }
-    saveCfg();
-  } catch (e) { if (interactive) toast('PIN ใช้ได้เฉพาะเครื่องนี้ก่อน (' + e.message + ')', 4500); }
-  finally { syncingPins = false; }
-}
-let pinSet = null;                       // names that have a PIN on the server; null = unknown (older schema)
+/* ---------- traveller (no login) ---------- */
 const lc = x => String(x || '').trim().toLowerCase();
-const hasPin = name => pinSet ? (pinSet.has(lc(name)) || !!cfg.pendingPin[name]) : !!storedPin(name);
-const storedPin = name => { const u = users().find(x => x.name === name); return (u && u.pin) || cfg.pendingPin[name] || ''; };
-function pickUser(name) { pinPad(name, hasPin(name) ? 'verify' : 'create'); }   // PIN is asked every time; only a name without a PIN gets to create one
-function pinPad(name, mode) {
-  const box = $('#loginPin'); let digits = '', first = '';
-  $('#loginUsers').hidden = true; $('#loginGuest').hidden = true; $('#loginSub').hidden = true; box.hidden = false;
-  const title = () => mode === 'verify' ? 'ใส่ PIN ของคุณ' : first ? 'ยืนยัน PIN อีกครั้ง' : 'ตั้ง PIN 4 หลัก (ครั้งแรก)';
-  const draw = (msg, bad) => {
-    box.innerHTML = `<div class="pinpad">${avatar(name, 'lg')}<h2>${esc(name)}</h2><p id="pinMsg" class="${bad ? 'bad' : ''}">${esc(msg || title())}</p>
-    <div class="dots ${bad ? 'shake' : ''}">${Array.from({ length: PIN_LEN }, (_, i) => `<i class="${i < digits.length ? 'f' : ''}"></i>`).join('')}</div>
-    <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => `<button data-k="${k}">${k}</button>`).join('')}<button data-k="back" aria-label="ลบ">⌫</button><button data-k="0">0</button><span></span></div>
-    <div class="pin-links"><button class="link" data-a="back">← เปลี่ยนชื่อ</button>${mode === 'verify' ? '<button class="link" data-a="forgot">ลืม PIN?</button>' : ''}</div></div>`;
-    $$('[data-k]', box).forEach(b => b.onclick = () => press(b.dataset.k));
-    $('[data-a=back]', box).onclick = leave; const fg = $('[data-a=forgot]', box); if (fg) fg.onclick = () => resetPin(name);
-  };
-  const leave = () => { box.hidden = true; box.innerHTML = ''; $('#loginUsers').hidden = false; $('#loginSub').hidden = false; renderLogin(); };
-  const press = async k => {
-    if (k === 'back') digits = digits.slice(0, -1); else if (digits.length < PIN_LEN) digits += k;
-    draw();
-    if (digits.length < PIN_LEN) return;
-    const pin = digits; digits = '';
-    if (mode === 'verify') {
-      const h = await hashPin(name, pin);
-      let ok;
-      if (pinSet && cfg.pendingPin[name] !== h) {
-        try { ok = await sbRpc('verify_pin', { p_name: name, p_hash: h }); }
-        catch (e) { return draw(/too many/i.test(e.message) ? 'ลองผิดหลายครั้ง รอ 10 นาทีแล้วลองใหม่' : 'ตรวจ PIN ไม่ได้: ' + e.message, true); }
-      } else ok = pinSet ? true : storedPin(name) === h;
-      if (ok) { sess.set('tt.ph', h); box.hidden = true; box.innerHTML = ''; return enter(name); }
-      return draw('PIN ไม่ถูกต้อง ลองอีกครั้ง', true);
-    }
-    if (!first) { first = pin; return draw(); }
-    if (first !== pin) { first = ''; return draw('PIN ไม่ตรงกัน ตั้งใหม่อีกครั้ง', true); }
-    const h = await hashPin(name, pin); cfg.pendingPin[name] = h; saveCfg(); sess.set('tt.ph', h);
-    box.hidden = true; box.innerHTML = ''; enter(name);
-    syncPendingPins(false);
-  };
-  draw();
+const colLetter = i => { let t = '', n = i + 1; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = Math.floor((n - 1) / 26); } return t; };
+function choose(name) {
+  const changed = lc(name) !== lc(pick);
+  pick = name; store.set('tt.me', name); if (name) { cfg.lastMe = name; saveCfg(); }
+  if (changed) clearPrivCaches();          // another person on this phone must not see the previous person's cached documents / trips
+  syncMe(); renderAll();
+  if (name) startLocation();
 }
-async function resetPin(name) {
-  if (!confirm(`ล้าง PIN ของ ${name}? (ต้องใช้รหัสแก้ไข)`)) return;
-  try { await signIn(); await setPinInSheet(name, ''); delete cfg.pendingPin[name]; saveCfg(); const u = users().find(x => x.name === name); if (u) u.pin = ''; toast('ล้าง PIN แล้ว — ตั้ง PIN ใหม่ได้เลย'); pinPad(name, 'create'); }
-  catch (e) { toast(e.message, 5000); }
+function travellerPicker() {
+  const list = travellers(), cur = me;
+  openDlg(`<form method="dialog"><h3>ใครกำลังใช้งาน?</h3><div class="mut" style="margin:4px 0 8px">แตะชื่อของคุณ (ไม่ต้องมีรหัสผ่าน) — ใช้กับบัญชีค่าใช้จ่ายและเอกสาร</div><div class="login-grid" id="whoList">${list.map(n => `<button type="button" data-u="${esc(n)}" class="${lc(n) === lc(cur) ? 'last' : ''}">${avatar(n, 'lg')}<span>${esc(n)}</span>${lc(n) === lc(cur) ? '<small>ใช้อยู่</small>' : ''}</button>`).join('') || '<span class="mut">ยังไม่พบรายชื่อ</span>'}</div><div class="btns"><button value="x" class="btn">ปิด</button></div></form>`);
+  $$('#whoList [data-u]', dlg).forEach(b => b.onclick = () => { dlg.close(); choose(b.dataset.u); });
 }
-$('#loginUsers').onclick = e => { const b = e.target.closest('[data-u]'); if (b) pickUser(b.dataset.u); };
-$('#loginGuest').onclick = () => enter('');
-$('#btnMe').onclick = () => { clearPrivCaches(); $('#login').hidden = false; $('#loginPin').hidden = true; $('#loginUsers').hidden = false; $('#loginSub').hidden = false; renderLogin(); };
+$('#btnMe').onclick = travellerPicker;
 
 /* ---------- plan view ---------- */
 const link = s => esc(s).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">เปิดลิงก์</a>');
@@ -1530,8 +1452,7 @@ const updAt = () => ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: 
 const renderUpd = () => { const u = $('#updAt'); if (u) u.textContent = updAt(); };
 function renderMenu() {
   const el = $('#tab-menu'), on = sheetApi.on();
-  let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
-  if (me && cfg.pendingPin[me]) h += `<div class="card" style="border-color:#ffb020"><h2>${ic('warn')} PIN ของคุณยังอยู่แค่ในเครื่องนี้</h2><div class="mut">ยังไม่ได้บันทึกลงฐานข้อมูล เปลี่ยนเครื่องแล้วจะต้องตั้ง PIN ใหม่ — กดปุ่มเพื่อบันทึก</div><div class="btns"><button class="btn pri" id="bPinSync">บันทึก PIN ลงชีตตอนนี้</button></div></div>`;
+  let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'แตะ “สลับ” เพื่อเลือกชื่อ'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
   h += editCard(); h += mediaCard(); h += usageCard();
   h += notifCard();
   h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
@@ -1541,7 +1462,6 @@ function renderMenu() {
   h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด <span id="updAt">${updAt()}</span> · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
   el.innerHTML = h;
   $('#bSwitch').onclick = () => $('#btnMe').click();
-  const bp = $('#bPinSync'); if (bp) bp.onclick = async () => { await syncPendingPins(true); renderMenu(); if (!cfg.pendingPin[me]) toast('บันทึก PIN แล้ว — ใช้ได้ทุกเครื่อง', 3500); };
   const bg = $('#bGallery'); if (bg) bg.onclick = openGallery;
   const eu = $('#bUnlock'); if (eu) eu.onclick = () => askEditCode().then(() => renderMenu()).catch(() => { });
   const el2 = $('#bLock'); if (el2) el2.onclick = signOut;
@@ -1574,7 +1494,7 @@ const dlg = $('#dlg');
 function openDlg(html) { dlg.innerHTML = html; dlg.showModal(); return dlg; }
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 function editCard() {
-  if (trip().priv) return `<div class="card"><div class="row2"><h2>แก้ไขทริป</h2><span class="chip ok">ใช้ PIN ของคุณ</span></div><div class="mut">สมาชิกที่เข้าสู่ระบบด้วย PIN แก้แผนและบันทึกได้เลย ไม่ต้องใช้รหัสแก้ไข</div></div>`;
+  if (trip().priv) return `<div class="card"><div class="row2"><h2>แก้ไขทริป</h2><span class="chip ok">เปิดแก้ไขได้</span></div><div class="mut">ทริปนี้แก้แผนและบันทึกได้เลย ไม่ต้องใช้ PIN หรือรหัสแก้ไข (ใครมีลิงก์ก็แก้ได้)</div></div>`;
   const on = !!cfg.editCode;
   return `<div class="card"><div class="row2"><h2>แก้ไขทริป</h2><span class="chip ${on ? 'ok' : ''}">${on ? 'ปลดล็อกแล้ว' : 'ล็อกอยู่'}</span></div><div class="mut">${on ? 'แก้แผน เพิ่มค่าใช้จ่าย และเพิ่มสถานที่ได้ — ข้อมูลบันทึกลงฐานข้อมูล Supabase อัตโนมัติ' : 'ดูอย่างเดียว — ใส่รหัสแก้ไขเพื่อแก้แผน เพิ่มค่าใช้จ่าย/สถานที่'}</div><div class="btns">${on ? '<button class="btn" id="bLock">ล็อกเครื่องนี้</button>' : '<button class="btn pri" id="bUnlock">ใส่รหัสแก้ไข</button>'}</div></div>`;
 }
@@ -1782,13 +1702,11 @@ async function docBlob(d) {
 const docUrl = async d => { if (dc.urls[d.id]) return dc.urls[d.id]; const ep = dc.epoch, b = await docBlob(d); if (ep !== dc.epoch) throw new Error('cancelled'); return dc.urls[d.id] = URL.createObjectURL(b); };
 const docNetErr = e => !!e && (e.net || e instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test(e.message || ''));
 const docErrText = e => e.nosql ? DOC_NOSQL : e.gone ? e.message : docNetErr(e) ? 'ออฟไลน์ — เอกสารนี้ยังไม่ได้บันทึกไว้ในเครื่อง' : 'เปิดเอกสารไม่ได้ — ' + (e.message || 'ลองใหม่อีกครั้ง');
-function docsStale() {          // doc_list answered null for a signed-in member: the saved PIN is no longer valid -> clean sign-out (same as get_private)
-  me = ''; sess.set('tt.me', null); sess.set('tt.ph', null); cfg.active = DEFAULT_TRIP.id; saveCfg(); ui.day = null; clearPrivCaches();
-  showErr(''); toast('PIN ของคุณใช้ไม่ได้แล้ว (อาจถูกรีเซ็ต) — กรุณาเข้าสู่ระบบใหม่อีกครั้ง', 5000);
-  $('#login').hidden = false; $('#loginPin').hidden = true; $('#loginPin').innerHTML = ''; $('#loginUsers').hidden = false; $('#loginSub').hidden = false; renderLogin(); load();
+function docsRejected() {          // the server refused this name (not in the Users list): keep the app as is, say so, let the user pick another name
+  dc.list = null; dc.status = 'error'; toast('เซิร์ฟเวอร์ไม่รู้จักชื่อนี้ — เลือกชื่ออื่นจากรายชื่อ', 4500);
 }
 function docsRefresh(force) {
-  if (!me || !myHash()) return Promise.resolve();
+  if (!me) return Promise.resolve();
   if (dc.running) return dc.running;
   if (!force && dc.list && Date.now() - dc.t < 20000) return Promise.resolve();
   const ep = dc.epoch, k = 'l:' + dkey(); if (!dc.list) { dc.status = 'loading'; renderDocs(true); }
@@ -1797,7 +1715,7 @@ function docsRefresh(force) {
     try {
       const j = await sbRpc('doc_list', { p_name: me, p_hash: myHash() });
       if (ep !== dc.epoch) return;
-      if (j === null) return docsStale();
+      if (j === null) return docsRejected();
       dc.list = j; dc.status = 'ok'; dc.offline = false; dc.t = Date.now(); await idbSet(k, j);
     } catch (e) {
       if (ep !== dc.epoch) return;
@@ -1837,9 +1755,9 @@ function friendGroups(fr) {          // friends' documents grouped under each me
 function renderDocs(fromLoad) {
   const el = $('#tab-docs'); if (!el) return;
   let h = infoCard();
-  if (!me || !myHash()) h += `<div class="card dpanel"><div class="dp-i">${ic('lock')}</div><h2>เข้าสู่ระบบด้วย PIN เพื่อดูเอกสาร</h2><div class="mut">เอกสารเห็นได้ทั้งกลุ่ม (แอปส่วนตัว) และเปิดโดยไม่ต้องมีอินเทอร์เน็ตได้หลังบันทึกไว้ในเครื่อง</div><div class="btns" style="justify-content:center"><button class="btn pri" id="dcLogin">เข้าสู่ระบบ</button></div></div>`;
+  if (!me) h += `<div class="card dpanel"><div class="dp-i">${ic('users')}</div><h2>เลือกชื่อของคุณเพื่อดูเอกสาร</h2><div class="mut">เอกสารเห็นได้ทั้งกลุ่ม (แอปส่วนตัว) และเปิดโดยไม่ต้องมีอินเทอร์เน็ตได้หลังบันทึกไว้ในเครื่อง</div><div class="btns" style="justify-content:center"><button class="btn pri" id="dcPick">เลือกชื่อ</button></div></div>`;
   else if (dc.status === 'nosql') h += `<div class="card dpanel" id="dcNoSql"><div class="dp-i">${ic('tool')}</div><h2>${esc(DOC_NOSQL)}</h2></div>`;
-  else if (dc.status === 'error') h += `<div class="card dpanel"><div class="dp-i">${ic('signal')}</div><h2>โหลดเอกสารไม่ได้</h2><div class="mut">ตรวจอินเทอร์เน็ตแล้วลองใหม่ (ยังไม่ได้ออกจากระบบ)</div><div class="btns" style="justify-content:center"><button class="btn pri" id="dcRetry">ลองใหม่</button></div></div>`;
+  else if (dc.status === 'error') h += `<div class="card dpanel"><div class="dp-i">${ic('signal')}</div><h2>โหลดเอกสารไม่ได้</h2><div class="mut">ตรวจอินเทอร์เน็ตแล้วลองใหม่ </div><div class="btns" style="justify-content:center"><button class="btn pri" id="dcRetry">ลองใหม่</button></div></div>`;
   else {
     const me_ = docsOf('me'), sh = docsOf('shared'), fr = docsOf('friends'), ready = dc.status === 'ok', cur = dc.seg === 'shared' ? sh : dc.seg === 'friends' ? fr : me_;
     h += `<div class="dsegw"><div class="seg" id="dcSeg"><button data-seg="me" class="${dc.seg === 'me' ? 'on' : ''}">ของฉัน (${ready ? me_.length : '…'})</button><button data-seg="shared" class="${dc.seg === 'shared' ? 'on' : ''}">ส่วนกลาง (${ready ? sh.length : '…'})</button><button data-seg="friends" class="${dc.seg === 'friends' ? 'on' : ''}">เพื่อน (${ready ? fr.length : '…'})</button></div></div>`;
@@ -1849,7 +1767,7 @@ function renderDocs(fromLoad) {
     else h += dc.seg === 'friends' ? friendGroups(cur) : cur.map(docCard).join('');
   }
   if (fromLoad && el.__sig === h) return; el.__sig = h; el.innerHTML = h; bindDocs(el);
-  if (ui.tab === 'docs' && me && myHash() && dc.status === 'idle') docsRefresh();
+  if (ui.tab === 'docs' && me && dc.status === 'idle') docsRefresh();
 }
 function bindDocs(el) {
   const g = (s, f) => { const n = $(s, el); if (n) n.onclick = f; };
@@ -1858,7 +1776,7 @@ function bindDocs(el) {
   g('#infCopy', () => copyText([st.name, st.address].filter(Boolean).join('\n'), 'คัดลอกที่อยู่แล้ว'));
   g('#infTaxi', () => openViewer({ mode: 'taxi' }));
   $$('[data-icp]', el).forEach(b => b.onclick = () => copyText((data.info[+b.dataset.icp] || {}).v || '', 'คัดลอกแล้ว'));
-  g('#dcLogin', () => $('#btnMe').click()); g('#dcRetry', () => { dc.status = 'idle'; renderDocs(); });
+  g('#dcPick', () => $('#btnMe').click()); g('#dcRetry', () => { dc.status = 'idle'; renderDocs(); });
   $$('#dcSeg [data-seg]', el).forEach(b => b.onclick = () => { dc.seg = b.dataset.seg; renderDocs(); });
   g('#dcAdd', addDocDialog); g('#dcAll', prefetchDialog);
   $$('[data-grp]', el).forEach(b => b.onclick = () => { const o = b.dataset.grp, cur = dc.open[o] !== undefined ? dc.open[o] : docsOf('friends').every(d => d.owner === o); dc.open[o] = !cur; renderDocs(); });
@@ -1898,7 +1816,7 @@ function docMenu(d) {
 }
 function docWrite(fn, args, okMsg) {
   return sbRpc(fn, { p_name: me, p_hash: myHash(), ...args }).then(r => {
-    if (r === null || r === -1) { docsStale(); return false; }
+    if (r === null || r === -1) { docsRejected(); return false; }
     if (r === 0) { toast('ทำรายการนี้ไม่ได้ — ไม่มีสิทธิ์หรือไม่พบเอกสาร', 3500); return false; }
     if (r < 0) { toast('ชื่อไม่ถูกต้อง (ต้องไม่ว่างและไม่เกิน 80 ตัวอักษร)', 3500); return false; }
     toast(okMsg); return true;
@@ -1981,7 +1899,7 @@ function addDocDialog() {
       const b64 = await blobB64(f.prep.blob); if (b64.length > DOC_MAX_B64) throw new Error('ไฟล์ใหญ่เกิน 6 MB');
       const chunks = []; for (let i = 0; i < b64.length; i += DOC_CHUNK) chunks.push(b64.slice(i, i + DOC_CHUNK));
       const r = await dcPut({ p_name: me, p_hash: myHash(), p_scope: f.scope === 'shared' ? 'shared' : 'person', p_owner: f.scope === 'other' ? f.owner : null, p_trip: '', p_title: title, p_kind: f.kind, p_mime: f.prep.mime, p_note: q('#dfNote').value.trim(), p_chunks: chunks }, p => { q('#dfBar').style.width = Math.max(4, Math.round(p * 100)) + '%'; });
-      if (typeof r === 'string' && /^-\d$/.test(r)) throw Object.assign(new Error({ '-1': 'เข้าสู่ระบบใหม่อีกครั้ง — PIN ใช้ไม่ได้', '-2': 'ชนิดไฟล์ไม่รองรับ (เฉพาะ JPG/PNG/WebP/PDF)', '-3': 'ไฟล์ใหญ่เกิน 6 MB', '-4': 'เอกสารเต็มแล้ว (ส่วนตัวคนละ 40 / ส่วนกลาง 60) — ลบบางรายการก่อน', '-5': 'ข้อมูลไม่ถูกต้อง (ชื่อว่างหรือยาวเกิน 80 ตัวอักษร)', '-6': 'ไม่พบสมาชิกคนนี้' }[r] || 'เซิร์ฟเวอร์ปฏิเสธ'), { refused: true });
+      if (typeof r === 'string' && /^-\d$/.test(r)) throw Object.assign(new Error({ '-1': 'ไม่พบชื่อนี้ในรายชื่อสมาชิก — เลือกชื่ออื่น', '-2': 'ชนิดไฟล์ไม่รองรับ (เฉพาะ JPG/PNG/WebP/PDF)', '-3': 'ไฟล์ใหญ่เกิน 6 MB', '-4': 'เอกสารเต็มแล้ว (ส่วนตัวคนละ 40 / ส่วนกลาง 60) — ลบบางรายการก่อน', '-5': 'ข้อมูลไม่ถูกต้อง (ชื่อว่างหรือยาวเกิน 80 ตัวอักษร)', '-6': 'ไม่พบสมาชิกคนนี้' }[r] || 'เซิร์ฟเวอร์ปฏิเสธ'), { refused: true });
       if (ep === dc.epoch && /^[0-9a-f-]{36}$/.test(r)) { await idbSet(`f:${dkey()}:${r}`, { blob: f.prep.blob, t: Date.now() }); }
       f.up = false; dl.close(); dc.seg = f.scope === 'shared' ? 'shared' : f.scope === 'other' ? 'friends' : 'me'; if (f.scope === 'other') dc.open[f.owner.toLowerCase()] = true; toast(f.scope === 'other' ? `เพิ่มเอกสารให้ ${f.owner} แล้ว` : 'เพิ่มเอกสารแล้ว'); await docsRefresh(true);
     } catch (x) {
@@ -2087,7 +2005,7 @@ $('#tabs').onclick = e => {
   scrollTo(0, ui.scroll[to] || 0);
   if (to === 'docs') docsRefresh();
 };
-setInterval(() => { if (!document.hidden && !dlg.open && $('#login').hidden && !ui.edit && !ui.dirty && !ui.saving) load(); }, 60000);
+setInterval(() => { if (!document.hidden && !dlg.open && !ui.edit && !ui.dirty && !ui.saving) load(); }, 60000);
 setInterval(() => {
   if (!me || !data.plan) return; const g = gate().state;
   if (g === 'active' && geo.watch == null && !['denied', 'unsupported'].includes(geo.state)) startLocation();
@@ -2106,9 +2024,7 @@ const retryStale = () => setTimeout(() => { if (ui.stale && !busy()) load(); }, 
 dlg.addEventListener('close', retryStale); document.addEventListener('focusout', retryStale);
 (async function boot() {
   ui.refit = true;
-  if (!me) clearPrivCaches();
-  if (me) { $('#login').hidden = true; $('#app').hidden = false; }
-  { const t = allowedTrip(), c = readCache(t.id); if (c) { ui.updated = new Date(c.t); applyData(dataFromCache(t.id, c), c.snap, true); } else if (me) renderAll(); }          // last good copy first, then refresh
+  { const t = allowedTrip(), c = readCache(t.id); if (c) { ui.updated = new Date(c.t); applyData(dataFromCache(t.id, c), c.snap, true); } else renderAll(); }          // last good copy first, then refresh
   await load();
   if (me) startLocation();
 })();

@@ -58,16 +58,10 @@ nav button.on{color:#fff;background:linear-gradient(135deg,var(--pri),var(--pri2
 .seg button{flex:1;padding:7px;border-radius:11px;font-size:.86rem;color:var(--mut);font-weight:500}
 .seg button.on{background:var(--card);color:var(--ink);font-weight:600;box-shadow:0 1px 4px #0001}
 
-/* login */
-.login{position:fixed;inset:0;z-index:2000;display:grid;place-items:start center;padding:max(24px,10dvh) 24px 24px;overflow:auto;color:#fff;
-  background:radial-gradient(700px 420px at 100% 0%,#7ef0c8 0,transparent 60%),linear-gradient(160deg,#3d86ff 0%,#10c6d8 65%,#6ee7c8 100%)}
-.login-in{width:100%;max-width:380px;text-align:center}
-.logo{font-size:2.8rem}.login h1{font-size:1.7rem;margin:2px 0}.login p{color:#ffffffb8;margin:2px 0 22px;min-height:1.5em}
 .login-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
-.login-grid button{background:#ffffff18;border:1px solid #ffffff2e;border-radius:20px;padding:14px 8px;display:flex;flex-direction:column;align-items:center;gap:8px;color:#fff;font-weight:600;backdrop-filter:blur(8px);transition:.15s}
-.login-grid button:active{transform:scale(.96)}.login-grid button.last{border-color:#fff;background:#ffffff30}
-.login-grid small{color:#ffffffa0;font-weight:400;font-size:.7rem}
-.link{margin-top:18px;color:#ffffffcc;text-decoration:underline;font-size:.9rem}
+.login-grid button{background:var(--soft);border:1px solid var(--line);border-radius:20px;padding:14px 8px;display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--ink);font-weight:600;transition:transform .15s}
+.login-grid button:active{transform:scale(.96)}.login-grid button.last{border-color:var(--pri);background:var(--priSoft)}
+.login-grid small{color:var(--mut);font-weight:400;font-size:.7rem}
 
 /* plan */
 .days{display:flex;gap:8px;overflow-x:auto;margin:0 -16px;padding:2px 16px 6px;scrollbar-width:none}
@@ -212,17 +206,7 @@ html[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) bri
 .editing .bellbtn{display:none}
 
 /* PIN pad */
-.pinpad{display:flex;flex-direction:column;align-items:center;gap:6px}
-.pinpad h2{font-size:1.3rem;margin:6px 0 0}.pinpad p{margin:0;color:#ffffffcc;min-height:1.4em}.pinpad p.bad{color:#ffd5d5;font-weight:600}
-.dots{display:flex;gap:14px;margin:14px 0 10px}.dots i{width:16px;height:16px;border-radius:50%;border:2px solid #ffffffaa}.dots i.f{background:#fff;border-color:#fff}
-.dots.shake{animation:shake .35s}
-@keyframes shake{20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}
-.keys{display:grid;grid-template-columns:repeat(3,72px);gap:12px;justify-content:center}
-.keys button{width:72px;height:72px;border-radius:50%;background:#ffffff22;border:1px solid #ffffff38;color:#fff;font-size:1.5rem;font-weight:600;backdrop-filter:blur(8px)}
-.keys button:active{background:#ffffff55}
-.pin-links{display:flex;gap:18px;margin-top:10px}.pin-links .link{margin-top:0}
 
-.pinwarn{max-width:300px;margin-top:4px;background:#ffffff28;border:1px solid #ffffff44;border-radius:12px;padding:8px 12px;font-size:.78rem;line-height:1.35;text-align:center}
 
 .seglbl.warn{border-color:#ff5a5f;color:#e5484d}
 

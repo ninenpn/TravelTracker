@@ -8,9 +8,9 @@ SQL Editor → run in order: `docs/supabase.sql` → `docs/supabase_edit.sql` �
 |---|---|
 | Run all checks | `bash tests/run.sh --sql --live` |
 | Edit the public plan | in the app (Menu → enter edit code → Plan → แก้ไข) or edit `sheet_rows` rows in Supabase Table Editor |
-| Edit another trip | signed in with PIN → open the trip → แก้ไข |
-| Add a member | add a row to tab `Users` (Table Editor on `sheet_rows`, tab=`Users`); they create their PIN at first login |
-| Reset someone's PIN | delete their row in `member_pins` (lowercase name); they set a new one next login. Or in the app: pick name → "ลืม PIN?" (needs the edit code) |
+| Edit another trip | open the trip → แก้ไข (no PIN; the traveller is Nine or Mew) |
+| Add a member | add a row to tab `Users` (Table Editor on `sheet_rows`, tab=`Users`); the name then appears in the Almaty traveller list (private trips are fixed to Nine and Mew via `trip_members`) |
+| Apply open access | run `docs/supabase_open.sql` in the SQL Editor (idempotent). It removes the PIN requirement server-side and trims `trip_members` to Nine + Mew. To go back, re-run `supabase_trips.sql` + `supabase_trips_v2.sql` + `supabase_docs.sql` (restores the PIN-checking functions; the client would then need the PIN screen again) |
 | Change the edit code | `select public.set_edit_code('<new>');` in SQL Editor |
 | Add another trip from Excel | skill `import-trip` / `python3 tools/import_trip.py --help` |
 | See free-tier usage | Menu → "โควตาฟรี Supabase" (DB size is exact; traffic is this device only) — real totals in Dashboard → Usage |
@@ -30,12 +30,12 @@ Push to `main` → GitHub Actions "Deploy to GitHub Pages" (two jobs: `build` up
 |---|---|
 | App shows old design after a push | deploy failed or still running → `deploy-and-verify`; hard refresh; check `BUILD` at the bottom of Menu |
 | Plan "saved" but gone after reload | save refused (wrong/expired edit code, RPC error toast) or you are looking at stale cache → check the toast text; `sheet_history` has snapshots |
-| Cannot open other trips | not signed in with PIN, PIN not yet created, or SQL files not applied → `node tests/live-smoke.js`, check `pin_status` |
-| "ลองผิดหลายครั้ง" at login | throttle (8 wrong PINs / 10 min) → wait, or delete that name's rows in `pin_fail` |
+| Cannot open other trips / documents ("ไม่รู้จักชื่อนี้") | `supabase_open.sql` not applied yet, or the chosen name is not in the `Users` tab → `node tests/live-smoke.js`, check `_pin_ok` / `_member` definitions |
+| (retired) PIN throttle | no longer used after `supabase_open.sql` |
 | Everything empty / HTTP 5xx | free project paused after 7 idle days → Dashboard → Restore |
 | Tab เอกสาร says "ฟีเจอร์เอกสารยังไม่เปิดใช้งาน" | `docs/supabase_docs.sql` not applied → run it in SQL Editor (idempotent). Doc caps: 40 personal per owner, 60 shared, 6 MB each (~ DB usage visible in Menu quota card) |
 | Delete someone's document | in the app only the owner or the uploader (shared: the creator) can; documents are visible to every signed-in member by design; as admin: `delete from member_docs where id = '<id>'` (chunks cascade) |
 | Almaty `ค่าใช้จ่าย` table missing | the tab is not in `sheet_rows` → apply `docs/supabase_trips_v2.sql` |
 
 ## Known limits
-Pictures/Excel formulas/merged cells: only values and pictures are imported. OSM geocoding/routing are rate limited. A 4-digit PIN is weak by nature.
+Security note: after `supabase_open.sql` private trips and documents are readable by anyone with the link (owner's explicit choice). Pictures/Excel formulas/merged cells:

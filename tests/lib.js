@@ -45,7 +45,7 @@ function finish() {
 /* In-memory twin of docs/supabase_docs.sql (same rules: every member sees/gets every doc, p_owner = add for someone else, rename/delete by owner or uploader, MIME/size/count/title limits). SYNTHETIC data only. */
 function mockDocs(fn, a, docs, flags) {
   if (flags.noDocsSql) return { status: 404, body: { message: `Could not find the function public.${fn} in the schema cache` } };
-  const me = String(a.p_name || '').toLowerCase(), ok = !!a.p_hash && a.p_hash !== 'bad' && !flags.nullDocs, vis = () => true, meta = ({ chunkData, ...m }) => m;
+  const me = String(a.p_name || '').toLowerCase(), ok = !!me && !flags.nullDocs, vis = () => true, meta = ({ chunkData, ...m }) => m;
   const mine = d => d.created_by === me || (d.scope === 'person' && d.owner === me);
   if (fn === 'doc_list') return { status: 200, body: ok ? docs.filter(vis).map(meta) : null };
   if (fn === 'doc_get') { const d = docs.find(x => x.id === a.p_id && vis(x)); return { status: 200, body: ok && d ? { id: d.id, scope: d.scope, owner: d.owner, title: d.title, kind: d.kind, mime: d.mime, note: d.note, chunks: d.chunkData } : null }; }
@@ -70,7 +70,7 @@ function mockDocs(fn, a, docs, flags) {
   return { status: 404, body: { message: 'unknown ' + fn } };
 }
 
-/* opts: w,h, clock(ISO), active (saved trip id), editCode, goodHash, stepsPerDay, pinned (names that already have a PIN), init (function run in the page before any script), reducedMotion */
+/* opts: w,h, clock(ISO), active (saved trip id), editCode, stepsPerDay, init (function run in the page before any script), reducedMotion */
 async function open(opts = {}) {
   const b = await chromium.launch(), ctx = await b.newContext({ viewport: { width: opts.w || 390, height: opts.h || 844 }, hasTouch: true, isMobile: true, reducedMotion: opts.reducedMotion || 'no-preference' });
   const rpc = [], docs = [], flags = { nullPriv: false, err500: false, delayMs: 0, noDocsSql: false, nullDocs: false, offline: false }, trips = Object.fromEntries(Object.keys(FAKE).map(k => [k, fakeTrip(k, opts.stepsPerDay || 3)]));
@@ -81,13 +81,12 @@ async function open(opts = {}) {
     const fn = req.url().split('/rpc/')[1], a = JSON.parse(req.postData() || '{}'); rpc.push({ fn, a });
     let body = null, status = 200;
     if (flags.delayMs && fn === 'get_private') await new Promise(x => setTimeout(x, flags.delayMs));
-    if (fn === 'pin_status') body = opts.pinned || ['nine'];
-    else if (fn === 'verify_pin') body = !opts.goodHash || a.p_hash === opts.goodHash;
-    else if (fn === 'usage_stats') body = { db_bytes: 12e6, total_rows: 500, tables: { plan: 25, '(ทริปส่วนตัว)': 400 } };
+    const trav = ['nine', 'mew'].includes(String(a.p_name || '').trim().toLowerCase());          // open rules (docs/supabase_open.sql): private trips = trip members by NAME, the hash is ignored
+    if (fn === 'usage_stats') body = { db_bytes: 12e6, total_rows: 500, tables: { plan: 25, '(ทริปส่วนตัว)': 400 } };
     else if (fn === 'check_code') body = a.code === 'good';
-    else if (fn === 'get_private') { if (flags.err500) { status = 500; body = { message: 'boom' }; } else body = a.p_hash && !flags.nullPriv ? ((trips[a.p_trip] || {})[a.p_tab] || []) : null; }
+    else if (fn === 'get_private') { if (flags.err500) { status = 500; body = { message: 'boom' }; } else body = trav && !flags.nullPriv ? ((trips[a.p_trip] || {})[a.p_tab] || []) : null; }
     else if (fn.startsWith('doc_')) { const r = mockDocs(fn, a, docs, flags); status = r.status; body = r.body; }
-    else if (fn === 'private_write') body = 1;
+    else if (fn === 'private_write') body = trav ? 1 : -1;
     else if (['save_tab', 'append_row', 'upsert_row'].includes(fn)) { if (a.code !== 'good') { status = 400; body = { message: 'wrong code' }; } else body = 1; }
     r.fulfill({ status, contentType: 'application/json', headers: HH, body: JSON.stringify(body) });
   });
@@ -100,15 +99,13 @@ async function open(opts = {}) {
   if (opts.init) await p.addInitScript(opts.init);
   if (opts.clock) await p.clock.install({ time: new Date(opts.clock) });
   await p.addInitScript(([c]) => { if (!localStorage.getItem('tt.cfg')) localStorage.setItem('tt.cfg', JSON.stringify(c)); },
-    [{ v: 5, trips: [ALMATY], active: opts.active || ALMATY.id, lastMe: '', pendingPin: {}, googleClientId: '', editCode: opts.editCode || '' }]);
+    [{ v: 5, trips: [ALMATY], active: opts.active || ALMATY.id, lastMe: '', googleClientId: '', editCode: opts.editCode || '' }]);
   await p.goto(BASE); if (opts.clock) await p.clock.runFor(4000); await p.waitForTimeout(4500);
   return { b, ctx, p, rpc, reqs, trips, flags, docs };
 }
-async function login(s, who, pin = '1234') {
-  await s.p.click(`#loginUsers [data-u=${who}]`); await s.p.waitForTimeout(250);
-  const create = /ตั้ง PIN/.test(await s.p.innerText('#loginPin'));
-  for (const k of pin) await s.p.click(`#loginPin [data-k="${k}"]`);
-  if (create) { await s.p.waitForTimeout(250); for (const k of pin) await s.p.click(`#loginPin [data-k="${k}"]`); }
-  await s.p.waitForTimeout(2200);
+/* "log in" = choose who you are from the plain traveller list (no PIN anywhere) */
+async function login(s, who) {
+  if (!(await s.p.isVisible('#whoList'))) { await s.p.click('#btnMe'); await s.p.waitForTimeout(250); }
+  await s.p.click(`#whoList [data-u=${who}]`); await s.p.waitForTimeout(1500);
 }
 module.exports = { open, login, check, finish, fakeTrip, ALMATY, SB, FAKE, state };
