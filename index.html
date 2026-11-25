@@ -21,12 +21,7 @@
   <div id="error" class="error" hidden></div>
   <main>
     <div id="homeDock" class="dock m">
-      <div class="dock-map" id="homeMapHolder">
-        <div class="dock-ctl dock-tr"><button id="dockSize" class="dock-btn" aria-label="ขยาย/ย่อแผนที่"></button><button id="dockHide" class="dock-btn" aria-label="ซ่อนแผนที่"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button></div>
-        <div class="dock-ctl dock-br"><button id="dockLoc" class="dock-btn" aria-label="ตำแหน่งฉัน"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button></div>
-        <div class="dock-ctl dock-bl"><button id="dockFull" class="dock-chip">เปิดแผนที่เต็ม</button></div>
-      </div>
-      <button id="dockShow" class="dock-show" hidden><i data-ic="map"></i> แสดงแผนที่</button>
+      <button id="dockFull" class="mapcard" aria-label="เปิดแผนที่"><span class="mapcard-i"><i data-ic="map"></i></span><span class="mapcard-t"><b>เปิดแผนที่</b><small>เส้นทาง ที่เที่ยว และตำแหน่งเพื่อน</small></span><span class="mapcard-go"><i data-ic="chev"></i></span></button>
     </div>
     <div class="days daybar" id="homeDays"></div>
     <section id="tab-plan"></section>
@@ -37,7 +32,7 @@
   </main>
   <nav id="tabs">
     <button data-tab="plan" class="on" aria-label="แผน"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><span>แผน</span></button>
-    <button data-tab="money" aria-label="เงิน"><svg viewBox="0 0 24 24"><path d="M20 12V8H6a2 2 0 0 1 0-4h12v4"/><path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg><span>เงิน</span></button>
+    <button data-tab="money" aria-label="ค่าใช้จ่าย"><svg viewBox="0 0 24 24"><path d="M20 12V8H6a2 2 0 0 1 0-4h12v4"/><path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg><span>ค่าใช้จ่าย</span></button>
     <button data-tab="spots" aria-label="สถานที่"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg><span>สถานที่</span></button>
     <button data-tab="docs" aria-label="เอกสาร"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg><span>เอกสาร</span></button>
     <button data-tab="menu" aria-label="เมนู"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg><span>เมนู</span></button>
@@ -46,10 +41,12 @@
 
 <dialog id="dlg"></dialog>
 <div id="mapOv" class="mapov" hidden role="dialog" aria-label="แผนที่เต็มจอ">
-  <div class="mapov-bar"><div class="chips" id="ovFilters"></div><button id="ovClose" class="ov-btn" aria-label="ปิดแผนที่"><i data-ic="x"></i></button></div>
+  <div class="mapov-bar"><div class="chips" id="ovFilters"></div><button id="ovFilt" class="ov-btn" aria-label="ตัวกรอง"><i data-ic="filter"></i><b class="badge" id="ovBadge" hidden>0</b></button><button id="ovClose" class="ov-btn" aria-label="ปิดแผนที่"><i data-ic="x"></i></button></div>
   <div class="mapov-map" id="ovHolder"></div>
   <button id="ovLoc" class="ov-btn mapov-loc" aria-label="ไปที่ตำแหน่งฉัน"><i data-ic="locate"></i></button>
   <div class="mapov-st" id="ovStatus"></div>
+  <div class="ov-card" id="ovCard" hidden role="dialog" aria-label="รายละเอียดสถานที่"></div>
+  <div class="ov-sheet" id="ovSheet" hidden role="dialog" aria-label="ตัวกรอง"></div>
 </div>
 <div id="docOv" class="dov" hidden role="dialog" aria-label="โชว์เอกสาร"></div>
 <div id="toast" class="toast" hidden></div>

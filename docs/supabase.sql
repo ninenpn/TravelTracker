@@ -90,16 +90,9 @@ insert into public.sheet_rows (tab, row_no, cells) values
 ('Locations', 7, '["Leo"]'::jsonb),
 ('Locations', 8, '["Boom"]'::jsonb);
 
--- Places: 8 rows
+-- Places: header only (the list starts empty; places are added in the app, which finds where they fit in the plan)
 insert into public.sheet_rows (tab, row_no, cells) values
-('Places', 0, '["Name", "Lat", "Lng", "Note", "Type", "Meal", "Cuisine"]'::jsonb),
-('Places', 1, '["Green Bazaar", "43.261", "76.954", "ประมาณ — ตรวจสอบกับ Google Maps"]'::jsonb),
-('Places', 2, '["28 Panfilov Guardsmen Park & Ascension Cathedral", "43.2589", "76.9565", "ประมาณ — ตรวจสอบกับ Google Maps"]'::jsonb),
-('Places', 3, '["Shymbulak Ski Resort", "43.129", "77.08", "ประมาณ — ตรวจสอบกับ Google Maps"]'::jsonb),
-('Places', 4, '["Baytursynova St 104, Almaty 050022, Kazakhstan", "", "", "จุดนัดทัวร์ — ใส่พิกัดจาก Google Maps"]'::jsonb),
-('Places', 5, '["Suvarnabhumi Airport", "13.681897", "100.746869"]'::jsonb),
-('Places', 6, '["Don Mueang International Airport", "13.915014", "100.605482"]'::jsonb),
-('Places', 7, '["Arbat Street", "43.2589", "76.944", "ประมาณ — ถนนคนเดิน Arbat (Zhibek Zholy) ตรวจสอบกับ Google Maps · อย่าใช้พิกัดอัตโนมัติ (ซ้ำกับชื่ออาคาร ЖК Арбат)"]'::jsonb);
+('Places', 0, '["Name", "Lat", "Lng", "Note", "Type", "Meal", "Cuisine"]'::jsonb);
 
 -- Stay: 9 rows
 insert into public.sheet_rows (tab, row_no, cells) values

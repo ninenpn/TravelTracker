@@ -73,7 +73,7 @@ function mockDocs(fn, a, docs, flags) {
 /* opts: w,h, clock(ISO), active (saved trip id), stepsPerDay, init (function run in the page before any script), reducedMotion */
 async function open(opts = {}) {
   const b = await chromium.launch(), ctx = await b.newContext({ viewport: { width: opts.w || 390, height: opts.h || 844 }, hasTouch: true, isMobile: true, reducedMotion: opts.reducedMotion || 'no-preference' });
-  const rpc = [], docs = [], flags = { nullPriv: false, err500: false, delayMs: 0, noDocsSql: false, nullDocs: false, offline: false, noAvSql: false }, avs = {}, trips = Object.fromEntries(Object.keys(FAKE).map(k => [k, fakeTrip(k, opts.stepsPerDay || 3)]));
+  const rpc = [], docs = [], flags = { nullPriv: false, err500: false, delayMs: 0, noDocsSql: false, nullDocs: false, offline: false, noAvSql: false, failWrites: false }, avs = {}, trips = Object.fromEntries(Object.keys(FAKE).map(k => [k, fakeTrip(k, opts.stepsPerDay || 3)]));
   await ctx.route(`${SB}/rest/v1/rpc/*`, async r => {
     if (flags.offline) return r.abort('internetdisconnected');
     const req = r.request(), HH = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
@@ -93,6 +93,7 @@ async function open(opts = {}) {
     }
     else if (fn === 'get_private') { if (flags.err500) { status = 500; body = { message: 'boom' }; } else body = trav && !flags.nullPriv ? ((trips[a.p_trip] || {})[a.p_tab] || []) : null; }
     else if (fn.startsWith('doc_')) { const r = mockDocs(fn, a, docs, flags); status = r.status; body = r.body; }
+    else if (flags.failWrites && ['private_write', 'save_tab', 'append_row', 'upsert_row'].includes(fn)) { status = 500; body = { message: 'write failed' }; }
     else if (fn === 'private_write') body = trav ? 1 : -1;
     else if (['save_tab', 'append_row', 'upsert_row'].includes(fn)) body = 1;          // no edit code any more (docs/supabase_nocode.sql)
     r.fulfill({ status, contentType: 'application/json', headers: HH, body: JSON.stringify(body) });
@@ -102,7 +103,7 @@ async function open(opts = {}) {
   const p = await ctx.newPage(), reqs = [];
   p.on('pageerror', e => state.errors.push('pageerror: ' + e.message));
   p.on('console', m => { if (m.type() === 'error' && !/404|Failed to load resource/.test(m.text())) state.errors.push('console: ' + m.text().slice(0, 140)); });
-  p.on('request', rq => { const u = rq.url(); if (u.includes('supabase.co')) reqs.push('SB'); else if (/docs\.google\.com\/spreadsheets/.test(u)) reqs.push('SHEET'); });
+  p.on('request', rq => { const u = rq.url(); if (u.includes('supabase.co')) reqs.push('SB'); else if (/docs\.google\.com\/spreadsheets/.test(u)) reqs.push('SHEET'); else if (/tile\.openstreetmap\.org/.test(u)) reqs.push('TILE'); else if (/cdnjs\.cloudflare\.com\/ajax\/libs\/pdf\.js/.test(u)) reqs.push('PDFJS'); });
   if (opts.init) await p.addInitScript(opts.init);
   if (opts.clock) await p.clock.install({ time: new Date(opts.clock) });
   await p.addInitScript(([c]) => { if (!localStorage.getItem('tt.cfg')) localStorage.setItem('tt.cfg', JSON.stringify(c)); },
