@@ -17,6 +17,60 @@ const PRIV_TRIPS = [
 ];
 const OLD_PRESETS = ['10SWKXgZ1Tw1YUhZGYkrLdNv_99DYBk9N', '18xlP9LoISk-_Gy3Y0ATXkQM0lWElkvh3', '1ec6Jq7HhUSjsyC50sjyLoFvw-gNXS9gN', '1Lii3MIGLVncBMjXrVBAKZDfxHORD222Z'];
 
+/* ---------- icons: one inline-SVG set (stroke, currentColor, 1.75, round caps); ic(name) returns decorative markup ---------- */
+const ICONS = {
+  map: '<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>',
+  plane: '<path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>',
+  car: '<path d="M5 17H3v-4l2-5h14l2 5v4h-2M5 13h14"/><circle cx="7.5" cy="17" r="2"/><circle cx="16.5" cy="17" r="2"/><path d="M9.5 17h5"/>',
+  train: '<rect x="4" y="3" width="16" height="16" rx="3"/><path d="M4 11h16M12 3v8M8 19l-2 3M16 19l2 3"/><circle cx="8" cy="15" r=".6"/><circle cx="16" cy="15" r=".6"/>',
+  bus: '<path d="M4 17V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v11zM4 11h16M4 17v2M20 17v2"/><circle cx="8" cy="14" r=".6"/><circle cx="16" cy="14" r=".6"/>',
+  walk: '<circle cx="13" cy="4.5" r="1.7"/><path d="M8 21l3-7 3 2v5M11 14l-1-5 5-1 2 4M10 9l-3 3"/>',
+  ship: '<path d="M3 17l1.5 3h15L21 17zM5 17l-1-5 8-3 8 3-1 5M12 9V3h4"/>',
+  compass: '<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>',
+  note: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
+  pin: '<path d="M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
+  ticket: '<path d="M3 9a2 2 0 0 0 0 6v3h18v-3a2 2 0 0 1 0-6V6H3z"/><path d="M14 6v12"/>',
+  warn: '<path d="M12 3 2 20h20z"/><path d="M12 10v4.5M12 17.5v.01"/>',
+  timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  bulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.8.8 1 1.5 1 2.5h6c0-1 .2-1.7 1-2.5A6 6 0 0 0 12 3z"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m21 16-5-5-9 9"/>',
+  home: '<path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+  bell: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
+  bellOff: '<path d="M6 16v-5a6 6 0 0 1 9-5.2M18 11v5l2 2H4M10 21h4M4 4l16 16"/>',
+  route: '<circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h8a3 3 0 0 0 0-6H8a3 3 0 0 1 0-6h8"/>',
+  food: '<path d="M6 3v7a2 2 0 0 0 4 0V3M8 3v18M17 21V3c-2 2-3 5-3 8h3"/>',
+  sight: '<path d="M3 21h18M5 21V10M9 21V10M15 21V10M19 21V10M2 10l10-7 10 7z"/>',
+  cafe: '<path d="M4 8h13v6a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5zM17 10h2a2 2 0 0 1 0 4h-2M7 2v3M11 2v3"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  spark: '<path d="M12 3l2 5.5 5.5 2-5.5 2L12 18l-2-5.5-5.5-2L10 8.5z"/>',
+  x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  rotate: '<path d="M20 12a8 8 0 1 1-2.5-5.8M20 4v5h-5"/>',
+  locate: '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
+  hourglass: '<path d="M6 3h12M6 21h12M7 3c0 5 5 6 5 9s-5 4-5 9M17 3c0 5-5 6-5 9s5 4 5 9"/>',
+  ban: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
+  passport: '<rect x="5" y="3" width="14" height="18" rx="2"/><circle cx="12" cy="10" r="3"/><path d="M9 17h6"/>',
+  bed: '<path d="M3 19V6M3 15h18v4M21 15v-3a3 3 0 0 0-3-3h-7v6"/><circle cx="7" cy="11.5" r="1.5"/>',
+  shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+  file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+  download: '<path d="M12 4v11M7 11l5 5 5-5M5 20h14"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  folder: '<path d="M3 6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  tool: '<path d="M14.7 6.3a4 4 0 0 1 5-3l-2.5 2.5.8 2.4 2.4.8 2.5-2.5a4 4 0 0 1-5 5L7 22l-4-4z"/>',
+  signal: '<path d="M5 12a10 10 0 0 1 14 0M8.5 15.5a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="1"/>',
+  edit: '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'
+};
+const ic = (n, cls = '') => `<svg class="ic${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[n] || ''}</svg>`;
+
+/* static markup in index.html: <i data-ic="name"> placeholders are filled from the same icon set */
+document.querySelectorAll('[data-ic]').forEach(e => { e.outerHTML = ic(e.dataset.ic, e.dataset.cls || ''); });
+
 /* ---------- storage ---------- */
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
@@ -278,8 +332,8 @@ const TAB_TH = { plan: 'แผนการเดินทาง', Cost: 'ค่�
 function openGallery() {
   const list = data.media || []; if (!list.length) return;
   const groups = {}; list.forEach(m => (groups[m.tab] = groups[m.tab] || []).push(m));
-  const d = openDlg(`<form method="dialog"><h3>🖼 รูปภาพของทริป <small>(${list.length})</small></h3>${Object.entries(groups).map(([tab, arr]) => `<div class="dgroup" style="margin:10px 0 4px!important">${esc(TAB_TH[tab] || tab)}</div>${arr.map((m, i) => `${i === 0 || arr[i - 1].cap !== m.cap ? `<div class="mut" style="font-size:.78rem;margin:8px 2px 4px">${esc(m.cap || '')}</div>` : ''}${i === 0 || arr[i - 1].cap !== m.cap ? '<div class="gal">' : ''}<button type="button" class="gimg" data-g="${esc(m.id)}" aria-label="${esc(m.cap)}"></button>${i === arr.length - 1 || arr[i + 1].cap !== m.cap ? '</div>' : ''}`).join('')}`).join('')}<div class="btns"><button value="x" class="btn">ปิด</button></div></form>`);
-  const load1 = async b => { const m = list.find(x => x.id === b.dataset.g); if (!m || b.dataset.done) return; b.dataset.done = '1'; try { const u = await mediaUrl(m); b.style.backgroundImage = `url(${u})`; b.onclick = () => lightbox(u, m.cap); } catch (e) { b.textContent = '⚠'; b.title = e.message; } };
+  const d = openDlg(`<form method="dialog"><h3>${ic('image')} รูปภาพของทริป <small>(${list.length})</small></h3>${Object.entries(groups).map(([tab, arr]) => `<div class="dgroup" style="margin:10px 0 4px!important">${esc(TAB_TH[tab] || tab)}</div>${arr.map((m, i) => `${i === 0 || arr[i - 1].cap !== m.cap ? `<div class="mut" style="font-size:.78rem;margin:8px 2px 4px">${esc(m.cap || '')}</div>` : ''}${i === 0 || arr[i - 1].cap !== m.cap ? '<div class="gal">' : ''}<button type="button" class="gimg" data-g="${esc(m.id)}" aria-label="${esc(m.cap)}"></button>${i === arr.length - 1 || arr[i + 1].cap !== m.cap ? '</div>' : ''}`).join('')}`).join('')}<div class="btns"><button value="x" class="btn">ปิด</button></div></form>`);
+  const load1 = async b => { const m = list.find(x => x.id === b.dataset.g); if (!m || b.dataset.done) return; b.dataset.done = '1'; try { const u = await mediaUrl(m); b.style.backgroundImage = `url(${u})`; b.onclick = () => lightbox(u, m.cap); } catch (e) { b.innerHTML = ic('warn'); b.title = e.message; } };
   const io = 'IntersectionObserver' in window ? new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { io.unobserve(e.target); load1(e.target); } }), { root: d, rootMargin: '200px' }) : null;
   $$('.gimg', d).forEach(b => io ? io.observe(b) : load1(b));
 }
@@ -287,7 +341,7 @@ function lightbox(url, cap) {
   const el = document.createElement('div'); el.className = 'glb'; el.innerHTML = `<div><img src="${url}" alt=""><small>${esc(cap || '')}</small></div>`;
   el.onclick = () => el.remove(); document.body.appendChild(el);
 }
-const mediaCard = () => (data.media || []).length ? `<div class="card"><div class="row2"><div><h2>🖼 รูปภาพของทริป</h2><small>${data.media.length} รูป จากไฟล์ Excel (ภาษาจีน/ตั๋ว/แผนที่)</small></div><button class="btn" id="bGallery">เปิดดู</button></div></div>` : '';
+const mediaCard = () => (data.media || []).length ? `<div class="card"><div class="row2"><div><h2>${ic('image')} รูปภาพของทริป</h2><small>${data.media.length} รูป จากไฟล์ Excel (ภาษาจีน/ตั๋ว/แผนที่)</small></div><button class="btn" id="bGallery">เปิดดู</button></div></div>` : '';
 function parseStay(rows) {
   const h = rows[0] || [], ki = colIndex(h, ['key', 'คีย์']), vi = colIndex(h, ['value', 'ค่า']); if (ki < 0 || vi < 0) return {};
   const o = {}; rows.slice(1).forEach(r => { if (r[ki]) o[norm(r[ki])] = String(r[vi] || '').trim(); });
@@ -571,16 +625,17 @@ $('#btnMe').onclick = () => { clearPrivCaches(); $('#login').hidden = false; $('
 /* ---------- plan view ---------- */
 const link = s => esc(s).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">เปิดลิงก์</a>');
 const mapLink = p => (!p || /^ที่พัก$/.test(p)) ? esc(p) : `<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p)}" target="_blank" rel="noopener">${esc(p)}</a>`;
-function howIcon(h, hasText) {
+function howName(h, hasText) {
   const s = String(h || '').toLowerCase();
-  if (/air|flight|plane|บิน|\b[a-z]{2}\s?-?\d{2,4}\b/.test(s)) return '✈️';
-  if (/taxi|yandex|didi|grab|uber|แท็กซี่/.test(s)) return '🚕';
-  if (/bullet|train|rail|metro|bts|mrt|subway|line|shink|รถไฟ/.test(s)) return '🚆';
-  if (/bus|tour|รถบัส|รถ/.test(s)) return '🚌';
-  if (/walk|เดิน/.test(s)) return '🚶';
-  if (/boat|ferry|เรือ/.test(s)) return '⛴️';
-  return h ? '🧭' : (hasText ? '📝' : '📍');
+  if (/air|flight|plane|บิน|\b[a-z]{2}\s?-?\d{2,4}\b/.test(s)) return 'plane';
+  if (/taxi|yandex|didi|grab|uber|แท็กซี่/.test(s)) return 'car';
+  if (/bullet|train|rail|metro|bts|mrt|subway|line|shink|รถไฟ/.test(s)) return 'train';
+  if (/bus|tour|รถบัส|รถ/.test(s)) return 'bus';
+  if (/walk|เดิน/.test(s)) return 'walk';
+  if (/boat|ferry|เรือ/.test(s)) return 'ship';
+  return h ? 'compass' : (hasText ? 'note' : 'pin');
 }
+const howIcon = (h, hasText) => ic(howName(h, hasText));
 /* dates carry the year the trip happens; days that already passed are shown as Day 1, 2, 3… */
 function planDates(p) {
   const now = new Date(), first = p.days.find(d => d.date); if (!first) return false;
@@ -661,9 +716,9 @@ $('#dockFull').onclick = openMapOv;
 function stayPanel() {
   const st = data.stay, nav = st.lat != null ? `https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(st.address)}`;
   const rules = String(st.rules || '').split('\n').map(x => x.trim()).filter(Boolean);
-  return `<div class="card stay" id="stayPn" ${ui.stayOpen ? '' : 'hidden'}><div class="row2"><b>🏠 ${esc(st.name || 'ที่พัก')}</b><a class="btn pri sm" target="_blank" rel="noopener" href="${nav}">นำทาง</a></div>
+  return `<div class="card stay" id="stayPn" ${ui.stayOpen ? '' : 'hidden'}><div class="row2"><b>${ic('home')} ${esc(st.name || 'ที่พัก')}</b><a class="btn pri sm" target="_blank" rel="noopener" href="${nav}">นำทาง</a></div>
   ${st.address ? `<div class="note">${esc(st.address)}</div>` : ''}
-  ${st.checkin ? `<div class="stay-ci">📩 ${esc(st.checkin)}</div>` : ''}
+  ${st.checkin ? `<div class="stay-ci">${ic('mail')} ${esc(st.checkin)}</div>` : ''}
   ${st.address ? '<div class="btns" style="margin-top:8px"><button class="btn" id="stCopy">คัดลอกที่อยู่</button></div>' : ''}
   ${rules.length ? `<div class="stay-r"><b>กฎของที่พัก</b><ul class="ideas">${rules.map(r => `<li>${esc(r)}</li>`).join('')}</ul></div>` : ''}</div>`;
 }
@@ -671,8 +726,8 @@ function nextCard() {
   const e = nextEvent(), st = data.stay, hasStay = !!st && !!(st.name || st.address); if (!e && !hasStay) return '';
   const on = e && remOn(e);
   return `<div class="cd" id="cd" data-key="${e ? esc(e.key) : ''}"><div class="cd-b"><small>${e ? `ถัดไป · อีก <span id="cdTime">${fmtCd(e.dt - Date.now())}</span>` : 'ที่พัก'}</small><b>${esc(e ? e.title : st.name || st.address)}</b></div>`
-    + (e ? `<button class="bellbtn ${on ? 'on' : ''}" data-bell="${esc(e.key)}" aria-label="เตือน">${on ? '🔔' : '🔕'}</button>` : '')
-    + (hasStay ? `<button class="cd-stay" id="stayBtn" aria-expanded="${!!ui.stayOpen}">🏠 ที่พัก</button>` : '') + '</div>' + (hasStay ? stayPanel() : '');
+    + (e ? `<button class="bellbtn ${on ? 'on' : ''}" data-bell="${esc(e.key)}" aria-label="เตือน">${ic(on ? 'bell' : 'bellOff')}</button>` : '')
+    + (hasStay ? `<button class="cd-stay" id="stayBtn" aria-expanded="${!!ui.stayOpen}">${ic('home')} ที่พัก</button>` : '') + '</div>' + (hasStay ? stayPanel() : '');
 }
 function renderPlan() {
   const el = $('#tab-plan'), p = data.plan, dayBar = $('#homeDays');
@@ -683,19 +738,19 @@ function renderPlan() {
   if (ui.day == null || ui.day >= p.days.length) { const t = p.days.findIndex(isToday); ui.day = t >= 0 ? t : Math.max(0, p.days.findIndex(d => !isPast(d))); }
   const d = p.days[ui.day], wd = d.dt && !isPast(d) ? d.dt.toLocaleDateString('th-TH', { weekday: 'long' }) : '';
   let h = (ui.edit ? '' : nextCard());
-  h += `<div class="dayh"><div><h2>${esc(dayTitle(d, ui.day))}</h2><small>${[wd, d.city].filter(Boolean).map(esc).join(' · ')}${isToday(d) ? ' <span class="chip">วันนี้</span>' : ''}</small></div><button class="edit-btn ${ui.edit ? 'on' : ''}" id="editBtn">${ui.edit ? 'เสร็จ' : '<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>แก้ไข'}</button></div>`;
-  if (!ui.edit && !isPast(d)) { const hits = spotMatches().items.filter(m => m.di === ui.day); if (hits.length) h += `<button class="nudge" id="nudge"><span>🛤</span><div><b>แวะได้ ${hits.length} ที่จากลิสของคุณ</b><small>อยู่ใกล้เส้นทางของวันนี้ — แตะเพื่อดู</small></div></button>`; }
+  h += `<div class="dayh"><div><h2>${esc(dayTitle(d, ui.day))}</h2><small>${[wd, d.city].filter(Boolean).map(esc).join(' · ')}${isToday(d) ? ' <span class="chip">วันนี้</span>' : ''}</small></div><button class="edit-btn ${ui.edit ? 'on' : ''}" id="editBtn">${ui.edit ? 'เสร็จ' : ic('edit') + 'แก้ไข'}</button></div>`;
+  if (!ui.edit && !isPast(d)) { const hits = spotMatches().items.filter(m => m.di === ui.day); if (hits.length) h += `<button class="nudge" id="nudge"><span>${ic('route')}</span><div><b>แวะได้ ${hits.length} ที่จากลิสของคุณ</b><small>อยู่ใกล้เส้นทางของวันนี้ — แตะเพื่อดู</small></div></button>`; }
   h += `<div class="tl ${ui.edit ? 'editing' : ''}" id="tl">` + d.steps.map((s, k) => `<div class="step" data-i="${k}"><div class="step-t">${esc(s.time || '')}${s.toTime ? `<small>→ ${esc(s.toTime)}</small>` : ''}</div><div class="step-c"><div class="step-i">${howIcon(s.how, !!s.text)}</div><div class="step-b">
     ${s.text ? `<div>${link(s.text)}</div>` : ''}${(s.from || s.to) ? `<div class="route">${ui.edit ? esc(s.from) : mapLink(s.from)}${s.to ? ' <span class="arrow">→</span> ' + (ui.edit ? esc(s.to) : mapLink(s.to)) : ''}</div>` : ''}
-    ${s.city ? `<span class="chip">${esc(s.city)}</span>` : ''}${s.how ? `<span class="chip">${esc(s.how)}</span>` : ''}${durChips(d.steps, k)}${s.tickets ? `<span class="chip">🎫 ${link(s.tickets)}</span>` : ''}
-    ${s.note ? `<div class="note">${link(s.note)}</div>` : ''}${s.notice ? `<div class="note">⚠️ ${link(s.notice)}</div>` : ''}</div>
+    ${s.city ? `<span class="chip">${esc(s.city)}</span>` : ''}${s.how ? `<span class="chip">${esc(s.how)}</span>` : ''}${durChips(d.steps, k)}${s.tickets ? `<span class="chip">${ic('ticket')} ${link(s.tickets)}</span>` : ''}
+    ${s.note ? `<div class="note">${link(s.note)}</div>` : ''}${s.notice ? `<div class="note">${ic('warn')} ${link(s.notice)}</div>` : ''}</div>
     ${ui.edit ? '' : bell(ui.day, k)}<div class="grip" aria-label="ลากเพื่อจัดลำดับ"><svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></div></div></div>`).join('') + '</div>';
   if (!d.steps.length && !ui.edit) h += '<div class="card empty flat">ยังไม่มีแผนสำหรับวันนี้<br><small>กด “แก้ไข” เพื่อเพิ่มรายการ</small></div>';
   if (ui.edit) h += '<button class="addstep" id="addStep">+ เพิ่มรายการ</button>';
-  if (!ui.edit) p.ideas.forEach((g, gi) => { if (g.items.length) h += `<div class="card flat"><h3>💡 ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map((i, ii) => `<li>${mapLink(i)} <button class="tag sm" data-gi="${gi}" data-ii="${ii}">+ เพิ่มเข้าแผน</button></li>`).join('')}</ul></div>`; });
-  if (!ui.edit && (data.media || []).length) h += `<button class="nudge" id="planGallery"><span>🖼</span><div><b>รูปภาพของทริป (${data.media.length})</b><small>ภาพประกอบจากไฟล์ Excel — แตะเพื่อดู</small></div></button>`;
+  if (!ui.edit) p.ideas.forEach((g, gi) => { if (g.items.length) h += `<div class="card flat"><h3>${ic('bulb')} ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map((i, ii) => `<li>${mapLink(i)} <button class="tag sm" data-gi="${gi}" data-ii="${ii}">+ เพิ่มเข้าแผน</button></li>`).join('')}</ul></div>`; });
+  if (!ui.edit && (data.media || []).length) h += `<button class="nudge" id="planGallery"><span>${ic('image')}</span><div><b>รูปภาพของทริป (${data.media.length})</b><small>ภาพประกอบจากไฟล์ Excel — แตะเพื่อดู</small></div></button>`;
   el.innerHTML = h;
-  dayBar.innerHTML = '<button class="pill mapbtn" id="peekMap" aria-label="แสดงแผนที่">🗺</button>' + p.days.map(pill).join('') + (ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : '');
+  dayBar.innerHTML = `<button class="pill mapbtn" id="peekMap" aria-label="แสดงแผนที่">${ic('map')}</button>` + p.days.map(pill).join('') + (ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : '');
   { const pm = $('#peekMap', dayBar); if (pm) pm.onclick = () => { ui.dockLockAt = Date.now(); ui.dockAway = false; updateDock(); }; }
   const sel = $('.pill.sel', dayBar); if (sel) dayBar.scrollLeft = sel.offsetLeft - dayBar.clientWidth / 2 + sel.clientWidth / 2;
   $$('[data-gi]', el).forEach(b => b.onclick = () => { const g = p.ideas[+b.dataset.gi]; addToPlanDialog(g.items[+b.dataset.ii], { gi: +b.dataset.gi, ii: +b.dataset.ii }); });
@@ -755,12 +810,12 @@ const fmtT = m => `${pad2(((Math.floor(m / 60) % 24) + 24) % 24)}.${pad2(((m % 6
 const gapMin = (a, b) => { if (a == null || b == null) return null; let d = b - a; if (d < 0) d += 1440; return d; };
 const shiftT = (str, delta) => { const t = tm(str); if (!t) return str; const m = (((t[0] * 60 + t[1] + delta) % 1440) + 1440) % 1440; return String(str).replace(/(\d{1,2})[.:](\d{2})/, fmtT(m)); };
 /* travel time (departure -> arrival) and time spent at the place (arrival -> next departure), derived from the sheet times */
-function travelMin(st) { if (howIcon(st.how, false) === '✈️') return null; const g = gapMin(tmin(st.time), tmin(st.toTime)); return g > 0 && g < 1440 ? g : null; }
+function travelMin(st) { if (howName(st.how, false) === 'plane') return null; const g = gapMin(tmin(st.time), tmin(st.toTime)); return g > 0 && g < 1440 ? g : null; }
 const nextTimed = (steps, k) => { for (let j = k + 1; j < steps.length; j++) if (tmin(steps[j].time) != null && isTime(steps[j].time)) return steps[j]; return null; };   // skips free-text rows like "lunch nearby"
 function stayMin(steps, k) { const nx = nextTimed(steps, k), g = nx ? gapMin(tmin(steps[k].toTime), tmin(nx.time)) : null; return g > 0 && g < 720 ? g : null; }
 function durChips(steps, k) {
   const tr = travelMin(steps[k]), sy = stayMin(steps, k);
-  return (tr ? `<span class="chip">⏱ เดินทาง ${fmtDur(tr)}</span>` : '') + (sy ? `<span class="chip">🕒 อยู่ที่นั่น ${fmtDur(sy)}</span>` : '');
+  return (tr ? `<span class="chip">${ic('timer')} เดินทาง ${fmtDur(tr)}</span>` : '') + (sy ? `<span class="chip">${ic('clock')} อยู่ที่นั่น ${fmtDur(sy)}</span>` : '');
 }
 function shiftFrom(day, k0, delta) {
   const ix = data.plan.cols;
@@ -949,7 +1004,7 @@ function planWindowDates() { const p = data.plan; return p && p.days.length && p
 const at = (date, t) => { const x = new Date(date); if (t) x.setHours(t[0], t[1], 0, 0); return x; };
 function tripWindow() {
   const p = planWindowDates(); if (!p) return null;
-  const fl = []; p.days.forEach(d => d.steps.forEach(s => { if (d.dt && howIcon(s.how, false) === '✈️') fl.push({ d, s }); }));
+  const fl = []; p.days.forEach(d => d.steps.forEach(s => { if (d.dt && howName(s.how, false) === 'plane') fl.push({ d, s }); }));
   const lastDay = [...p.days].reverse().find(d => d.dt); if (!lastDay) return null;
   if (!fl.length) return { start: at(p.days.find(d => d.dt).dt), end: at(lastDay.dt, [23, 59]), where: '' };
   const f = fl[0], dep = tm(f.s.time), arr = tm(f.s.toTime);
@@ -1005,9 +1060,9 @@ async function reverse(lat, lng) {
 let map, layer, plLayer, spLayer, sgLayer;
 ui.f = store.get('tt.f', null) || { route: true, food: true, sight: true, other: true, friends: true };
 const pinIcon = (n, isMe) => L.divIcon({ className: '', iconSize: [34, 34], iconAnchor: [17, 34], popupAnchor: [0, -32], html: `<div class="pin ${isMe ? 'me' : ''}" style="--c:${colorOf(n)}"><span>${esc(initial(n))}</span></div>` });
-const SPOT = { food: ['🍽', '#f97316', 'ร้านอาหาร'], sight: ['🏛', '#0ea5e9', 'ที่เที่ยว'], other: ['📌', '#8b5cf6', 'อื่นๆ'] };
-const spotIcon = (type, soft, hot) => L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -14], html: `<div class="spin ${soft ? 'soft' : ''} ${hot ? 'hot' : ''}" style="--c:${SPOT[type][1]}">${SPOT[type][0]}</div>` });
-const sugIcon = kind => L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -12], html: `<div class="spin sug">${kind === 'sight' ? '🏛' : kind === 'cafe' ? '☕' : '🍽'}</div>` });
+const SPOT = { food: ['food', '#f97316', 'ร้านอาหาร'], sight: ['sight', '#0ea5e9', 'ที่เที่ยว'], other: ['pin', '#8b5cf6', 'อื่นๆ'] };
+const spotIcon = (type, soft, hot) => L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -14], html: `<div class="spin ${soft ? 'soft' : ''} ${hot ? 'hot' : ''}" style="--c:${SPOT[type][1]}">${ic(SPOT[type][0])}</div>` });
+const sugIcon = kind => L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -12], html: `<div class="spin sug">${ic(kind === 'sight' ? 'sight' : kind === 'cafe' ? 'cafe' : 'food')}</div>` });
 const placeIcon = (n, di) => { const w = Math.max(28, 12 + 8 * String(n).length); return L.divIcon({ className: '', iconSize: [w, 28], iconAnchor: [w / 2, 14], popupAnchor: [0, -12], html: `<div class="plc" style="--c:${COLORS[di % 8]};${w > 28 ? 'width:' + w + 'px;border-radius:14px;' : ''}">${n}</div>` }); };
 function ensureMap() {
   const el = $('#map'); if (!el) return false;
@@ -1039,33 +1094,33 @@ function drawMap(fit) {
   setTimeout(() => { map.invalidateSize(); if (fit && focus.length) focus.length === 1 ? map.setView(focus[0], 16) : map.fitBounds(focus, { maxZoom: 16, padding: [40, 40] }); }, 60);
 }
 const GEO_MSG = {
-  idle: ['📍', 'ยังไม่ได้เปิดตำแหน่ง', 'กดปุ่มเพื่ออนุญาตให้แอปตรวจจับตำแหน่งของคุณ'],
-  asking: ['⏳', 'กำลังหาตำแหน่ง…', 'หากมีหน้าต่างขอสิทธิ์ ให้กด “อนุญาต”'],
-  denied: ['🚫', 'ไม่ได้รับอนุญาตให้เข้าถึงตำแหน่ง', 'เปิดสิทธิ์ตำแหน่งให้เว็บนี้ในการตั้งค่าเบราว์เซอร์ แล้วกดลองอีกครั้ง'],
-  error: ['⚠️', 'หาตำแหน่งไม่ได้', 'ตรวจว่าเปิด GPS แล้วลองใหม่'],
-  unsupported: ['⚠️', 'อุปกรณ์ไม่รองรับระบุตำแหน่ง', ''],
-  before: ['🛫', 'ยังไม่ถึงเวลาเปิดตำแหน่ง', ''],
-  after: ['🏠', 'ทริปจบแล้ว', 'ปิดการติดตามตำแหน่งแล้ว']
+  idle: ['pin', 'ยังไม่ได้เปิดตำแหน่ง', 'กดปุ่มเพื่ออนุญาตให้แอปตรวจจับตำแหน่งของคุณ'],
+  asking: ['hourglass', 'กำลังหาตำแหน่ง…', 'หากมีหน้าต่างขอสิทธิ์ ให้กด “อนุญาต”'],
+  denied: ['ban', 'ไม่ได้รับอนุญาตให้เข้าถึงตำแหน่ง', 'เปิดสิทธิ์ตำแหน่งให้เว็บนี้ในการตั้งค่าเบราว์เซอร์ แล้วกดลองอีกครั้ง'],
+  error: ['warn', 'หาตำแหน่งไม่ได้', 'ตรวจว่าเปิด GPS แล้วลองใหม่'],
+  unsupported: ['warn', 'อุปกรณ์ไม่รองรับระบุตำแหน่ง', ''],
+  before: ['plane', 'ยังไม่ถึงเวลาเปิดตำแหน่ง', ''],
+  after: ['home', 'ทริปจบแล้ว', 'ปิดการติดตามตำแหน่งแล้ว']
 };
 /* location status line of the full-screen map; the permission button only shows when there is something to ask */
 function renderMapStatus() {
   const el = $('#ovStatus'); if (!el) return;
   let [ico, t, sub] = GEO_MSG[geo.state] || GEO_MSG.idle;
-  if (geo.state === 'ok' && data.me) { ico = '📍'; t = data.meLabel || (me || 'คุณ') + ' อยู่ที่นี่'; sub = `แม่นยำ ±${Math.round(data.me.acc)} ม.`; }
+  if (geo.state === 'ok' && data.me) { ico = 'pin'; t = data.meLabel || (me || 'คุณ') + ' อยู่ที่นี่'; sub = `แม่นยำ ±${Math.round(data.me.acc)} ม.`; }
   else if (geo.state === 'before') { const w = gate().w; sub = w ? `จะขอสิทธิ์เมื่อบินถึง${w.where ? ' ' + w.where : ''} (${dtTh(w.start)})` : ''; }
-  el.innerHTML = `<span>${ico} <b>${esc(t)}</b>${sub ? `<br><small>${esc(sub)}</small>` : ''}</span>${['idle', 'denied', 'error'].includes(geo.state) ? '<button class="btn pri sm" id="bAsk">ขอสิทธิ์ตำแหน่ง</button>' : ''}`;
+  el.innerHTML = `<span>${ic(ico)} <b>${esc(t)}</b>${sub ? `<br><small>${esc(sub)}</small>` : ''}</span>${['idle', 'denied', 'error'].includes(geo.state) ? '<button class="btn pri sm" id="bAsk">ขอสิทธิ์ตำแหน่ง</button>' : ''}`;
   const b = $('#bAsk'); if (b) b.onclick = () => { stopLocation(); ui.centered = false; startLocation(); };
 }
 function renderFilters() {
   const el = $('#ovFilters'); if (!el) return;
   const cnt = t => allSpots().filter(s => s.type === t).length;
-  const chip = (k, ic, lb, n) => `<button class="tag ${ui.f[k] ? 'on' : ''}" data-f="${k}">${ic} ${lb}${n != null ? ` <small>${n}</small>` : ''}</button>`;
-  el.innerHTML = chip('route', '🧭', 'เส้นทาง') + chip('food', '🍽', 'ร้านอาหาร', cnt('food')) + chip('sight', '🏛', 'ที่เที่ยว', cnt('sight')) + chip('other', '📌', 'อื่นๆ', cnt('other')) + chip('friends', '👥', 'เพื่อน')
-    + (ui.sugPins && ui.sugPins.length ? `<button class="tag on" id="clrSug">✨ แนะนำ ${ui.sugPins.length} ✕</button>` : '');
+  const chip = (k, ik, lb, n) => `<button class="tag ${ui.f[k] ? 'on' : ''}" data-f="${k}">${ic(ik)} ${lb}${n != null ? ` <small>${n}</small>` : ''}</button>`;
+  el.innerHTML = chip('route', 'compass', 'เส้นทาง') + chip('food', 'food', 'ร้านอาหาร', cnt('food')) + chip('sight', 'sight', 'ที่เที่ยว', cnt('sight')) + chip('other', 'pin', 'อื่นๆ', cnt('other')) + chip('friends', 'users', 'เพื่อน')
+    + (ui.sugPins && ui.sugPins.length ? `<button class="tag on" id="clrSug">${ic('spark')} แนะนำ ${ui.sugPins.length} ${ic('x')}</button>` : '');
   $$('[data-f]', el).forEach(b => b.onclick = () => { const k = b.dataset.f; ui.f[k] = !ui.f[k]; store.set('tt.f', ui.f); renderFilters(); drawMap(false); if (k === 'sight' && ui.f.sight) runGeocode(); });
   const c = $('#clrSug'); if (c) c.onclick = () => { ui.sugPins = []; renderFilters(); drawMap(false); };
 }
-/* full-screen map: the one Leaflet instance is moved into the overlay and back (same view, no re-fit); Back / Esc / ✕ close it */
+/* full-screen map: the one Leaflet instance is moved into the overlay and back (same view, no re-fit); Back / Esc / close button close it */
 function openMapOv() {
   if (ui.ov) return; ui.ov = true; $('#mapOv').hidden = false; history.pushState({ ov: 1 }, '');
   mountMap($('#ovHolder')); renderFilters(); renderMapStatus(); drawMap(false);
@@ -1139,13 +1194,13 @@ async function runGeocode() {
 const trv = { cache: store.get('tt.trv', {}), memo: {}, pending: {}, q: Promise.resolve(), t: 0 };
 const legMode = (how, d) => {
   const s = String(how || '').toLowerCase();
-  if (howIcon(how, false) === '✈️') return 'air';
+  if (howName(how, false) === 'plane') return 'air';
   if (/walk|เดิน/.test(s)) return 'foot';
   if (/bullet|train|rail|metro|bts|mrt|subway|รถไฟ|bus|tour|รถบัส/.test(s)) return 'transit';
   if (/taxi|yandex|didi|grab|uber|แท็กซี่|car|รถ/.test(s)) return 'car';
   return d < 1500 ? 'foot' : 'car';
 };
-const MODE_ICON = { foot: '🚶', car: '🚗', transit: '🚆', air: '✈️' };
+const MODE_ICON = { foot: 'walk', car: 'car', transit: 'train', air: 'plane' };
 const fmtDur = m => { m = Math.max(1, Math.round(m)); return m < 60 ? `${m} นาที` : `${Math.floor(m / 60)} ชม.${m % 60 ? ' ' + (m % 60) + ' น.' : ''}`; };
 const fmtKm = m => m < 1000 ? `${Math.max(10, Math.round(m / 10) * 10)} ม.` : `${(m / 1000).toLocaleString('th-TH', { maximumFractionDigits: 1 })} กม.`;
 const planMin = w => { const a = tm(w.ts), b = tm(w.te); if (!a || !b) return null; let m = b[0] * 60 + b[1] - (a[0] * 60 + a[1]); if (m <= 0) m += 1440; return m; };
@@ -1175,12 +1230,12 @@ function ensureLeg(key, a, b, mode, d) {
 const legText = (info, w) => {
   if (info.air) return `ระยะบิน ~${fmtKm(info.m)}`;
   if (info.skip) return '';
-  if (info.loading) return '⏳ คำนวณเวลา…';
+  if (info.loading) return 'คำนวณเวลา…';
   return `${info.est ? '~' : ''}${fmtDur(info.min)} · ${fmtKm(info.m)}`;
 };
 const tight = (info, w) => { if (info.air || info.skip || info.loading) return null; const pm = planMin(w); return pm != null && info.min > pm * 1.15 + 5 ? pm : null; };
 const bearing = (a, b) => Math.atan2(-(b.lat - a.lat), (b.lng - a.lng) * Math.cos(a.lat * Math.PI / 180)) * 180 / Math.PI;
-const legIcon = (how, color, timeTxt, warn, mode) => L.divIcon({ className: '', iconSize: [0, 0], iconAnchor: [0, 0], html: `<div class="seglbl ${warn ? 'warn' : ''}" style="--c:${color}">${how ? howIcon(how, false) + ' ' + esc(String(how).length > 14 ? String(how).slice(0, 14) + '…' : how) : (MODE_ICON[mode] || '')}${timeTxt ? ` · ${esc(timeTxt)}` : ''}${warn ? ' ⚠' : ''}</div>` });
+const legIcon = (how, color, timeTxt, warn, mode) => L.divIcon({ className: '', iconSize: [0, 0], iconAnchor: [0, 0], html: `<div class="seglbl ${warn ? 'warn' : ''}" style="--c:${color}">${how ? howIcon(how, false) + ' ' + esc(String(how).length > 14 ? String(how).slice(0, 14) + '…' : how) : (MODE_ICON[mode] ? ic(MODE_ICON[mode]) : '')}${timeTxt ? ` · ${esc(timeTxt)}` : ''}${warn ? ' ' + ic('warn') : ''}</div>` });
 const arrowIcon = (deg, color) => L.divIcon({ className: '', iconSize: [20, 20], iconAnchor: [10, 10], html: `<svg viewBox="0 0 24 24" width="20" height="20" style="transform:rotate(${deg}deg);display:block"><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>` });
 /* stops whose activity is over (today: we have left / passed the time; earlier days: all) are not drawn */
 function stillAhead(di, seq) {
@@ -1255,14 +1310,14 @@ function anchorOptions() {
 const currentAnchor = () => { const o = anchorOptions(); return o.find(x => x.id === ui.anchor) || o[0] || null; };
 function focusOnMap(c) { openMapOv(); setTimeout(() => { if (map) map.setView([c.lat, c.lng], 17); }, 300); }
 function spotCard(s, a) {
-  const [ic, col] = SPOT[s.type], d = a && s.c ? distM(a.c, s.c) : null;
-  return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic}</div><div class="spot-b"><b>${esc(s.name)}</b><small>${[nice(s.cuisine), s.meal, d != null ? dist(d) : ''].filter(Boolean).map(esc).join(' · ')}</small>${s.note ? `<div class="note">${esc(s.note)}</div>` : ''}
+  const [ik, col] = SPOT[s.type], d = a && s.c ? distM(a.c, s.c) : null;
+  return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic(ik)}</div><div class="spot-b"><b>${esc(s.name)}</b><small>${[nice(s.cuisine), s.meal, d != null ? dist(d) : ''].filter(Boolean).map(esc).join(' · ')}</small>${s.note ? `<div class="note">${esc(s.note)}</div>` : ''}
   <div class="spot-a">${s.c ? `<a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.c.lat},${s.c.lng}">นำทาง</a><button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button>` : `<button class="tag" data-fix="${esc(s.q || s.name)}">ตั้งพิกัด</button>`}<button class="tag pri" data-pick="${esc(s.name)}">+ เพิ่มเข้าแผน</button></div></div></div>`;
 }
 function listHtml() {
   const a = currentAnchor(), f = ui.spotFilter || 'all', all = allSpots(), cnt = t => all.filter(s => s.type === t).length;
   let h = `<div class="card"><label style="margin-top:0">เพิ่มสถานที่ — วางลิงก์ Google Maps</label><div class="addrow"><input id="linkIn" inputmode="url" placeholder="วางลิงก์ที่นี่ แล้วระบบหาพิกัดให้"><button class="btn pri" id="linkGo">เพิ่ม</button></div></div>`;
-  h += `<div class="chips">${[['all', 'ทั้งหมด', all.length], ['food', '🍽 ร้านอาหาร', cnt('food')], ['sight', '🏛 ที่เที่ยว', cnt('sight')], ['other', '📌 อื่นๆ', cnt('other')]].map(([k, l, n]) => `<button class="tag ${f === k ? 'on' : ''}" data-sf="${k}">${l} <small>${n}</small></button>`).join('')}</div>`;
+  h += `<div class="chips">${[['all', '', 'ทั้งหมด', all.length], ['food', 'food', 'ร้านอาหาร', cnt('food')], ['sight', 'sight', 'ที่เที่ยว', cnt('sight')], ['other', 'pin', 'อื่นๆ', cnt('other')]].map(([k, i, l, n]) => `<button class="tag ${f === k ? 'on' : ''}" data-sf="${k}">${i ? ic(i) + ' ' : ''}${l} <small>${n}</small></button>`).join('')}</div>`;
   const list = all.filter(s => f === 'all' || s.type === f).sort((x, y) => (a && x.c && y.c) ? distM(a.c, x.c) - distM(a.c, y.c) : 0);
   h += list.length ? list.map(s => spotCard(s, a)).join('') : '<div class="empty">ยังไม่มีสถานที่<br><small>วางลิงก์ Google Maps ด้านบนเพื่อเพิ่ม</small></div>';
   if (a) h += `<div class="mut" style="text-align:center"><small>ระยะทางนับจาก: ${esc(a.label)}</small></div>`;
@@ -1328,11 +1383,11 @@ function spotMatches() {
   return { items: items.sort((x, y) => x.di - y.di || x.pos - y.pos), pending };
 }
 function sugCard(it, idx) {
-  const s = it.spot, [ic, col] = SPOT[s.type], slot = slotOfMin(it.m);
-  const ctx = it.kind === 'onway' ? `🛤 ผ่านทางอยู่แล้ว ระหว่าง <b>${esc(it.from.name)}</b> → <b>${esc(it.to.name)}</b> · แวะเพิ่มประมาณ ${Math.max(1, Math.round(it.detour / 80))} นาที`
-    : `📍 ใกล้ <b>${esc(it.stop.name)}</b> · ${walk(it.d)}จากจุดนั้น`;
+  const s = it.spot, [ik, col] = SPOT[s.type], slot = slotOfMin(it.m);
+  const ctx = it.kind === 'onway' ? `${ic('route')} ผ่านทางอยู่แล้ว ระหว่าง <b>${esc(it.from.name)}</b> → <b>${esc(it.to.name)}</b> · แวะเพิ่มประมาณ ${Math.max(1, Math.round(it.detour / 80))} นาที`
+    : `${ic('pin')} ใกล้ <b>${esc(it.stop.name)}</b> · ${walk(it.d)}จากจุดนั้น`;
   const fit = s.type === 'food' && s.meal && mealMatches(s.meal, slot) ? `<span class="chip ok">เหมาะกับมื้อ${esc(s.meal)}</span>` : '';
-  return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic}</div><div class="spot-b"><b>${esc(s.name)}</b><small>${[nice(s.cuisine), s.meal].filter(Boolean).map(esc).join(' · ')}</small>
+  return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic(ik)}</div><div class="spot-b"><b>${esc(s.name)}</b><small>${[nice(s.cuisine), s.meal].filter(Boolean).map(esc).join(' · ')}</small>
   <div class="ctx">${ctx}</div><div>${fit}<span class="chip">ช่วง ~${fmtMin(it.m)}${it.est ? ' (ประมาณ)' : ''}</span></div>${s.note ? `<div class="note">${esc(s.note)}</div>` : ''}
   <div class="spot-a"><button class="tag pri" data-addplan="${idx}">+ เพิ่มเข้าแผน</button><a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${s.c.lat},${s.c.lng}">นำทาง</a><button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button></div></div></div>`;
 }
@@ -1340,7 +1395,7 @@ function sugHtml() {
   const { items, pending } = spotMatches(), p = data.plan; ui._sug = items;
   let h = '';
   if (!data.spots.length) return h + '<div class="empty">ยังไม่มีสถานที่ในลิส<br><small>กด + หรือวางลิงก์ Google Maps ในแท็บ “ลิสทั้งหมด”</small></div>';
-  if (pending) h += `<div class="mut" style="font-size:.82rem;margin:2px 4px">⏳ กำลังหาพิกัดจุดในแผนอีก ${pending} จุด…</div>`;
+  if (pending) h += `<div class="mut" style="font-size:.82rem;margin:2px 4px">${ic('hourglass')} กำลังหาพิกัดจุดในแผนอีก ${pending} จุด…</div>`;
   if (!items.length) return h + (pending ? '' : '<div class="empty">ยังไม่มีสถานที่ในลิสที่อยู่ใกล้เส้นทางตามแผน<br><small>เพิ่มสถานที่ใหม่ หรือเพิ่มจุดในแผนแถวนั้น แล้วจะแนะนำให้เอง</small></div>');
   let lastDi = -1;
   items.forEach((it, idx) => { if (it.di !== lastDi) { lastDi = it.di; h += `<div class="dgroup">${esc(dayTitle(p.days[it.di], it.di))}</div>`; } h += sugCard(it, idx); });
@@ -1398,17 +1453,17 @@ async function addToPlanDialog(name, idea) {
     ui.day = di; renderPlan(); if (ui.tab === 'spots') renderSpots(); scheduleSave(); toast(`เพิ่ม “${name}” เข้า ${dayTitle(day, di)} แล้ว`, 3500);
   };
 }
-const TIP = { travel: ['🚕', '#2f7bff', 'เดินทาง'], food: ['🍽', '#ff7a45', 'ร้านอาหาร'], cafe: ['☕', '#a06bff', 'คาเฟ่'] };
+const TIP = { travel: ['car', '#2f7bff', 'เดินทาง'], food: ['food', '#ff7a45', 'ร้านอาหาร'], cafe: ['cafe', '#a06bff', 'คาเฟ่'] };
 function tipsHtml() {
   const all = data.tips || [], f = ui.tipFilter || 'all';
   if (!all.length) return '<div class="empty">ยังไม่มีคำแนะนำ<br><small>เพิ่มข้อมูลแท็บ “Tips” (Type, Name, Detail, BestTime, Source)</small></div>';
   const list = all.filter(x => f === 'all' || x.type === f), cnt = t => all.filter(x => x.type === t).length;
-  let h = `<div class="chips">${[['all', 'ทั้งหมด', all.length], ['travel', '🚕 เดินทาง', cnt('travel')], ['food', '🍽 อาหาร', cnt('food')], ['cafe', '☕ คาเฟ่', cnt('cafe')]].map(([k, l, n]) => `<button class="tag ${f === k ? 'on' : ''}" data-tf="${k}">${l} <small>${n}</small></button>`).join('')}</div>`;
+  let h = `<div class="chips">${[['all', '', 'ทั้งหมด', all.length], ['travel', 'car', 'เดินทาง', cnt('travel')], ['food', 'food', 'อาหาร', cnt('food')], ['cafe', 'cafe', 'คาเฟ่', cnt('cafe')]].map(([k, i, l, n]) => `<button class="tag ${f === k ? 'on' : ''}" data-tf="${k}">${i ? ic(i) + ' ' : ''}${l} <small>${n}</small></button>`).join('')}</div>`;
   h += '<div class="mut" style="font-size:.78rem;margin:2px 4px 8px">เวลาที่แนะนำเป็นคำแนะนำทั่วไป ไม่ใช่เวลาเปิด-ปิดร้าน · ข้อมูลรวมจากไกด์/Reddit/Yandex — กดปุ่ม TikTok / Facebook เพื่อดูคลิปและรีวิวจริง</div>';
   h += list.map(x => {
-    const [ic, col] = TIP[x.type] || TIP.food, q = encodeURIComponent(x.name.replace(/\(.*?\)/g, '').trim() + ' Almaty');
+    const [ik, col] = TIP[x.type] || TIP.food, q = encodeURIComponent(x.name.replace(/\(.*?\)/g, '').trim() + ' Almaty');
     const links = x.type === 'travel' ? '' : `<div class="spot-a"><a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${q}">แผนที่</a><a class="tag" target="_blank" rel="noopener" href="https://www.tiktok.com/search?q=${q}">TikTok</a><a class="tag" target="_blank" rel="noopener" href="https://www.facebook.com/search/top?q=${q}">Facebook</a></div>`;
-    return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic}</div><div class="spot-b"><b>${esc(x.name)}</b>${x.detail ? `<div class="note">${esc(x.detail)}</div>` : ''}${x.when ? `<div class="ctx">🕒 ${esc(x.when)}</div>` : ''}${links}${x.src ? `<small class="src">แหล่งข้อมูล: ${esc(x.src)}</small>` : ''}</div></div>`;
+    return `<div class="spot"><div class="spot-i" style="--c:${col}">${ic(ik)}</div><div class="spot-b"><b>${esc(x.name)}</b>${x.detail ? `<div class="note">${esc(x.detail)}</div>` : ''}${x.when ? `<div class="ctx">${ic('clock')} ${esc(x.when)}</div>` : ''}${links}${x.src ? `<small class="src">แหล่งข้อมูล: ${esc(x.src)}</small>` : ''}</div></div>`;
   }).join('');
   return h;
 }
@@ -1447,7 +1502,7 @@ function spotDialog(init = {}) {
   <label>วางลิงก์ Google Maps</label><input name="u" inputmode="url" value="${esc(init.url || '')}" placeholder="https://maps.app.goo.gl/… หรือ 43.26, 76.95" ${c ? 'disabled' : ''}>
   <div id="detect" class="mut" style="margin-top:6px;font-size:.85rem">${c ? `✓ พิกัด ${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}` : ''}</div>
   <label>ชื่อสถานที่</label><input name="name" required value="${esc(init.name || '')}" placeholder="ชื่อร้าน / สถานที่">
-  <label>ประเภท</label><div class="seg" id="typeSeg">${[['food', '🍽 ร้านอาหาร'], ['sight', '🏛 ที่เที่ยว'], ['other', '📌 อื่นๆ']].map(([k, l]) => `<button type="button" data-t="${k}" class="${k === type ? 'on' : ''}">${l}</button>`).join('')}</div>
+  <label>ประเภท</label><div class="seg" id="typeSeg">${[['food', 'food', 'ร้านอาหาร'], ['sight', 'sight', 'ที่เที่ยว'], ['other', 'pin', 'อื่นๆ']].map(([k, i, l]) => `<button type="button" data-t="${k}" class="${k === type ? 'on' : ''}">${ic(i)} ${l}</button>`).join('')}</div>
   <div id="mealBox" ${type === 'food' ? '' : 'hidden'}><label>เหมาะกับมื้อ</label><div class="chips" style="margin:0;padding:0;flex-wrap:wrap">${meals.map(m => `<button type="button" class="tag ${m === meal ? 'on' : ''}" data-m="${m}">${m}</button>`).join('')}</div></div>
   <label>โน้ต (ไม่บังคับ)</label><input name="note">
   ${p && p.days.length ? `<label>เพิ่มเข้าแผนของวัน (ไม่บังคับ)</label><select name="day"><option value="">ไม่เพิ่มเข้าแผน</option>${p.days.map((x, k) => `<option value="${k}">${esc(dayTitle(x, k))}</option>`).join('')}</select>` : ''}
@@ -1488,7 +1543,7 @@ const renderUpd = () => { const u = $('#updAt'); if (u) u.textContent = updAt();
 function renderMenu() {
   const el = $('#tab-menu'), on = sheetApi.on();
   let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'ยังไม่ได้เลือกผู้ใช้'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
-  if (me && cfg.pendingPin[me]) h += `<div class="card" style="border-color:#ffb020"><h2>⚠ PIN ของคุณยังอยู่แค่ในเครื่องนี้</h2><div class="mut">ยังไม่ได้บันทึกลงฐานข้อมูล เปลี่ยนเครื่องแล้วจะต้องตั้ง PIN ใหม่ — กดปุ่มเพื่อบันทึก</div><div class="btns"><button class="btn pri" id="bPinSync">บันทึก PIN ลงชีตตอนนี้</button></div></div>`;
+  if (me && cfg.pendingPin[me]) h += `<div class="card" style="border-color:#ffb020"><h2>${ic('warn')} PIN ของคุณยังอยู่แค่ในเครื่องนี้</h2><div class="mut">ยังไม่ได้บันทึกลงฐานข้อมูล เปลี่ยนเครื่องแล้วจะต้องตั้ง PIN ใหม่ — กดปุ่มเพื่อบันทึก</div><div class="btns"><button class="btn pri" id="bPinSync">บันทึก PIN ลงชีตตอนนี้</button></div></div>`;
   h += editCard(); h += mediaCard(); h += usageCard();
   h += notifCard();
   h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
@@ -1612,7 +1667,7 @@ function fmtCd(ms) {
   return (d ? `${d} วัน ` : '') + `${pad2(h)}:${pad2(m)}:${pad2(sc)}`;
 }
 const nextEvent = () => planEvents().find(e => e.dt.getTime() > Date.now()) || null;
-const bell = (di, k) => { const e = evMapCur[di + '|' + k]; if (!e || e.dt < Date.now() - 36e5) return ''; return `<button class="bellbtn sm ${remOn(e) ? 'on' : ''}" data-bell="${esc(e.key)}" aria-label="เตือน">${remOn(e) ? '🔔' : '🔕'}</button>`; };
+const bell = (di, k) => { const e = evMapCur[di + '|' + k]; if (!e || e.dt < Date.now() - 36e5) return ''; return `<button class="bellbtn sm ${remOn(e) ? 'on' : ''}" data-bell="${esc(e.key)}" aria-label="เตือน">${ic(remOn(e) ? 'bell' : 'bellOff')}</button>`; };
 function bindBells(el) {
   $$('[data-bell]', el).forEach(b => b.onclick = async ev => {
     ev.stopPropagation(); const key = b.dataset.bell, e = planEvents().find(x => x.key === key); if (!e) return;
@@ -1628,7 +1683,7 @@ async function ensurePermission() {
   try { return (await Notification.requestPermission()) === 'granted'; } catch { return false; }
 }
 async function notify(title, body, tag) {
-  toast(`🔔 ${title} — ${body}`, 9000);
+  toast(`${title} — ${body}`, 9000);
   try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch { }
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const opt = { body, tag, icon: 'icon-192.png', badge: 'icon-192.png', data: { url: location.href } };
@@ -1701,12 +1756,12 @@ function bindNotif(el) {
 }
 
 /* ---------- documents (เอกสาร): personal + shared files, shown full-screen, cached offline in IndexedDB (per member) ---------- */
-const DOC_KINDS = { passport: ['🛂', 'พาสปอร์ต/วีซ่า', 'พาสปอร์ต'], ticket: ['✈️', 'ตั๋ว/บอร์ดดิงพาส', 'ตั๋วเครื่องบิน'], hotel: ['🏨', 'ที่พัก', 'ใบจองที่พัก'], insurance: ['🛡', 'ประกัน', 'ประกันการเดินทาง'], other: ['📄', 'อื่นๆ', 'เอกสาร'] };
+const DOC_KINDS = { passport: ['passport', 'พาสปอร์ต/วีซ่า', 'พาสปอร์ต'], ticket: ['plane', 'ตั๋ว/บอร์ดดิงพาส', 'ตั๋วเครื่องบิน'], hotel: ['bed', 'ที่พัก', 'ใบจองที่พัก'], insurance: ['shield', 'ประกัน', 'ประกันการเดินทาง'], other: ['file', 'อื่นๆ', 'เอกสาร'] };
 const DOC_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'], DOC_MAX_B64 = 6e6, DOC_PDF_MAX = 4 * 1024 * 1024, DOC_CHUNK = 300000;
 const DOC_NOSQL = 'ฟีเจอร์เอกสารยังไม่เปิดใช้งาน — ผู้ดูแลต้องรัน docs/supabase_docs.sql';
 const dc = { open: {}, list: null, seg: 'me', status: 'idle', offline: false, epoch: 0, urls: {}, cached: new Set(), t: 0, running: null, prefetch: '', up: false };
 const dv = { open: false, mode: '', list: [], i: 0, s: 1, x: 0, y: 0, r: 0, lock: null, d: null, pop: false };
-const docIcon = k => (DOC_KINDS[k] || DOC_KINDS.other)[0];
+const docIcon = k => ic((DOC_KINDS[k] || DOC_KINDS.other)[0]);
 const docDate = s => { try { return new Date(s).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; } };
 const docExt = m => ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' }[m] || 'bin');
 const docFileName = d => (String(d.title || 'document').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '').replace(/\s+/g, '_').trim().slice(0, 60) || 'document') + '.' + docExt(d.mime);
@@ -1769,7 +1824,7 @@ function infoCard() {
   const st = data.stay || {}, info = data.info || [], hasStay = !!(st.name || st.address); if (!hasStay && !info.length) return '';
   const open = ui.infoOpen !== false, nav = st.lat != null ? `https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(st.address || st.name || '')}`;
   let b = '';
-  if (hasStay) b += `<div class="inf-stay"><small>🏠 ที่พัก</small>${st.name ? `<div class="inf-big">${esc(st.name)}</div>` : ''}${st.address ? `<div class="inf-addr">${esc(st.address)}</div>` : ''}<div class="btns" style="margin-top:8px">${st.address ? '<button class="btn" id="infCopy">คัดลอก</button>' : ''}<a class="btn" target="_blank" rel="noopener" href="${nav}">นำทาง</a><button class="btn pri" id="infTaxi">โชว์ให้คนขับแท็กซี่</button></div></div>`;
+  if (hasStay) b += `<div class="inf-stay"><small>${ic('home')} ที่พัก</small>${st.name ? `<div class="inf-big">${esc(st.name)}</div>` : ''}${st.address ? `<div class="inf-addr">${esc(st.address)}</div>` : ''}<div class="btns" style="margin-top:8px">${st.address ? '<button class="btn" id="infCopy">คัดลอก</button>' : ''}<a class="btn" target="_blank" rel="noopener" href="${nav}">นำทาง</a><button class="btn pri" id="infTaxi">โชว์ให้คนขับแท็กซี่</button></div></div>`;
   b += info.map((r, i) => `<div class="inf-row"><div><small>${esc(r.k)}</small><div class="inf-v">${esc(r.v)}</div></div><button class="btn sm" data-icp="${i}" aria-label="คัดลอก ${esc(r.k)}">คัดลอก</button></div>`).join('');
   return `<div class="card info" id="infoCard"><div class="row2"><h2>ข้อมูลด่วน</h2><button class="btn sm" id="infTgl" aria-expanded="${open}">${open ? 'ซ่อน' : 'แสดง'}</button></div><div id="infBody" ${open ? '' : 'hidden'}>${b}</div></div>`;
 }
@@ -1780,7 +1835,7 @@ function docCard(d) {
   return `<div class="dcard" data-id="${esc(d.id)}"><div class="dthumb ${img ? '' : 'pdf'}" data-th="${esc(d.id)}">${u && img ? `<img src="${u}" alt="">` : docIcon(d.kind)}</div>
   <div class="dbody"><div class="dt"><b>${docIcon(d.kind)} ${esc(d.title)}</b><button class="dmore" data-more="${esc(d.id)}" aria-label="เมนูเอกสาร">⋯</button></div>
   ${d.note ? `<small class="dnote">${esc(d.note)}</small>` : ''}<small>${d.scope === 'person' && !own ? 'ของ ' + esc(ownerName(d.owner)) + ' · ' : ''}เพิ่ม ${esc(docDate(d.created_at))}${by}</small>
-  <small class="lock">${d.scope === 'shared' ? '👥 ทุกคนในทริปเห็น' : own ? '👥 เห็นทั้งกลุ่ม' : '👤 เอกสารของ ' + esc(ownerName(d.owner))}${dc.cached.has(d.id) ? ' · 📥 ในเครื่อง' : ''}</small></div>
+  <small class="lock">${d.scope === 'shared' ? ic('users') + ' ทุกคนในทริปเห็น' : own ? ic('users') + ' เห็นทั้งกลุ่ม' : ic('user') + ' เอกสารของ ' + esc(ownerName(d.owner))}${dc.cached.has(d.id) ? ' · ' + ic('download') + ' ในเครื่อง' : ''}</small></div>
   <div class="dact"><button class="btn pri big" data-show="${esc(d.id)}">โชว์</button><button class="btn" data-dl="${esc(d.id)}">ดาวน์โหลด/แชร์</button></div></div>`;
 }
 const friendIdx = o => { const i = users().findIndex(u => String(u.name).toLowerCase() === o); return i < 0 ? 999 : i; };
@@ -1794,15 +1849,15 @@ function friendGroups(fr) {          // friends' documents grouped under each me
 function renderDocs(fromLoad) {
   const el = $('#tab-docs'); if (!el) return;
   let h = infoCard();
-  if (!me || !myHash()) h += '<div class="card dpanel"><div class="dp-i">🔐</div><h2>เข้าสู่ระบบด้วย PIN เพื่อดูเอกสาร</h2><div class="mut">เอกสารเห็นได้ทั้งกลุ่ม (แอปส่วนตัว) และเปิดโดยไม่ต้องมีอินเทอร์เน็ตได้หลังบันทึกไว้ในเครื่อง</div><div class="btns" style="justify-content:center"><button class="btn pri" id="dcLogin">เข้าสู่ระบบ</button></div></div>';
-  else if (dc.status === 'nosql') h += `<div class="card dpanel" id="dcNoSql"><div class="dp-i">🛠</div><h2>${esc(DOC_NOSQL)}</h2></div>`;
-  else if (dc.status === 'error') h += '<div class="card dpanel"><div class="dp-i">📡</div><h2>โหลดเอกสารไม่ได้</h2><div class="mut">ตรวจอินเทอร์เน็ตแล้วลองใหม่ (ยังไม่ได้ออกจากระบบ)</div><div class="btns" style="justify-content:center"><button class="btn pri" id="dcRetry">ลองใหม่</button></div></div>';
+  if (!me || !myHash()) h += `<div class="card dpanel"><div class="dp-i">${ic('lock')}</div><h2>เข้าสู่ระบบด้วย PIN เพื่อดูเอกสาร</h2><div class="mut">เอกสารเห็นได้ทั้งกลุ่ม (แอปส่วนตัว) และเปิดโดยไม่ต้องมีอินเทอร์เน็ตได้หลังบันทึกไว้ในเครื่อง</div><div class="btns" style="justify-content:center"><button class="btn pri" id="dcLogin">เข้าสู่ระบบ</button></div></div>`;
+  else if (dc.status === 'nosql') h += `<div class="card dpanel" id="dcNoSql"><div class="dp-i">${ic('tool')}</div><h2>${esc(DOC_NOSQL)}</h2></div>`;
+  else if (dc.status === 'error') h += `<div class="card dpanel"><div class="dp-i">${ic('signal')}</div><h2>โหลดเอกสารไม่ได้</h2><div class="mut">ตรวจอินเทอร์เน็ตแล้วลองใหม่ (ยังไม่ได้ออกจากระบบ)</div><div class="btns" style="justify-content:center"><button class="btn pri" id="dcRetry">ลองใหม่</button></div></div>`;
   else {
     const me_ = docsOf('me'), sh = docsOf('shared'), fr = docsOf('friends'), ready = dc.status === 'ok', cur = dc.seg === 'shared' ? sh : dc.seg === 'friends' ? fr : me_;
     h += `<div class="dsegw"><div class="seg" id="dcSeg"><button data-seg="me" class="${dc.seg === 'me' ? 'on' : ''}">ของฉัน (${ready ? me_.length : '…'})</button><button data-seg="shared" class="${dc.seg === 'shared' ? 'on' : ''}">ส่วนกลาง (${ready ? sh.length : '…'})</button><button data-seg="friends" class="${dc.seg === 'friends' ? 'on' : ''}">เพื่อน (${ready ? fr.length : '…'})</button></div></div>`;
-    h += `<div class="dtools"><button class="btn pri" id="dcAdd">➕ เพิ่มเอกสาร</button><button class="btn" id="dcAll" ${ready && (dc.list || []).length ? '' : 'disabled'}>${esc(dc.prefetch || '📥 ดาวน์โหลดทั้งหมดไว้ใช้ออฟไลน์')}</button>${dc.offline ? '<span class="chip bad" id="dcOff">ออฟไลน์</span>' : ''}</div>`;
+    h += `<div class="dtools"><button class="btn pri" id="dcAdd">${ic('plus')} เพิ่มเอกสาร</button><button class="btn" id="dcAll" ${ready && (dc.list || []).length ? '' : 'disabled'}>${ic('download')} ${esc(dc.prefetch || 'ดาวน์โหลดทั้งหมดไว้ใช้ออฟไลน์')}</button>${dc.offline ? '<span class="chip bad" id="dcOff">ออฟไลน์</span>' : ''}</div>`;
     if (!ready) h += '<div class="dcard sk"></div><div class="dcard sk"></div><div class="dcard sk"></div>';
-    else if (!cur.length) h += dc.seg === 'friends' ? '<div class="card dpanel"><div class="dp-i">🧑‍🤝‍🧑</div><h2>เพื่อนยังไม่มีเอกสาร</h2><div class="mut">เอกสารของเพื่อนในกลุ่มจะแสดงที่นี่ — กด “เพิ่มเอกสาร” แล้วเลือก “ของคนอื่น” เพื่ออัปโหลดแทนเพื่อนได้</div></div>' : dc.seg === 'shared' ? '<div class="card dpanel"><div class="dp-i">👥</div><h2>ยังไม่มีเอกสารส่วนกลาง</h2><div class="mut">ใส่ใบจองโรงแรม/ตั๋วกลุ่มที่ทุกคนต้องใช้ แล้วทุกคนจะเปิดได้ทันที</div></div>' : '<div class="card dpanel"><div class="dp-i">🛂</div><h2>ยังไม่มีเอกสารของคุณ</h2><div class="mut">เก็บพาสปอร์ต วีซ่า ตั๋ว ประกัน ไว้ที่นี่ แล้วกด “โชว์” ให้เจ้าหน้าที่ได้เลย — กด “เพิ่มเอกสาร” เพื่อเริ่ม</div></div>';
+    else if (!cur.length) h += dc.seg === 'friends' ? `<div class="card dpanel"><div class="dp-i">${ic('users')}</div><h2>เพื่อนยังไม่มีเอกสาร</h2><div class="mut">เอกสารของเพื่อนในกลุ่มจะแสดงที่นี่ — กด “เพิ่มเอกสาร” แล้วเลือก “ของคนอื่น” เพื่ออัปโหลดแทนเพื่อนได้</div></div>` : dc.seg === 'shared' ? `<div class="card dpanel"><div class="dp-i">${ic('users')}</div><h2>ยังไม่มีเอกสารส่วนกลาง</h2><div class="mut">ใส่ใบจองโรงแรม/ตั๋วกลุ่มที่ทุกคนต้องใช้ แล้วทุกคนจะเปิดได้ทันที</div></div>` : `<div class="card dpanel"><div class="dp-i">${ic('passport')}</div><h2>ยังไม่มีเอกสารของคุณ</h2><div class="mut">เก็บพาสปอร์ต วีซ่า ตั๋ว ประกัน ไว้ที่นี่ แล้วกด “โชว์” ให้เจ้าหน้าที่ได้เลย — กด “เพิ่มเอกสาร” เพื่อเริ่ม</div></div>`;
     else h += dc.seg === 'friends' ? friendGroups(cur) : cur.map(docCard).join('');
   }
   if (fromLoad && el.__sig === h) return; el.__sig = h; el.innerHTML = h; bindDocs(el);
@@ -1847,7 +1902,7 @@ async function prefetchAll(scope) {
 }
 function docMenu(d) {
   if (!d) return; const can = docCan(d);
-  const dl = openDlg(`<h3>${docIcon(d.kind)} ${esc(d.title)}</h3><div class="dmenu"><button class="btn block" data-a="save">📥 บันทึกไว้ในเครื่อง${dc.cached.has(d.id) ? ' (บันทึกแล้ว)' : ''}</button>${can ? '<button class="btn block" data-a="ren">✏️ เปลี่ยนชื่อ</button><button class="btn block danger" data-a="del">🗑 ลบ</button>' : ''}<button class="btn block" data-a="x">ปิด</button></div>`);
+  const dl = openDlg(`<h3>${docIcon(d.kind)} ${esc(d.title)}</h3><div class="dmenu"><button class="btn block" data-a="save">${ic('download')} บันทึกไว้ในเครื่อง${dc.cached.has(d.id) ? ' (บันทึกแล้ว)' : ''}</button>${can ? `<button class="btn block" data-a="ren">${ic('edit')} เปลี่ยนชื่อ</button><button class="btn block danger" data-a="del">${ic('trash')} ลบ</button>` : ''}<button class="btn block" data-a="x">ปิด</button></div>`);
   $$('[data-a]', dl).forEach(b => b.onclick = async () => {
     const a = b.dataset.a; dl.close(); if (a === 'save') { try { await docBlob(d); renderDocs(); toast('บันทึกไว้ในเครื่องแล้ว'); } catch (e) { toast(docErrText(e), 3500); } }
     if (a === 'ren') renameDialog(d); if (a === 'del') deleteDialog(d);
@@ -1900,9 +1955,9 @@ function addDocDialog() {
     <div class="seg" id="dfScope"><button type="button" data-sc="person">ของฉัน</button><button type="button" data-sc="shared">ส่วนกลาง</button><button type="button" data-sc="other">ของคนอื่น</button></div>
     <small id="dfScopeNote" class="mut"></small>
     <div class="chips reuse" id="dfWho" hidden>${users().filter(u => String(u.name).toLowerCase() !== dkey()).map(u => `<button type="button" class="tag" data-w="${esc(u.name)}">${avatar(u.name, 'sm')} ${esc(u.name)}</button>`).join('') || '<span class="mut">ยังไม่มีสมาชิกคนอื่น</span>'}</div>
-    <div class="chips reuse" id="dfKinds">${Object.entries(DOC_KINDS).map(([k, v]) => `<button type="button" class="tag" data-k="${k}">${v[0]} ${v[1]}</button>`).join('')}</div>
+    <div class="chips reuse" id="dfKinds">${Object.entries(DOC_KINDS).map(([k, v]) => `<button type="button" class="tag" data-k="${k}">${ic(v[0])} ${v[1]}</button>`).join('')}</div>
     <input id="dfTitle" maxlength="80" placeholder="ชื่อเอกสาร"><input id="dfNote" maxlength="300" placeholder="โน้ต (ไม่บังคับ)" style="margin-top:8px">
-    <div class="btns"><button type="button" class="btn" id="dfPick">📁 เลือกไฟล์</button><button type="button" class="btn" id="dfCamBtn">📷 ถ่ายรูป</button></div>
+    <div class="btns"><button type="button" class="btn" id="dfPick">${ic('folder')} เลือกไฟล์</button><button type="button" class="btn" id="dfCamBtn">${ic('camera')} ถ่ายรูป</button></div>
     <input type="file" id="dfFile" accept="image/*,application/pdf" hidden><input type="file" id="dfCam" accept="image/*" capture="environment" hidden>
     <div class="dprev" id="dfPrev"><span class="mut">ยังไม่ได้เลือกไฟล์ (รูป JPG/PNG/WebP หรือ PDF ไม่เกิน 4 MB — รูปจะถูกย่อให้อัตโนมัติ)</span></div>
     <div class="prog" id="dfProg" hidden><i id="dfBar"></i></div><div class="derr" id="dfErr" role="alert"></div>
@@ -1910,7 +1965,7 @@ function addDocDialog() {
   const q = s => $(s, dl), err = m => { q('#dfErr').textContent = m || ''; };
   const sync = () => {
     $$('[data-sc]', dl).forEach(b => b.classList.toggle('on', b.dataset.sc === f.scope)); $$('[data-k]', dl).forEach(b => b.classList.toggle('sel', b.dataset.k === f.kind));
-    q('#dfScopeNote').textContent = f.scope === 'shared' ? '👥 ทุกคนในทริปที่ล็อกอินเห็นได้' : f.scope === 'other' ? (f.owner ? '👤 เพิ่มให้ ' + f.owner + ' (ทุกคนในกลุ่มเห็นได้)' : '👤 เลือกคนที่จะเพิ่มเอกสารให้') : '👥 เห็นทั้งกลุ่ม';
+    q('#dfScopeNote').innerHTML = f.scope === 'shared' ? ic('users') + ' ทุกคนในทริปที่ล็อกอินเห็นได้' : f.scope === 'other' ? (f.owner ? ic('user') + ' เพิ่มให้ ' + esc(f.owner) + ' (ทุกคนในกลุ่มเห็นได้)' : ic('user') + ' เลือกคนที่จะเพิ่มเอกสารให้') : ic('users') + ' เห็นทั้งกลุ่ม';
     q('#dfWho').hidden = f.scope !== 'other'; $$('[data-w]', dl).forEach(b => b.classList.toggle('sel', b.dataset.w === f.owner)); if (!f.dirty) q('#dfTitle').value = f.title;
     q('#dfOk').disabled = !f.prep || f.up || (f.scope === 'other' && !f.owner);
   };
@@ -1925,7 +1980,7 @@ function addDocDialog() {
     try {
       const r = await prepDocFile(file); f.prep = r; f.file = file;
       const b64len = Math.ceil(r.blob.size / 3) * 4; if (b64len > DOC_MAX_B64) throw new Error('ไฟล์ใหญ่เกิน 6 MB');
-      const u = URL.createObjectURL(r.blob); q('#dfPrev').innerHTML = r.mime === 'application/pdf' ? `<div class="pdfp">📄 ${esc(file.name)}<br><small>${Math.round(r.blob.size / 1024)} KB</small></div>` : `<img src="${u}" alt="ตัวอย่าง"><small>${r.w}×${r.h} · ${Math.round(r.blob.size / 1024)} KB</small>`;
+      const u = URL.createObjectURL(r.blob); q('#dfPrev').innerHTML = r.mime === 'application/pdf' ? `<div class="pdfp">${ic('file')} ${esc(file.name)}<br><small>${Math.round(r.blob.size / 1024)} KB</small></div>` : `<img src="${u}" alt="ตัวอย่าง"><small>${r.w}×${r.h} · ${Math.round(r.blob.size / 1024)} KB</small>`;
       if (r.mime !== 'application/pdf') setTimeout(() => URL.revokeObjectURL(u), 60000);
     } catch (x) { q('#dfPrev').innerHTML = '<span class="mut">ยังไม่ได้เลือกไฟล์</span>'; err(x.message); }
     sync();
@@ -1974,9 +2029,9 @@ async function dvWake() {
 function openViewer(o) {
   if (dv.open) return; const ov = dvEl();
   dv.open = true; dv.mode = o.mode; dv.s = 1; dv.x = dv.y = 0; dv.r = 0; ov.hidden = false; document.documentElement.classList.add('noscroll'); history.pushState({ dov: 1 }, ''); dv.pop = false;
-  if (o.mode === 'taxi') { const st = data.stay || {}; ov.innerHTML = `<div class="dov-bar"><div class="dov-t"><small>โชว์ให้คนขับแท็กซี่</small><b>กรุณาพาไปที่นี่</b></div><button class="ov-btn" id="dvClose" aria-label="ปิด">✕</button></div><div class="dov-stage taxi" id="dvStage"><div class="tx-n">${esc(st.name || '')}</div><div class="tx-a">${esc(st.address || '')}</div></div>`; $('#dvClose').onclick = () => closeViewer(); dvWake(); return; }
+  if (o.mode === 'taxi') { const st = data.stay || {}; ov.innerHTML = `<div class="dov-bar"><div class="dov-t"><small>โชว์ให้คนขับแท็กซี่</small><b>กรุณาพาไปที่นี่</b></div><button class="ov-btn" id="dvClose" aria-label="ปิด">${ic('x')}</button></div><div class="dov-stage taxi" id="dvStage"><div class="tx-n">${esc(st.name || '')}</div><div class="tx-a">${esc(st.address || '')}</div></div>`; $('#dvClose').onclick = () => closeViewer(); dvWake(); return; }
   dv.list = docsOf(dc.seg); dv.i = Math.max(0, dv.list.findIndex(d => d.id === o.id));
-  ov.innerHTML = `<div class="dov-bar"><div class="dov-t"><small id="dvOwner"></small><b id="dvTitle"></b></div><button class="ov-btn" id="dvRot" aria-label="หมุน">⟳</button><button class="ov-btn" id="dvClose" aria-label="ปิด">✕</button></div>
+  ov.innerHTML = `<div class="dov-bar"><div class="dov-t"><small id="dvOwner"></small><b id="dvTitle"></b></div><button class="ov-btn" id="dvRot" aria-label="หมุน">${ic('rotate')}</button><button class="ov-btn" id="dvClose" aria-label="ปิด">${ic('x')}</button></div>
     <div class="dov-stage" id="dvStage"><div class="dov-msg" id="dvMsg"></div></div>
     <div class="dov-foot"><div class="dov-hint" id="dvHint" hidden>เพิ่มความสว่าง/ปิดล็อกหน้าจออัตโนมัติ</div><div class="dov-nav"><button class="ov-btn" id="dvPrev" aria-label="ก่อนหน้า">‹</button><span id="dvCount"></span><button class="ov-btn" id="dvNext" aria-label="ถัดไป">›</button><button class="btn" id="dvShare">ดาวน์โหลด/แชร์</button></div></div>`;
   $('#dvClose').onclick = () => closeViewer(); $('#dvRot').onclick = () => { dv.r = (dv.r + 90) % 360; dvClamp(); dvApply(); }; $('#dvPrev').onclick = () => dvGo(-1); $('#dvNext').onclick = () => dvGo(1); $('#dvShare').onclick = () => shareDoc(dv.list[dv.i]);
@@ -1989,7 +2044,7 @@ async function dvShow() {
   $$('#dvStage > :not(.dov-msg)').forEach(n => n.remove()); const msg = $('#dvMsg'); msg.textContent = 'กำลังโหลด…'; msg.hidden = false;
   try {
     const u = await docUrl(d); if (ep !== dc.epoch || !dv.open || idx !== dv.i) return; msg.hidden = true; renderDocs(true);
-    if (d.mime === 'application/pdf') { st.insertAdjacentHTML('beforeend', `<div class="dov-pdf"><div class="dp-i">📄</div><b>${esc(d.title)}</b><button class="btn pri big" id="dvPdf">เปิด PDF</button></div>`); $('#dvPdf').onclick = () => window.open(u, '_blank'); $('#dvRot').hidden = true; }
+    if (d.mime === 'application/pdf') { st.insertAdjacentHTML('beforeend', `<div class="dov-pdf"><div class="dp-i">${ic('file')}</div><b>${esc(d.title)}</b><button class="btn pri big" id="dvPdf">เปิด PDF</button></div>`); $('#dvPdf').onclick = () => window.open(u, '_blank'); $('#dvRot').hidden = true; }
     else { $('#dvRot').hidden = false; st.insertAdjacentHTML('beforeend', `<img id="dvImg" src="${u}" alt="${esc(d.title)}" draggable="false">`); dvApply(); }
   } catch (e) { if (idx === dv.i) { msg.hidden = false; msg.textContent = docErrText(e); } }
 }

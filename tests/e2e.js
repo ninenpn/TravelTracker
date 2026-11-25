@@ -204,7 +204,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   s = await open({ stepsPerDay: 10 }); p = s.p; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
   await p.evaluate(() => { data.plan.days.forEach((_, d) => dayWaypoints(d).forEach(w => { gc.cache[gKey(w.q)] = { lat: 22.19, lng: 113.54 }; })); });          // stops already located: nothing left to geocode / route
   await p.waitForFunction(() => !gc.running && !Object.keys(trv.pending).length, null, { timeout: 30000 }); await p.waitForTimeout(600);
-  await p.evaluate(() => { window.scrollTo(0, 500); window.__n = { draw: 0, all: 0, plan: 0 }; for (const k of ['drawMap', 'renderAll', 'renderPlan']) { const o = window[k], key = { drawMap: 'draw', renderAll: 'all', renderPlan: 'plan' }[k]; window[k] = (...a) => { window.__n[key]++; return o(...a); }; } for (const id of ['tl', 'homeDock', 'map']) document.getElementById(id).__keep = 1; });
+  await p.evaluate(() => { window.scrollTo(0, 700); window.__n = { draw: 0, all: 0, plan: 0 }; for (const k of ['drawMap', 'renderAll', 'renderPlan']) { const o = window[k], key = { drawMap: 'draw', renderAll: 'all', renderPlan: 'plan' }[k]; window[k] = (...a) => { window.__n[key]++; return o(...a); }; } for (const id of ['tl', 'homeDock', 'map']) document.getElementById(id).__keep = 1; });
   await p.waitForTimeout(500); const y0 = await p.evaluate(() => scrollY);
   await p.evaluate(() => load()); await p.waitForTimeout(800);
   const same = await p.evaluate(() => ({ keep: ['tl', 'homeDock', 'map'].every(id => document.getElementById(id).__keep === 1), n: window.__n, y: scrollY }));
@@ -246,10 +246,10 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   check('J12 jittery scroll path flips the dock <= 4 times', flips.n <= 4, JSON.stringify(flips));
   const hy = await p.evaluate(async () => {
     const d = document.getElementById('homeDock'), st = () => d.classList.contains('away') ? 'away' : d.classList.contains('peek') ? 'peek' : 'show', out = [], w = ms => new Promise(r => setTimeout(r, ms));
-    window.scrollTo(0, 800); await w(500); out.push(st()); window.scrollTo(0, 785); await w(200); out.push(st()); window.scrollTo(0, 760); await w(200); out.push(st()); window.scrollTo(0, 700); await w(500); out.push(st());
+    window.scrollTo(0, 800); await w(500); out.push(st()); window.scrollTo(0, 785); await w(200); out.push(st()); window.scrollTo(0, 775); await w(200); out.push(st()); window.scrollTo(0, 700); await w(500); out.push(st());
     const cs = getComputedStyle(d); return { out, willChange: cs.willChange, tr: cs.transitionProperty };
   });
-  check('J13 hysteresis: hides on 800; a 15 px / 40 px reversal keeps it hidden; 100 px sustained up -> peek; will-change + transform-only transition', hy.out.join() === 'away,away,away,peek' && /transform/.test(hy.willChange) && hy.tr === 'transform', JSON.stringify(hy));
+  check('J13 hysteresis: hides on 800; a 15 px / 25 px reversal (< 28 px) keeps it hidden; 100 px sustained up -> peek; will-change + transform-only transition', hy.out.join() === 'away,away,away,peek' && /transform/.test(hy.willChange) && hy.tr === 'transform', JSON.stringify(hy));
   await s.b.close();
   s = await open({ reducedMotion: 'reduce' }); p = s.p; await login(s, 'Nine');
   check('J14 prefers-reduced-motion: no dock transition', await p.evaluate(() => parseFloat(getComputedStyle(document.getElementById('homeDock')).transitionDuration) === 0));
@@ -511,6 +511,22 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   const tx = await p.evaluate(() => ({ open: dv.open, t: document.getElementById('docOv').innerText, fs: parseFloat(getComputedStyle(document.querySelector('.tx-a')).fontSize) }));
   check('K42 taxi screen: full-screen big-text address', tx.open && /Test Hotel/.test(tx.t) && /1 Test Road/.test(tx.t) && tx.fs >= 24, JSON.stringify(tx)); await p.keyboard.press('Escape');
   await s.b.close();
+  /* L: no emoji glyphs anywhere in the UI; icons come from the one inline-SVG helper */
+  {
+    const EMO = /(?![©®™])\p{Extended_Pictographic}|️/u, fsx = require('fs'), root = require('path').join(__dirname, '..');
+    const staticTxt = fsx.readFileSync(root + '/index.html', 'utf8') + (fsx.readFileSync(root + '/style.css', 'utf8').match(/content:\s*["'][^"']*["']/g) || []).join(' ');
+    check('L1 index.html / style.css content: have no emoji', !EMO.test(staticTxt));
+    s = await open(); p = s.p; await login(s, 'Nine');
+    const bad = {};
+    const scan = async name => { const t = await p.evaluate(() => [...document.querySelectorAll('body *')].filter(e => e.offsetParent !== null || e.closest('dialog[open]')).map(e => (e.childNodes.length ? [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.nodeValue).join('') : '') + ' ' + (e.getAttribute('aria-label') || '') + ' ' + (e.title || '')).join('\n')); const m = t.match(EMO); if (m) bad[name] = m[0]; };
+    for (const tab of ['plan', 'money', 'spots', 'docs', 'menu']) { await p.click(`[data-tab=${tab}]`); await p.waitForTimeout(700); await scan(tab); }
+    await p.click('[data-tab=docs]'); await p.waitForTimeout(400); await p.click('#dcAdd'); await p.waitForTimeout(400); await scan('doc-dialog'); await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+    await p.click('[data-tab=plan]'); await p.waitForTimeout(500); await p.click('#dockFull'); await p.waitForTimeout(1300); await scan('map-overlay');
+    const ov = await p.evaluate(() => ({ svg: document.querySelectorAll('#mapOv svg.ic').length, nav: document.querySelectorAll('#tabs svg').length, hid: [...document.querySelectorAll('svg.ic')].every(x => x.getAttribute('aria-hidden') === 'true'), fn: typeof ic === 'function' }));
+    check('L2 rendered tabs, dialog and map overlay contain no emoji glyphs', Object.keys(bad).length === 0, JSON.stringify(bad));
+    check('L3 icons come from ic(): SVGs in the overlay + nav, all aria-hidden', ov.fn && ov.svg >= 2 && ov.nav === 5 && ov.hid, JSON.stringify(ov));
+    await s.b.close();
+  }
   /* layouts */
   for (const [w, h] of [[360, 640], [390, 844], [430, 932]]) {
     s = await open({ w, h, init: CLSK }); p = s.p; await login(s, 'Nine'); await docTab(p);

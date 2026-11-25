@@ -14,7 +14,7 @@ body{margin:0 auto;max-width:430px;min-height:100dvh;background:var(--bg);color:
   font:15px/1.5 "Noto Sans Thai",system-ui,-apple-system,sans-serif;overflow-x:hidden}
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer;border:0;background:none;padding:0}
-button svg,nav svg,.btn svg,.fab svg,.edit-btn svg,.grip svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+button svg,nav svg,.btn svg,.fab svg,.edit-btn svg,.grip svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
 .donut svg{fill:none}
 a{color:var(--pri);text-decoration:none}
 h1,h2,h3{margin:0}h2{font-size:1.02rem}h3{font-size:.95rem}
@@ -48,7 +48,7 @@ nav button.on{color:#fff;background:linear-gradient(135deg,var(--pri),var(--pri2
 .empty{text-align:center;color:var(--mut);padding:36px 12px}
 .avatar{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:700;font-size:.9rem;flex:none;background:var(--c,#6366f1)}
 .avatar.sm{width:26px;height:26px;font-size:.72rem}.avatar.lg{width:64px;height:64px;font-size:1.5rem}
-.btn{padding:10px 16px;border-radius:14px;background:var(--soft);font-weight:600;font-size:.9rem;display:inline-flex;gap:6px;align-items:center;justify-content:center;transition:.15s}
+.btn{padding:10px 16px;border-radius:14px;background:var(--soft);font-weight:600;font-size:.9rem;display:inline-flex;gap:6px;align-items:center;justify-content:center;transition:transform .15s,background-color .15s,color .15s}
 .btn:active{transform:scale(.97)}
 .btn.pri{background:linear-gradient(135deg,var(--pri),var(--pri2));color:#fff;box-shadow:0 8px 18px -8px var(--pri)}
 .btn.danger{color:var(--bad)}.btn.block{width:100%}
@@ -72,7 +72,7 @@ nav button.on{color:#fff;background:linear-gradient(135deg,var(--pri),var(--pri2
 /* plan */
 .days{display:flex;gap:8px;overflow-x:auto;margin:0 -16px;padding:2px 16px 6px;scrollbar-width:none}
 .days::-webkit-scrollbar{display:none}
-.pill{flex:none;min-width:58px;padding:9px 8px;border-radius:18px;background:var(--card);border:1px solid var(--line);text-align:center;line-height:1.15;color:var(--ink);transition:.15s}
+.pill{flex:none;min-width:58px;padding:9px 8px;border-radius:18px;background:var(--card);border:1px solid var(--line);text-align:center;line-height:1.15;color:var(--ink);transition:transform .15s,background-color .15s,color .15s}
 .pill b{display:block;font-size:1.1rem}.pill small{font-size:.68rem}
 .pill.sel{background:linear-gradient(135deg,var(--pri),var(--pri2));color:#fff;border-color:transparent;box-shadow:0 8px 18px -8px var(--pri)}
 .pill.sel small{color:#ffffffcc}.pill.now:not(.sel){border-color:var(--pri);color:var(--pri)}
@@ -160,8 +160,8 @@ dialog textarea.code{font:12px/1.4 ui-monospace,Menlo,monospace;height:150px;whi
 details{margin-top:12px}summary{cursor:pointer;color:var(--mut);font-size:.85rem}
 ol.steps{padding-left:18px;margin:8px 0;color:var(--ink);font-size:.88rem}ol.steps li{margin:6px 0}
 .toast{position:fixed;left:50%;bottom:calc(96px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#1d1e36;color:#fff;padding:10px 16px;border-radius:16px;z-index:3000;font-size:.88rem;max-width:90vw;box-shadow:0 10px 28px #0007}
-.skeleton{height:84px;margin-top:12px;border-radius:var(--r);background:linear-gradient(90deg,var(--soft),var(--card),var(--soft));background-size:200% 100%;animation:sk 1.2s infinite}
-@keyframes sk{to{background-position:-200% 0}}
+.skeleton{height:84px;margin-top:12px;border-radius:var(--r);background:linear-gradient(90deg,var(--soft),var(--card),var(--soft));background-size:200% 100%;animation:sk 1.4s ease-in-out infinite}
+@keyframes sk{50%{opacity:.55}}
 html[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.9)}
 
 .row .amt{white-space:normal;max-width:52%;font-size:.85rem}
@@ -316,8 +316,8 @@ html.noscroll,html.noscroll body{overflow:hidden}
 .dsegw .seg button{min-height:44px}
 .dtools{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.dtools .btn{min-height:44px}.dtools .btn[disabled]{opacity:.5}
 .dcard{display:grid;grid-template-columns:84px 1fr;gap:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:12px;box-shadow:var(--sh);min-height:176px;overflow-wrap:anywhere}
-.dcard.sk{min-height:176px;background:linear-gradient(90deg,var(--soft),var(--card),var(--soft));background-size:200% 100%;animation:sk 1.4s linear infinite}
-@keyframes sk{to{background-position:-200% 0}}
+.dcard.sk{min-height:176px;background:linear-gradient(90deg,var(--soft),var(--card),var(--soft));background-size:200% 100%;animation:sk 1.4s ease-in-out infinite}
+@keyframes sk{50%{opacity:.55}}
 .dthumb{width:84px;height:84px;border-radius:12px;background:var(--priSoft);display:grid;place-items:center;overflow:hidden;font-size:2rem}.dthumb img{width:100%;height:100%;object-fit:cover;display:block}
 .dbody{min-width:0;display:flex;flex-direction:column;gap:2px}.dbody small{display:block}.dt{display:flex;justify-content:space-between;gap:6px;align-items:flex-start}.dt b{font-size:1rem;line-height:1.3}
 .dmore{width:44px;height:44px;margin:-8px -8px 0 0;font-size:1.3rem;color:var(--mut);flex:none}.lock{color:var(--pri)}
@@ -342,3 +342,100 @@ html.noscroll,html.noscroll body{overflow:hidden}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 .dgrp{margin:8px 0}.dgh{display:flex;align-items:center;gap:8px;width:100%;min-height:48px;padding:6px 12px;background:var(--card);border-radius:14px;box-shadow:0 1px 4px #0001;text-align:left}.dgh b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dgh i{font-style:normal;color:var(--mut)}
 #dfScope button{padding:7px 2px;font-size:.8rem}#dfWho .tag{display:inline-flex;align-items:center;gap:4px}
+
+/* ---------- polish layer: one icon style, scales, states, tap targets ---------- */
+:root{
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;
+  --fs-s:.78rem;--fs-b:.9rem;--fs-l:1.05rem;--fs-xl:1.4rem;
+  --r-s:12px;--r-m:16px;--r-l:22px;
+  --sh:0 1px 2px #14264a0d,0 4px 14px -8px #2f7bff30;--ring:0 0 0 3px color-mix(in srgb,var(--pri) 30%,transparent);
+}
+:root[data-theme=dark]{--sh:0 1px 2px #0005,0 6px 16px -10px #000a}
+.ic{width:1.2em;height:1.2em;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.2em}
+.chip .ic{width:13px;height:13px;vertical-align:-2px}
+.tag .ic{width:16px;height:16px;vertical-align:-3px}
+.step-i{color:var(--pri)}.step-i .ic{width:20px;height:20px;vertical-align:0}
+.spot-i{color:var(--c)}.spot-i .ic{width:22px;height:22px;vertical-align:0}
+.spin{color:#fff}.spin .ic{width:16px;height:16px;vertical-align:0}.spin.sug{color:#f97316}
+.seglbl .ic{width:12px;height:12px;vertical-align:-2px}
+.nudge span{display:grid;place-items:center;width:40px;height:40px;border-radius:14px;background:#ffffff90;color:#c2410c;flex:none}.nudge span .ic{width:22px;height:22px;vertical-align:0}
+.bellbtn .ic{width:20px;height:20px;vertical-align:0}.bellbtn.sm .ic{width:17px;height:17px}
+.stay-ci{display:flex;gap:8px;align-items:flex-start}.stay-ci .ic{margin-top:3px;color:var(--pri)}
+.dp-i{display:grid;place-items:center;color:var(--pri)}.dp-i .ic{width:44px;height:44px;vertical-align:0}
+.dthumb{color:var(--pri)}.dthumb .ic{width:34px;height:34px;vertical-align:0}
+.dt b .ic{width:18px;height:18px;margin-right:2px;vertical-align:-3px;color:var(--pri)}
+.lock .ic{width:14px;height:14px;vertical-align:-2px}
+.ov-btn .ic,.dock-show .ic,.pill .ic,.edit-btn .ic{width:20px;height:20px;vertical-align:-4px}
+.dock-show .ic{vertical-align:-5px}
+.logo{display:grid;place-items:center;width:84px;height:84px;margin:0 auto 6px;border-radius:26px;background:#ffffff26;border:1px solid #ffffff44;box-shadow:0 14px 30px -14px #0006}.logo .ic{width:44px;height:44px;vertical-align:0;stroke-width:1.6}
+.cd-stay{display:inline-flex;align-items:center;gap:6px}.cd-stay .ic{width:18px;height:18px;vertical-align:0}
+.card h2 .ic,.card h3 .ic,dialog h3 .ic{width:20px;height:20px;vertical-align:-4px;color:var(--pri)}
+.btn .ic{width:18px;height:18px;vertical-align:0}
+.seg button .ic{width:16px;height:16px;vertical-align:-3px}
+.dtools .btn .ic,.dmenu .btn .ic{width:18px;height:18px}
+.mapov-st .ic{width:18px;height:18px;vertical-align:-4px;color:var(--pri)}
+.pdfp .ic,.dov-pdf .ic{color:var(--pri)}
+.dov-pdf .dp-i .ic{width:56px;height:56px}
+.derr .ic{width:16px;height:16px}
+.chip.ok{background:color-mix(in srgb,var(--ok) 16%,var(--card));color:color-mix(in srgb,var(--ok) 70%,var(--ink))}
+.chip.bad{background:color-mix(in srgb,var(--bad) 16%,var(--card));color:color-mix(in srgb,var(--bad) 75%,var(--ink))}
+:root[data-theme=dark] .error{background:#3a1820;color:#ffc1c8}
+:root[data-theme=dark] .nudge{background:linear-gradient(135deg,#3a2a1a,#33241a);color:#ffd9b8;border-color:#5a3d22}
+:root[data-theme=dark] .nudge small{color:#f0b98a}
+:root[data-theme=dark] .nudge span{background:#ffffff14;color:#ffb27a}
+:root[data-theme=dark] .seglbl{background:#1a2542}
+/* cards, borders, radius */
+.card,.step-c,.stat,.ex,.spot,.dcard{border-radius:var(--r-l);box-shadow:var(--sh)}
+.step-c,.stat,.ex,.spot{border-radius:var(--r-m)}
+.card.flat{box-shadow:none}
+.card h2,.card h3{display:flex;align-items:center;gap:8px;letter-spacing:-.005em}
+.card h2{font-size:var(--fs-l)}
+.row2 h2{display:flex}
+.chip{font-size:var(--fs-s);padding:2px 10px;gap:5px}
+/* buttons + pressed/active states */
+.btn{min-height:44px;font-size:var(--fs-b);border:1px solid color-mix(in srgb,var(--pri) 10%,var(--line))}
+.btn.pri{border-color:transparent}.btn.danger{color:var(--bad)}
+.btn.sm{min-height:44px;padding:6px 14px}.btn.big{min-height:52px}
+.btn:active,.tag:active,.pill:active,.edit-btn:active,.dock-btn:active,.dock-chip:active,.ov-btn:active,.bellbtn:active,.dmore:active,.li:active,.dgh:active{transform:scale(.96);filter:brightness(.96)}
+.edit-btn,.dock-chip,.dock-show{min-height:44px}
+.edit-btn{border:1px solid var(--line)}
+.tag{min-height:44px;font-size:var(--fs-s);transition:transform .15s,background-color .15s,color .15s}
+.tag.sm,.ideas .tag.sm{min-height:30px;position:relative}
+.tag.sm::after{content:"";position:absolute;inset:-8px -4px}
+.chips.reuse .tag{min-height:40px}
+.tag.on,.tag.sel{box-shadow:0 6px 14px -8px var(--pri)}
+.seg{border:1px solid var(--line)}.seg button{min-height:44px;transition:background-color .15s,color .15s}
+.dock-btn{width:44px;height:44px}
+.bellbtn.sm{width:44px;height:44px;margin:-6px -6px -6px 0}
+.link{min-height:44px;padding:0 8px}
+.li{min-height:48px}
+button:focus-visible,a:focus-visible,.tag:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--pri);outline-offset:2px}
+dialog input:focus,dialog select:focus,dialog textarea:focus{border-color:var(--pri);box-shadow:var(--ring)}
+/* bottom nav */
+nav{border-radius:28px;box-shadow:0 10px 28px -14px #14264a66,0 1px 0 #ffffff55 inset}
+nav button{min-height:52px;font-size:.7rem;font-weight:500;letter-spacing:.01em;transition:color .18s,background-color .18s,transform .15s}
+nav button:active{transform:scale(.94)}
+nav button.on{font-weight:600}
+nav button svg{width:22px;height:22px}
+/* dialogs */
+dialog{border-radius:28px 28px 0 0;box-shadow:0 -12px 40px -12px #0007}
+dialog h3{display:flex;align-items:center;gap:8px;font-size:var(--fs-l);margin-bottom:var(--s2)}
+dialog h3 small{font-weight:400}
+.dmenu .btn{justify-content:flex-start;padding:0 16px}
+.dmenu .btn:last-child{justify-content:center}
+/* documents */
+.dcard{gap:var(--s3);border-radius:var(--r-l)}
+.dthumb{border-radius:var(--r-m)}
+.dbody small{line-height:1.45}
+.dact .btn.pri{box-shadow:0 8px 16px -10px var(--pri)}
+.dpanel{padding:var(--s5) var(--s4)}.dpanel .mut{font-size:var(--fs-b)}
+.dgh{border:1px solid var(--line)}
+/* map overlay + dock */
+.mapov-bar{background:var(--bg)}
+.mapov-st{background:var(--card);border-top:1px solid var(--line);box-shadow:0 -6px 16px -12px #0004}
+.mapov-loc,.dock-btn,.dock-chip{border:1px solid var(--line)}
+.ov-btn{border-radius:var(--r-m);box-shadow:var(--sh)}
+.dock-show{display:flex;align-items:center;justify-content:center;gap:8px}
+.pill{border-radius:var(--r-m)}
+.top h1{font-size:var(--fs-xl)}
+@media (prefers-reduced-motion:reduce){.btn:active,.tag:active,.pill:active,nav button:active{transform:none}}
