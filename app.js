@@ -448,7 +448,7 @@ const dim = on => $('main').classList.toggle('busy', on);
 const busy = () => dlg.open || !!$('.glb') || /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '');
 /* run a re-render without moving what the reader is looking at: anchor on the first visible step */
 function keepScroll(fn, top) {
-  const y0 = scrollY, dock = $('#homeDock'), lim = Math.max($('.top').getBoundingClientRect().bottom, dock.hidden ? 0 : dock.getBoundingClientRect().bottom);
+  const y0 = scrollY, bar = $('#homeDays'), lim = Math.max($('.top').getBoundingClientRect().bottom, bar.hidden ? 0 : bar.getBoundingClientRect().bottom);
   const a = ui.tab === 'plan' ? $$('#tl .step').find(n => n.getBoundingClientRect().bottom > lim + 1) : null, ai = a && a.dataset.i, ay = a && a.getBoundingClientRect().top, day = ui.day;
   fn();
   scrollTo(0, top && ui.tab === 'plan' ? 0 : y0);          // a different trip starts at the top of the plan
@@ -664,45 +664,33 @@ function mountMap(holder) {
   if (ensureMap()) setTimeout(() => map.invalidateSize(), 80);
 }
 function updateDock() {
-  const dock = $('#homeDock'), show = ui.tab === 'plan'; dock.hidden = !show; if (!show) { document.documentElement.style.setProperty('--dockH', '0px'); return; }
-  if (!show || ui.edit || ui.dockSize === 'l' || ui.dockSize === 's') ui.dockAway = false;
-  dock.className = 'dock ' + (ui.dockSize || 'm') + (ui.edit ? ' edit' : '') + (ui.dockAway === 'hide' ? ' away' : ui.dockAway === 'peek' ? ' peek' : '');
-  { const mh = $('.dock-map', dock), dh = $('#homeDays'); if (mh && dh) document.documentElement.style.setProperty('--peekY', Math.max(0, dock.offsetHeight - dh.offsetHeight - 8) + 'px'); }
-  document.documentElement.classList.toggle('dockaway', ui.dockAway === 'hide'); document.documentElement.classList.toggle('dockpeek', ui.dockAway === 'peek');
+  const dock = $('#homeDock'), bar = $('#homeDays'), show = ui.tab === 'plan'; dock.hidden = !show; bar.hidden = !show; if (!show) { document.documentElement.style.setProperty('--dockH', '0px'); return; }
+  dock.className = 'dock ' + (ui.dockSize || 'm') + (ui.edit ? ' edit' : '');
   $('#dockShow').hidden = ui.dockSize !== 's';
   $('#dockSize').innerHTML = ui.dockSize === 'l' ? '<svg viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
   document.documentElement.style.setProperty('--topH', $('.top').offsetHeight + 'px');
   if (ui.dockSize !== 's') mountMap($('#homeMapHolder'));
-  const setH = () => document.documentElement.style.setProperty('--dockH', dock.offsetHeight + 'px'); setH(); setTimeout(setH, 300);   // keeps scrolled-to items from hiding under the sticky map
+  const setH = () => document.documentElement.style.setProperty('--dockH', bar.offsetHeight + 'px'); setH(); setTimeout(setH, 300);   // scroll-padding = header + day bar (the only sticky parts)
 }
 function drawHome(fit) {
   if (ui.tab !== 'plan') return; updateDock();
   if (ui.dockSize !== 's') { drawMap(fit); runGeocode(); }
 }
-/* the dock hides / peeks only after >= 28 px of sustained movement in one direction; small reversals restart the count */
-let lastY = 0, acc = 0;
-function setAway(st) {
-  if (st === (ui.dockAway || false)) return;
-  const dock = $('#homeDock');
-  if (st === 'peek') { const dh = $('#homeDays'); document.documentElement.style.setProperty('--peekY', Math.max(0, dock.offsetHeight - dh.offsetHeight - 8) + 'px'); }
-  ui.dockAway = st; dock.classList.toggle('away', st === 'hide'); dock.classList.toggle('peek', st === 'peek');
-  document.documentElement.classList.toggle('dockaway', st === 'hide'); document.documentElement.classList.toggle('dockpeek', st === 'peek');
+/* the map card scrolls with the page (normal flow); only the day bar is sticky. No scroll handler. */
+const smooth = () => matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+function showMap() {
+  if (ui.dockSize === 's') setDock('m');
+  const dock = $('#homeDock'); scrollTo({ top: Math.max(0, dock.getBoundingClientRect().top + scrollY - $('.top').offsetHeight - 6), behavior: smooth() });
 }
-window.addEventListener('scroll', () => {
-  const y = window.scrollY, dy = y - lastY; lastY = y;
-  if (Date.now() - (ui.dockLockAt || 0) < 800 || ui.tab !== 'plan' || ui.edit || ui.dockSize === 'l' || ui.dockSize === 's') { acc = 0; return; }   // just opened / tab switched: leave it alone
-  if (y < 60) { acc = 0; return setAway(false); }
-  if (dy * acc < 0) acc = 0;
-  acc += dy;
-  if (acc > 28 && y > 140) setAway('hide'); else if (acc < -28 && ui.dockAway === 'hide') setAway('peek');
-}, { passive: true });
 function setDock(v) { ui.dockSize = v; store.set('tt.dock', v); updateDock(); if (v !== 's' && map) setTimeout(() => { map.invalidateSize(); drawMap(true); }, 100); }
 function focusStep(k) {
-  if (ui.dockAway) { ui.dockAway = false; updateDock(); }                       // the map must be on screen to show the stop
   const d = data.plan && data.plan.days[ui.day], s = d && d.steps[k]; if (!s) return;
   ui.activeStep = k; $$('#tab-plan .step').forEach(n => n.classList.toggle('active', +n.dataset.i === k));
   const m = wpMark[ui.day + '|' + qName(s.to || s.from || '')];
-  if (m && map && ui.dockSize !== 's') { map.setView(m.getLatLng(), Math.max(map.getZoom(), 15)); m.openPopup(); }
+  if (m && map && ui.dockSize !== 's') {
+    map.setView(m.getLatLng(), Math.max(map.getZoom(), 15)); m.openPopup();
+    const r = $('#homeDock').getBoundingClientRect(); if (r.bottom < $('.top').offsetHeight + 40) showMap();       // map is scrolled off: bring it back smoothly
+  }
   else if (ui.dockSize === 's') toast('แผนที่ถูกซ่อนอยู่ — กด “แสดงแผนที่”');
   else toast('ยังไม่มีพิกัดของจุดนี้ — ตั้งพิกัดได้ในหน้าแก้ไขรายการ (วางลิงก์ Google Maps)');
 }
@@ -750,11 +738,11 @@ function renderPlan() {
   if (!ui.edit) p.ideas.forEach((g, gi) => { if (g.items.length) h += `<div class="card flat"><h3>${ic('bulb')} ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map((i, ii) => `<li>${mapLink(i)} <button class="tag sm" data-gi="${gi}" data-ii="${ii}">+ เพิ่มเข้าแผน</button></li>`).join('')}</ul></div>`; });
   if (!ui.edit && (data.media || []).length) h += `<button class="nudge" id="planGallery"><span>${ic('image')}</span><div><b>รูปภาพของทริป (${data.media.length})</b><small>ภาพประกอบจากไฟล์ Excel — แตะเพื่อดู</small></div></button>`;
   el.innerHTML = h;
-  dayBar.innerHTML = `<button class="pill mapbtn" id="peekMap" aria-label="แสดงแผนที่">${ic('map')}</button>` + p.days.map(pill).join('') + (ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : '');
-  { const pm = $('#peekMap', dayBar); if (pm) pm.onclick = () => { ui.dockLockAt = Date.now(); ui.dockAway = false; updateDock(); }; }
+  dayBar.innerHTML = `<button class="pill mapbtn" id="peekMap" aria-label="แผนที่">${ic('map')}แผนที่</button>` + p.days.map(pill).join('') + (ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : '');
+  { const pm = $('#peekMap', dayBar); if (pm) pm.onclick = showMap; }
   const sel = $('.pill.sel', dayBar); if (sel) dayBar.scrollLeft = sel.offsetLeft - dayBar.clientWidth / 2 + sel.clientWidth / 2;
   $$('[data-gi]', el).forEach(b => b.onclick = () => { const g = p.ideas[+b.dataset.gi]; addToPlanDialog(g.items[+b.dataset.ii], { gi: +b.dataset.gi, ii: +b.dataset.ii }); });
-  $$('.pill[data-day]', dayBar).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; ui.refit = true; ui.activeStep = null; ui.ver++; renderPlan(); });
+  $$('.pill[data-day]', dayBar).forEach(b => b.onclick = () => { ui.day = +b.dataset.day; ui.refit = true; ui.activeStep = null; ui.ver++; renderPlan(); const f = $('#tl .step'), dd = $('.dayh'); if (dd) { const y = dd.getBoundingClientRect().top + scrollY - $('.top').offsetHeight - $('#homeDays').offsetHeight - 8; if (Math.abs(y - scrollY) > 2 && scrollY > y) scrollTo({ top: Math.max(0, y), behavior: smooth() }); } });
   $('#editBtn').onclick = toggleEdit;
   bindBells(el);
   const sb = $('#stayBtn'); if (sb) sb.onclick = () => { ui.stayOpen = !ui.stayOpen; $('#stayPn').hidden = !ui.stayOpen; sb.setAttribute('aria-expanded', ui.stayOpen); };
@@ -2091,7 +2079,7 @@ function renderAll() {
 $('#tabs').onclick = e => {
   const b = e.target.closest('button'); if (!b) return; const to = b.dataset.tab;
   if (to === ui.tab) return scrollTo(0, 0);          // tapping the active tab = back to its top
-  ui.scroll[ui.tab] = scrollY; ui.dockLockAt = Date.now() - 650; ui.tab = to;          // ignores only the scroll event of the restore itself (~150 ms)
+  ui.scroll[ui.tab] = scrollY; ui.tab = to;          // ignores only the scroll event of the restore itself (~150 ms)
   $$('#tabs button').forEach(x => x.classList.toggle('on', x === b));
   $$('main > section').forEach(s => s.hidden = s.id !== 'tab-' + to);
   updateDock();

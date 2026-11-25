@@ -229,7 +229,9 @@ html[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) bri
 .stay-ci{margin-top:8px;background:var(--priSoft);color:var(--ink);border-radius:12px;padding:8px 12px;font-size:.84rem;line-height:1.45}
 
 /* home: sticky map dock */
-.dock{position:sticky;top:var(--topH,64px);z-index:560;margin:0 -16px 8px;padding:2px 16px 4px;background:linear-gradient(var(--bg) 90%,transparent)}
+.dock{margin:0 0 8px;padding:2px 0 0;position:relative;z-index:0}
+.daybar{position:sticky;top:var(--topH,64px);z-index:560;margin:0 -16px 6px;padding:6px 16px;min-height:56px;align-items:center;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);box-shadow:0 8px 10px -9px #0004}
+.daybar[hidden]{display:none}
 .dock-map{position:relative;height:clamp(120px,23dvh,320px);border-radius:24px;overflow:hidden;border:1px solid var(--line);background:var(--soft)}
 .dock.l .dock-map{height:clamp(300px,58dvh,560px)}.dock.s .dock-map{display:none}
 .dock-map #map{position:absolute;inset:0;height:100%;z-index:1}
@@ -239,7 +241,6 @@ html[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) bri
 .dock-btn svg{width:19px;height:19px}
 .dock-chip{padding:7px 12px;border-radius:99px;background:color-mix(in srgb,var(--card) 92%,transparent);font-size:.78rem;font-weight:600;color:var(--ink);box-shadow:0 6px 16px #0003}
 .dock-show{width:100%;padding:11px;border-radius:16px;background:var(--card);border:1px solid var(--line);font-weight:600;color:var(--pri);box-shadow:var(--sh)}
-.dock .days{margin:8px 0 0;padding:2px 0 4px;min-height:64px}
 .step.active .step-c{border-color:var(--pri);box-shadow:0 0 0 3px var(--priSoft)}
 #tab-plan{padding-top:4px}
 #tab-plan>*{overflow-anchor:none}
@@ -282,15 +283,8 @@ label.chk{display:flex;gap:8px;align-items:center;margin-top:10px;font-size:.9re
 .chip.cur{background:#16c47a26;color:#0a8a55}.chip.up{background:var(--priSoft);color:var(--pri)}.chip.past{background:#94a3b826;color:#64748b}
 .li .chip{margin-left:auto;flex:none}
 
-.dock{will-change:transform;transition:transform .28s ease}
-.dock.away{transform:translateY(calc(-100% - var(--topH,64px) - 12px));pointer-events:none}
-html.dockaway{scroll-padding-top:calc(var(--topH,64px) + 10px)}
-
-.dock.peek{transform:translateY(calc(-1 * var(--peekY,150px)))}
-.dock.peek,.dock.peek .days{pointer-events:auto}.dock.peek .dock-map{pointer-events:none}
-html.dockpeek{scroll-padding-top:calc(var(--topH,64px) + 72px)}
-.pill.mapbtn{display:none;flex:none;font-size:1.1rem;align-items:center;justify-content:center}
-.dock.peek .pill.mapbtn{display:flex}
+.pill.mapbtn{display:flex;flex:none;min-width:58px;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:.68rem;font-weight:600;color:var(--pri)}
+.pill.mapbtn .ic{width:20px;height:20px;vertical-align:0}
 
 .gal{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
 .gimg{aspect-ratio:1;border-radius:12px;border:1px solid var(--line);background:var(--priSoft) center/cover no-repeat;padding:0;min-height:0}

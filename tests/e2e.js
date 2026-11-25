@@ -141,14 +141,19 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
     check(`H1 ${w}x${h}: no horizontal scroll on any tab`, !bad.length, bad.join());
     await p.click('[data-tab=plan]'); await p.waitForTimeout(400);
     const m = await p.evaluate(async () => {
-      const rect = () => { const d = document.getElementById('homeDock').getBoundingClientRect(), n = document.querySelector('nav').getBoundingClientRect(); return { dockBottom: d.bottom, navTop: n.top }; };
-      window.scrollTo(0, 600); await new Promise(r => setTimeout(r, 450)); const down = rect(), away = document.getElementById('homeDock').classList.contains('away');
-      window.scrollTo(0, 450); await new Promise(r => setTimeout(r, 450)); const peek = document.getElementById('homeDock').classList.contains('peek');
-      window.scrollTo(0, document.documentElement.scrollHeight); await new Promise(r => setTimeout(r, 450));
+      const w = ms => new Promise(r => setTimeout(r, ms)), dock = document.getElementById('homeDock'), bar = document.getElementById('homeDays'), topH = document.querySelector('.top').getBoundingClientRect().bottom;
+      const tr = () => getComputedStyle(dock).transform + '|' + getComputedStyle(bar).transform; const t0 = tr(); let moved = 0, barY = [], dockAbs = [];
+      const y0 = dock.getBoundingClientRect().top + scrollY;
+      for (const y of [0, 150, 300, 600, 450, 700]) { window.scrollTo(0, y); await w(120); if (tr() !== t0) moved++; barY.push(Math.round(bar.getBoundingClientRect().top - topH)); dockAbs.push(Math.round(dock.getBoundingClientRect().top + scrollY - y0)); }
+      const first = document.querySelector('#tl .step');
+      window.scrollTo(0, 700); await w(200); first.scrollIntoView({ block: 'start' }); await w(300);
+      const fr = first.getBoundingClientRect(), bb = bar.getBoundingClientRect();
+      const stuck = barY.slice(2).every(v => Math.abs(v) <= 1);
+      window.scrollTo(0, document.documentElement.scrollHeight); await w(450);
       const st = [...document.querySelectorAll('#tl .step')], l = st[st.length - 1].getBoundingClientRect(), n = document.querySelector('nav').getBoundingClientRect();
-      return { away, peek, hiddenAbove: down.dockBottom <= 0, lastClear: l.bottom <= n.top + 1 };
+      return { moved, stuck, barY, flow: dockAbs.every(v => v === 0), firstClear: fr.top >= bb.bottom - 1, tw: getComputedStyle(dock).transitionProperty + '/' + getComputedStyle(bar).transitionProperty, lastClear: l.bottom <= n.top + 1 };
     });
-    check(`H2 ${w}x${h}: map slides away on scroll down, only the day bar returns on scroll up`, m.away && m.hiddenAbove && m.peek, JSON.stringify(m));
+    check(`H2 ${w}x${h}: map card scrolls in normal flow (no transform/transition), day bar stays sticky under the header, first step not covered`, m.moved === 0 && m.stuck && m.flow && m.firstClear && !/transform/.test(m.tw), JSON.stringify(m));
     check(`H3 ${w}x${h}: last card not covered by the bottom bar`, m.lastClear);
     await s.b.close();
   }
@@ -237,22 +242,33 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
 
   /* calm dock */
   s = await open({ stepsPerDay: 10 }); p = s.p; await login(s, 'Nine'); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
-  const flips = await p.evaluate(async () => {
-    const d = document.getElementById('homeDock'), st = () => d.classList.contains('away') ? 'away' : d.classList.contains('peek') ? 'peek' : 'show'; let last = st(), n = 0;
-    new MutationObserver(() => { const c = st(); if (c !== last) { n++; last = c; } }).observe(d, { attributes: true, attributeFilter: ['class'] });
-    for (const y of [0, 200, 400, 380, 395, 370, 410, 385, 400, 375, 405, 380, 410]) { window.scrollTo(0, y); await new Promise(r => setTimeout(r, 130)); }
-    return { n, end: st() };
+  const calm = await p.evaluate(async () => {
+    const d = document.getElementById('homeDock'), bar = document.getElementById('homeDays'), w = ms => new Promise(r => setTimeout(r, ms)); let muts = 0;
+    new MutationObserver(() => muts++).observe(d, { attributes: true }); new MutationObserver(() => muts++).observe(bar, { attributes: true, attributeFilter: ['class', 'style'] });
+    for (const y of [0, 200, 400, 380, 395, 370, 410, 385, 400, 375, 405, 380, 410]) { window.scrollTo(0, y); await w(100); }
+    return { muts, away: !!document.querySelector('.away,.peek'), cls: d.className, sticky: getComputedStyle(bar).position, dsticky: getComputedStyle(d).position, wc: getComputedStyle(d).willChange };
   });
-  check('J12 jittery scroll path flips the dock <= 4 times', flips.n <= 4, JSON.stringify(flips));
-  const hy = await p.evaluate(async () => {
-    const d = document.getElementById('homeDock'), st = () => d.classList.contains('away') ? 'away' : d.classList.contains('peek') ? 'peek' : 'show', out = [], w = ms => new Promise(r => setTimeout(r, ms));
-    window.scrollTo(0, 800); await w(500); out.push(st()); window.scrollTo(0, 785); await w(200); out.push(st()); window.scrollTo(0, 775); await w(200); out.push(st()); window.scrollTo(0, 700); await w(500); out.push(st());
-    const cs = getComputedStyle(d); return { out, willChange: cs.willChange, tr: cs.transitionProperty };
-  });
-  check('J13 hysteresis: hides on 800; a 15 px / 25 px reversal (< 28 px) keeps it hidden; 100 px sustained up -> peek; will-change + transform-only transition', hy.out.join() === 'away,away,away,peek' && /transform/.test(hy.willChange) && hy.tr === 'transform', JSON.stringify(hy));
+  check('J12 jittery scroll: no class/style changes on the dock or day bar (no scroll-linked JS)', calm.muts === 0 && !calm.away && calm.sticky === 'sticky' && calm.dsticky !== 'sticky' && calm.wc === 'auto', JSON.stringify(calm));
+  const shd = await p.evaluate(async () => { const bar = document.getElementById('homeDays'), w = ms => new Promise(r => setTimeout(r, ms)); window.scrollTo(0, 800); await w(200); const r = bar.getBoundingClientRect(), t = document.querySelector('.top').getBoundingClientRect().bottom; return { gap: Math.round(r.top - t), shadow: getComputedStyle(bar).boxShadow !== 'none', map: !!document.querySelector('#peekMap'), label: (document.querySelector('#peekMap') || {}).textContent }; });
+  check('J13 day bar pinned right under the header at scroll 800, has a shadow, has the "แผนที่" button', Math.abs(shd.gap) <= 1 && shd.shadow && shd.map && /แผนที่/.test(shd.label), JSON.stringify(shd));
+  await p.click('#peekMap'); await p.waitForTimeout(1000);
+  const bk = await p.evaluate(() => ({ y: scrollY, mapTop: document.getElementById('homeDock').getBoundingClientRect().top, hdr: document.querySelector('.top').getBoundingClientRect().bottom }));
+  check('J13b "แผนที่" button scrolls the map back into view', bk.mapTop >= bk.hdr - 2 && bk.mapTop < bk.hdr + 40, JSON.stringify(bk));
+  await p.evaluate(() => window.scrollTo(0, 800)); await p.waitForTimeout(200);
+  await p.evaluate(() => { const st = data.plan.days[ui.day].steps; let k = st.findIndex(s => wpMark[ui.day + '|' + qName(s.to || s.from || '')]);
+    window.__real = k >= 0; if (k < 0) { k = 0; wpMark[ui.day + '|' + qName(st[0].to || st[0].from || '')] = L.marker([22.19, 113.54]).bindPopup('x').addTo(map); } window.__k = k; focusStep(k); }); await p.waitForTimeout(1000);
+  const fs = await p.evaluate(() => ({ mapTop: document.getElementById('homeDock').getBoundingClientRect().top, hdr: document.querySelector('.top').getBoundingClientRect().bottom, one: document.querySelectorAll('.leaflet-container').length, real: window.__real, active: ui.activeStep === window.__k && !!document.querySelector('#tab-plan .step.active'), popup: !!document.querySelector('.leaflet-popup') }));
+  check('J13c focusStep (off-screen map) scrolls it into view, marks the step active, opens the popup; one Leaflet instance', fs.mapTop > -5 && fs.mapTop < 300 && fs.one === 1 && fs.active && fs.popup, JSON.stringify(fs));
+  await p.evaluate(() => window.scrollTo(0, 175)); await p.waitForTimeout(300);
+  const zt = await p.evaluate(() => { const h = document.querySelector('.top').getBoundingClientRect(), pts = [[20, h.bottom - 5], [innerWidth - 25, h.bottom - 5], [innerWidth / 2, h.bottom - 5], [innerWidth - 25, 30]]; return { mb: Math.round(document.querySelector('.dock-map').getBoundingClientRect().bottom), hb: Math.round(h.bottom), bad: pts.filter(([x, y]) => { const e = document.elementFromPoint(x, y); return e && !e.closest('.top'); }).length }; });
+  check('J13e map partly under the header: header (not Leaflet controls) is topmost', zt.bad === 0, JSON.stringify(zt));
+  const dc = await p.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms)); window.scrollTo(0, 500); await w(200); let cls = 0; new PerformanceObserver(l => l.getEntries().forEach(e => { if (!e.hadRecentInput) cls += e.value; })).observe({ type: 'layout-shift', buffered: false });
+    document.querySelectorAll('#homeDays .pill[data-day]')[1].click(); await w(900); const bar = document.getElementById('homeDays').getBoundingClientRect(), st = document.querySelector('#tl .step'), hd = document.querySelector('.dayh').getBoundingClientRect();
+    return { cls, barTop: Math.round(bar.top - document.querySelector('.top').getBoundingClientRect().bottom), headClear: hd.top >= bar.bottom - 1 || scrollY < 5, stepVis: !st || st.getBoundingClientRect().bottom > bar.bottom }; });
+  check('J13d day change: day bar stays pinned, heading not covered, CLS <= 0.05', Math.abs(dc.barTop) <= 1 && dc.headClear && dc.cls <= 0.05, JSON.stringify(dc));
   await s.b.close();
   s = await open({ reducedMotion: 'reduce' }); p = s.p; await login(s, 'Nine');
-  check('J14 prefers-reduced-motion: no dock transition', await p.evaluate(() => parseFloat(getComputedStyle(document.getElementById('homeDock')).transitionDuration) === 0));
+  check('J14 prefers-reduced-motion: no dock/day-bar transition, smooth scroll off', await p.evaluate(() => parseFloat(getComputedStyle(document.getElementById('homeDock')).transitionDuration) === 0 && parseFloat(getComputedStyle(document.getElementById('homeDays')).transitionDuration) === 0 && matchMedia('(prefers-reduced-motion: reduce)').matches));
   await s.b.close();
 
   /* full-screen map overlay */
@@ -287,7 +303,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   /* home top compaction */
   for (const [w, h] of [[390, 844], [360, 640]]) {
     s = await open({ w, h }); p = s.p; await login(s, 'Nine'); await p.evaluate(() => window.scrollTo(0, 0)); await p.waitForTimeout(600);
-    const g = await p.evaluate(() => { const nav = document.querySelector('nav').getBoundingClientRect().top, st = document.querySelector('#tl .step'), hd = document.querySelector('.dayh h2').getBoundingClientRect(), dk = document.getElementById('homeDock').getBoundingClientRect(), mp = document.querySelector('.dock-map').getBoundingClientRect(); return { nav, stepBottom: st ? st.getBoundingClientRect().bottom : null, headTop: hd.top, headBottom: hd.bottom, dockBottom: dk.bottom, map: mp.height, nx: !!document.getElementById('cd'), stayOpen: !document.getElementById('stayPn') || document.getElementById('stayPn').hidden === false }; });
+    const g = await p.evaluate(() => { const nav = document.querySelector('nav').getBoundingClientRect().top, st = document.querySelector('#tl .step'), hd = document.querySelector('.dayh h2').getBoundingClientRect(), dk = document.getElementById('homeDays').getBoundingClientRect(), mp = document.querySelector('.dock-map').getBoundingClientRect(); return { nav, stepBottom: st ? st.getBoundingClientRect().bottom : null, headTop: hd.top, headBottom: hd.bottom, dockBottom: dk.bottom, map: mp.height, nx: !!document.getElementById('cd'), stayOpen: !document.getElementById('stayPn') || document.getElementById('stayPn').hidden === false }; });
     if (w === 390) check('J22 390x844: first step card fully above the bottom nav at scroll 0; map ~23 dvh; stay collapsed', g.stepBottom != null && g.stepBottom <= g.nav && g.map < 844 * 0.25 && g.map >= 120 && !g.stayOpen, JSON.stringify(g));
     else check('J23 360x640: day heading visible (below the dock, above the nav) at scroll 0', g.headTop >= g.dockBottom - 1 && g.headBottom <= g.nav, JSON.stringify(g));
     await s.b.close();
