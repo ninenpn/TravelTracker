@@ -88,10 +88,19 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   await p.evaluate(() => { ui.edit = false; stepDialog(null); }); await p.waitForTimeout(300);
   check('D10 add-step form prefills the previous arrival time', /\d\d\.\d\d/.test(await p.inputValue('[name=st]')));
   await s.b.close();
-  s = await open({ editCode: 'bad' }); p = s.p; await login(s, 'Nine');
-  await p.evaluate(() => { ui.day = 0; ui.edit = true; renderPlan(); stepDialog(0); }); await p.waitForTimeout(300);
-  await p.fill('[name=note]', 'x'); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(2500);
-  check('D11 public trip: wrong edit code -> refused with a message, code forgotten', await p.evaluate(() => !cfg.editCode) && /ไม่ถูกต้อง|ไม่สำเร็จ/.test(await p.evaluate(() => document.getElementById('toast').innerText + document.getElementById('tripSub').innerText)));
+  s = await open(); p = s.p; await login(s, 'Nine');
+  await p.click('#editBtn'); await p.waitForTimeout(500);
+  check('D11a public trip: edit mode opens straight away, no code dialog', await p.evaluate(() => ui.edit && !document.getElementById('dlg').open));
+  await p.evaluate(() => { ui.day = 0; renderPlan(); stepDialog(0); }); await p.waitForTimeout(300);
+  await p.fill('[name=note]', 'x'); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(3000);
+  const dst = await p.evaluate(() => ({ dlg: document.getElementById('dlg').open, txt: document.body.innerText, cfg: JSON.stringify(cfg) }));
+  const sv = s.rpc.filter(r => r.fn === 'save_tab').pop();
+  check('D11 public trip: save goes through save_tab with NO edit code and no dialog', !!sv && sv.a.code === '' && sv.a.p_tab === 'plan' && !dst.dlg && !/รหัสแก้ไข/.test(dst.txt) && !/editCode/.test(dst.cfg), JSON.stringify(sv && sv.a).slice(0, 120));
+  const cnt = s.rpc.filter(r => ['append_row', 'upsert_row'].includes(r.fn)).length;
+  await p.evaluate(() => sheetApi.call('append', { tab: 'Expenses', values: ['a', 'b'] })); await p.evaluate(() => sheetApi.call('upsert', { tab: 'Places', key: 'k', values: ['k', '1'] }));
+  check('D11b public append_row / upsert_row go out without a code', s.rpc.filter(r => ['append_row', 'upsert_row'].includes(r.fn)).length === cnt + 2 && s.rpc.filter(r => ['append_row', 'upsert_row'].includes(r.fn)).every(r => r.a.code === ''));
+  const srcAll = require('fs').readFileSync(__dirname + '/../app.js', 'utf8') + require('fs').readFileSync(__dirname + '/../index.html', 'utf8') + require('fs').readFileSync(__dirname + '/../style.css', 'utf8');
+  check('D11c no edit-code UI / flow left in app.js, index.html, style.css', !/รหัสแก้ไข|editCode|askEditCode|check_code|bUnlock|bLock/.test(srcAll));
   await s.b.close();
 
   /* ---------- E. money (synthetic expenses, independent arithmetic) ---------- */
@@ -110,7 +119,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
 
   /* ---------- F. other tabs ---------- */
   console.log('\n[F] other tabs');
-  s = await open({ editCode: 'good' }); p = s.p; await login(s, 'Nine');
+  s = await open(); p = s.p; await login(s, 'Nine');
   await p.click('[data-tab=spots]'); await p.waitForTimeout(700);
   check('F1 places tab renders segments', await p.evaluate(() => document.querySelectorAll('#tab-spots .seg button').length) >= 2);
   await p.evaluate(() => { ui.spotView = 'tips'; renderSpots(); }); await p.waitForTimeout(300);
@@ -560,6 +569,57 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
     await s.b.close();
   }
 
+
+
+  /* ---------- M. profile photos (central; anyone sets / removes anyone's photo) ---------- */
+  console.log('\n[M] profile photos');
+  for (const [w, h] of [[360, 640], [390, 844], [430, 932]]) {
+    s = await open({ w, h, init: CLSK }); p = s.p; await login(s, 'Nine');
+    const un = await p.evaluate(() => users().map(u => u.name)), other = un.find(n => n !== 'Nine'); s.flags.users = un.map(n => n.toLowerCase());
+    const before = await p.evaluate(() => document.getElementById('btnMe').getBoundingClientRect().width);
+    await p.click('[data-tab=menu]'); await p.waitForTimeout(700);
+    check(`M1 ${w}: header + menu show initials first (no photo, no img)`, await p.evaluate(() => document.querySelectorAll('.avatar img').length === 0 && /N/.test(document.getElementById('btnMe').innerText)));
+    const fc = p.waitForEvent('filechooser'); await p.click('#tab-menu .profile [data-avp]'); (await fc).setFiles({ name: 'me.png', mimeType: 'image/png', buffer: png(900, 500) }); await p.waitForTimeout(1500);
+    const put = s.rpc.filter(r => r.fn === 'avatar_put').pop();
+    check(`M2 ${w}: upload is a square JPEG <= 256 px, <= 120k chars, sent to avatar_put for Nine`, !!put && put.a.p_mime === 'image/jpeg' && put.a.p_name === 'Nine' && put.a.p_data.length < 120000 && await p.evaluate(d => new Promise(ok => { const i = new Image(); i.onload = () => ok(i.naturalWidth === 256 && i.naturalHeight === 256); i.src = 'data:image/jpeg;base64,' + d; }), put.a.p_data));
+    check(`M3 ${w}: photo appears in the header button and the Menu profile + members card`, await p.evaluate(() => document.querySelectorAll('#btnMe img').length === 1 && document.querySelectorAll('#tab-menu .profile img').length === 1 && document.querySelectorAll('#tab-menu .row img').length === 1));
+    const fc2 = p.waitForEvent('filechooser'); await p.click(`#tab-menu [data-avp="${other}"]`); (await fc2).setFiles({ name: 'o.png', mimeType: 'image/png', buffer: png(300, 600) }); await p.waitForTimeout(1500);
+    check(`M4 ${w}: anyone can set ANOTHER traveller's photo (central), request targets that name`, s.rpc.filter(r => r.fn === 'avatar_put').pop().a.p_name === other && !!s.avs[other.toLowerCase()]);
+    await p.click('[data-tab=money]'); await p.waitForTimeout(500);
+    await p.evaluate(() => { data.expenses = [{ item: 'x', cat: 'x', amount: 10, cur: 'THB', payer: 'Nine', type: 'personal', with: [] }]; renderMoney(); });
+    check(`M5 ${w}: money rows show the photo`, await p.evaluate(() => document.querySelectorAll('#tab-money .avatar img').length >= 1));
+    await p.click('#btnMe'); await p.waitForTimeout(400);
+    check(`M6 ${w}: chooser shows photos + per-traveller actions`, await p.evaluate(() => document.querySelectorAll('#whoList .avatar img').length >= 1 && document.querySelectorAll('#avList [data-avp]').length >= 2));
+    await p.click('#dlg button[value=x]'); await p.waitForTimeout(200);
+    s.docs.push({ id: '00000000-0000-4000-8000-0000000000aa', scope: 'person', owner: other.toLowerCase(), trip: '', title: 'Synthetic doc', kind: 'other', mime: 'image/png', size_bytes: 3, note: '', created_by: other.toLowerCase(), created_at: new Date().toISOString(), chunks: 1, chunkData: ['QUJD'] });
+    await p.click('[data-tab=docs]'); await p.waitForTimeout(1500);
+    check(`M7 ${w}: docs friend groups show the photo`, await p.evaluate(() => { dc.seg = 'friends'; renderDocs(); return true; }) && await p.evaluate(() => document.querySelectorAll('#tab-docs .dgh .avatar img, #tab-docs .avatar img').length >= 1));
+    check(`M8 ${w}: photo cached in localStorage <= 300 KB and CLS <= 0.05, header box fixed`, await p.evaluate(() => (localStorage.getItem('tt.av') || '').length) > 100 && await p.evaluate(() => localStorage.getItem('tt.av').length <= 300000) && await p.evaluate(() => window.__cls) <= 0.05 && Math.abs(before - await p.evaluate(() => document.getElementById('btnMe').getBoundingClientRect().width)) < 0.5);
+    await p.reload(); await p.waitForTimeout(1500);
+    check(`M9 ${w}: photo is there right after a reload (cache)`, await p.evaluate(() => document.querySelectorAll('#btnMe img').length === 1));
+    if (w === 390) {
+      await p.click('[data-tab=menu]'); await p.waitForTimeout(600);
+      await p.click('#tab-menu .profile [data-avd]'); await p.waitForTimeout(1000);
+      check('M10 remove returns to initials (header + server + cache)', await p.evaluate(() => document.querySelectorAll('#btnMe img').length === 0 && /N/.test(document.getElementById('btnMe').innerText) && !JSON.parse(localStorage.getItem('tt.av') || '{}').nine) && !s.avs.nine && !!s.avs[other.toLowerCase()]);
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+      const cr = await p.evaluate(() => { const a = document.querySelector('#tab-menu .row .avatar'), c = getComputedStyle(a); return { fg: c.color, bg: c.backgroundColor }; });
+      check('M11 dark mode: initials stay white on the coloured circle', cr.fg === 'rgb(255, 255, 255)' && cr.bg !== 'rgba(0, 0, 0, 0)', JSON.stringify(cr));
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    }
+    await s.b.close();
+  }
+  s = await open(); p = s.p; s.flags.noAvSql = true; await login(s, 'Nine');
+  await p.click('[data-tab=menu]'); await p.waitForTimeout(700);
+  check('M12 SQL not applied: initials only, app fine', await p.evaluate(() => document.querySelectorAll('.avatar img').length === 0 && document.querySelectorAll('#tab-menu .profile .avatar').length === 1));
+  const fc3 = p.waitForEvent('filechooser'); await p.click('#tab-menu .profile [data-avp]'); (await fc3).setFiles({ name: 'me.png', mimeType: 'image/png', buffer: png(300, 300) }); await p.waitForTimeout(1500);
+  check('M13 SQL not applied: trying to upload shows a Thai hint about supabase_avatars.sql', /supabase_avatars\.sql/.test(await p.evaluate(() => document.getElementById('toast').innerText)));
+  await s.b.close();
+  s = await open(); p = s.p; s.flags.users = ['nine']; await login(s, 'Nine');
+  await p.click('[data-tab=menu]'); await p.waitForTimeout(600);
+  const un2 = await p.evaluate(() => users().map(u => u.name)), stranger = un2.find(n => !['nine', 'mew'].includes(n.toLowerCase()));
+  const avBad = await p.evaluate(async n => { try { return await sbRpc('avatar_put', { p_name: n, p_hash: 'open', p_mime: 'image/jpeg', p_data: 'QUJD' }); } catch (e) { return String(e); } }, stranger);
+  check('M14 unknown target is refused (-1) and nothing is stored', Number(avBad) === -1 && !s.avs[stranger.toLowerCase()]);
+  await s.b.close();
 
   finish();
 })();

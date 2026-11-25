@@ -183,7 +183,7 @@ const norm = s => String(s || '').toLowerCase().replace(/[\s_.]/g, '');
 function colIndex(header, names) { const h = header.map(norm); for (const n of names) { const i = h.indexOf(norm(n)); if (i >= 0) return i; } return -1; }
 const num = s => { const m = String(s ?? '').replace(/,/g, '').match(/-?\d+(\.\d+)?/g); return m ? m.map(Number) : []; };
 
-/* ---------- data layer: Supabase (reads: publishable key; writes: RPC functions guarded by an edit code) ---------- */
+/* ---------- data layer: Supabase (reads: publishable key; writes: RPC functions, no code / PIN) ---------- */
 const SB = () => (window.TT_CONFIG && window.TT_CONFIG.supabase) || null;
 const apiStat = {
   add(bytes) { try { const m = new Date().toISOString().slice(0, 7); let st = JSON.parse(localStorage.getItem('tt.api') || '{}'); if (st.m !== m) st = { m, n: 0, b: 0 }; st.n++; st.b += bytes || 0; localStorage.setItem('tt.api', JSON.stringify(st)); } catch { } },
@@ -196,41 +196,20 @@ async function sbRpc(fn, args) {
   let j; try { j = JSON.parse(txt); } catch { j = txt; }
   if (!r.ok) {
     const m = (j && j.message) || String(txt);
-    if (/wrong code/i.test(m)) { cfg.editCode = ''; saveCfg(); throw new Error('รหัสแก้ไขไม่ถูกต้อง'); }
+    if (/^avatar_/.test(fn) && /Could not find the function|schema cache/i.test(m)) throw Object.assign(new Error('avatars sql missing'), { nosql: true });
     if (/^doc_/.test(fn) && /Could not find the function|schema cache/i.test(m)) throw Object.assign(new Error('docs sql missing'), { nosql: true });
     if (/Could not find the function|schema cache/i.test(m)) throw new Error(/private/.test(fn) ? 'ยังไม่ได้รันสคริปต์ docs/supabase_trips.sql ใน Supabase' : 'ยังไม่ได้รันสคริปต์ docs/supabase_edit.sql ใน Supabase');
     throw new Error(m);
   }
   return j;
 }
-const auth = { valid: () => trip().priv ? true : !!cfg.editCode, email: '', token: '', name: '' };       // "signed in" = the edit code is known on this device
-const clientId = () => '';
 const silentRenew = () => { };
-let askP = null;
-function askEditCode(reason) {
-  if (askP) return askP;
-  askP = new Promise((resolve, reject) => {
-    const d = openDlg(`<form method="dialog"><h3>รหัสแก้ไข</h3>${reason ? `<div class="mut">${esc(reason)}</div>` : ''}<div class="mut" style="margin:6px 0">ใส่รหัสที่ผู้ดูแลทริปตั้งไว้ ระบบจำไว้ในเครื่องนี้</div><input name="code" type="password" autocomplete="off" autocapitalize="off" placeholder="รหัสแก้ไข"><div class="btns"><button value="ok" class="btn pri">ยืนยัน</button><button value="x" class="btn" formnovalidate>ยกเลิก</button></div></form>`);
-    let pending = false;
-    $('form', d).onsubmit = async ev => {
-      if (ev.submitter && ev.submitter.value !== 'ok') return;
-      pending = true; const code = String(new FormData(ev.target).get('code') || '').trim();
-      try { if (!code || !(await sbRpc('check_code', { code }))) throw new Error('รหัสแก้ไขไม่ถูกต้อง'); cfg.editCode = code; saveCfg(); toast('ปลดล็อกการแก้ไขแล้ว', 2500); resolve(true); }
-      catch (e) { toast(e.message, 4500); reject(e); }
-    };
-    d.addEventListener('close', () => { if (!pending) reject(new Error('ยกเลิก')); }, { once: true });
-  }).finally(() => { askP = null; });
-  return askP;
-}
-const googleDialog = reason => askEditCode(reason).catch(() => { });
-const signIn = () => cfg.editCode ? Promise.resolve(true) : askEditCode();
-const signOut = () => { cfg.editCode = ''; saveCfg(); renderAll(); };
 const sheetApi = {
   on: () => !!SB(),                       // database configured
-  ready: () => trip().priv ? true : !!cfg.editCode,            // edit code (public trip); private trips need none
+  ready: () => !!SB(),                    // no edit code any more: anyone with the link can edit (owner's decision)
   async call(action, p) {
     const T = trip();
-    if (T.priv) {                                   // private trip: identity = the chosen traveller name, no edit code / PIN
+    if (T.priv) {                                   // private trip: identity = the chosen traveller name, no PIN
       const pt = p.gid ? 'plan' : p.tab, pstr = a => a.map(v => v == null ? '' : String(v));
       const W = async (op, payload) => { const n = await sbRpc('private_write', { p_trip: T.key, p_tab: pt, p_op: op, p_payload: payload, p_name: me || PRIV_TRAVELLERS[0], p_hash: myHash() }); if (n === -1) throw new Error('ไม่มีสิทธิ์แก้ไขทริปนี้'); return n; };
       if (action === 'append') { await W('append', pstr(p.values)); return { ok: true }; }
@@ -242,8 +221,7 @@ const sheetApi = {
       }
       throw new Error('unknown action ' + action);
     }
-    if (!cfg.editCode) await askEditCode('ต้องใช้รหัสแก้ไขเพื่อบันทึก');
-    const code = cfg.editCode || '', tab = p.gid ? 'plan' : p.tab, str = a => a.map(v => v == null ? '' : String(v));
+    const code = '', tab = p.gid ? 'plan' : p.tab, str = a => a.map(v => v == null ? '' : String(v));
     switch (action) {
       case 'append': await sbRpc('append_row', { p_tab: tab, p_cells: str(p.values), code }); return { ok: true };
       case 'upsert': await sbRpc('upsert_row', { p_tab: tab, p_key: String(p.key), p_cells: str(p.values), code }); return { ok: true };
@@ -410,7 +388,59 @@ function parsePlaces(rows) {
 const users = () => data.users;
 const colorOf = n => { const i = users().findIndex(u => u.name === n); return COLORS[(i < 0 ? String(n).length : i) % COLORS.length]; };
 const initial = n => (String(n).trim()[0] || '?').toUpperCase();
-const avatar = (n, cls = '') => `<span class="avatar ${cls}" style="--c:${colorOf(n)}">${esc(initial(n))}</span>`;
+/* profile photos: central (shared by everyone), table member_avatars via RPC avatar_list/put/delete (docs/supabase_avatars.sql).
+   Cached in localStorage 'tt.av' (<= 300 KB); a missing SQL file just means initials only. Fixed-size boxes => no layout shift when a photo arrives. */
+const AV_MAX = 300000, AV_PX = 256;
+let avatars = store.get('tt.av', {}) || {}, avNoSql = false;
+const avInner = n => { const a = avatars[String(n).trim().toLowerCase()]; return a && a.d ? `<img alt="" src="data:${esc(a.m)};base64,${esc(a.d)}">` : esc(initial(n)); };
+const avatar = (n, cls = '') => `<span class="avatar ${cls}" data-n="${esc(n)}" style="--c:${colorOf(n)}">${avInner(n)}</span>`;
+function avRefresh() { $$('.avatar[data-n]').forEach(e => { const h = avInner(e.dataset.n); if (e.innerHTML !== h) e.innerHTML = h; }); $$('[data-avd]').forEach(b => { b.hidden = !avatars[String(b.dataset.avd).trim().toLowerCase()]; }); }
+function avSave() {
+  let n = 0; const keep = {};
+  for (const k of Object.keys(avatars)) { const l = (avatars[k].d || '').length + 40; if (n + l <= AV_MAX) { keep[k] = avatars[k]; n += l; } }
+  try { localStorage.setItem('tt.av', JSON.stringify(keep)); } catch { }
+}
+async function avLoad() {
+  if (!SB() || avNoSql) return;
+  try {
+    const j = await sbRpc('avatar_list', {});
+    if (j && typeof j === 'object' && !Array.isArray(j) && JSON.stringify(j) !== JSON.stringify(avatars)) { avatars = j; avSave(); avRefresh(); }
+  } catch (e) { if (e.nosql) avNoSql = true; }
+}
+async function avMake(file) {            // 256 px square-cropped JPEG q0.8 -> base64
+  const t = file.type || '';
+  if (t && !/^image\//.test(t)) throw new Error('ใช้ได้เฉพาะรูปภาพ (JPG/PNG/WebP)');
+  let im; try { im = await loadImg(file); } catch { throw new Error('เปิดรูปนี้ไม่ได้ — ลองเลือกไฟล์ JPG/PNG'); }
+  const w = im.naturalWidth, h = im.naturalHeight, m = Math.min(w, h), c = document.createElement('canvas'); c.width = c.height = AV_PX;
+  const cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, AV_PX, AV_PX); cx.drawImage(im, (w - m) / 2, (h - m) / 2, m, m, 0, 0, AV_PX, AV_PX);
+  const url = c.toDataURL('image/jpeg', 0.8), d = url.slice(url.indexOf(',') + 1);
+  if (d.length > 120000) throw new Error('รูปใหญ่เกินไป');
+  return { m: 'image/jpeg', d };
+}
+const AV_MSG = { '-1': 'ไม่พบชื่อนี้ในรายชื่อสมาชิก', '-2': 'ชนิดไฟล์ไม่รองรับ', '-3': 'รูปใหญ่เกินไป' };
+async function avSet(name, file) {
+  try {
+    const a = await avMake(file);
+    const r = Number(await sbRpc('avatar_put', { p_name: name, p_hash: myHash(), p_mime: a.m, p_data: a.d }));
+    if (r !== 1) throw new Error(AV_MSG[r] || 'บันทึกรูปไม่สำเร็จ');
+    avatars = { ...avatars, [lc(name)]: a }; avSave(); avRefresh(); toast(`เปลี่ยนรูปของ ${name} แล้ว`, 2500);
+  } catch (e) { avFail(e); }
+}
+async function avDel(name) {
+  try {
+    const r = Number(await sbRpc('avatar_delete', { p_name: name, p_hash: myHash() }));
+    if (r < 0) throw new Error(AV_MSG[r] || 'ลบรูปไม่สำเร็จ');
+    const o = { ...avatars }; Reflect.deleteProperty(o, lc(name)); avatars = o; avSave(); avRefresh(); toast(`ลบรูปของ ${name} แล้ว`, 2500);
+  } catch (e) { avFail(e); }
+}
+function avFail(e) { toast(e.nosql || /ยังไม่ได้รันสคริปต์/.test(e.message) ? 'ยังตั้งรูปโปรไฟล์ไม่ได้ — ต้องรันสคริปต์ docs/supabase_avatars.sql ใน Supabase ก่อน' : e.message, 5000); }
+function avPick(name) { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = () => { if (i.files[0]) avSet(name, i.files[0]); }; i.click(); }
+/* per-traveller actions (chooser dialog, Menu members card, profile card): anyone may change anyone's photo */
+const avActions = n => `<span class="avact"><button type="button" class="btn sm" data-avp="${esc(n)}" aria-label="เปลี่ยนรูป ${esc(n)}">${ic('camera')} เปลี่ยนรูป</button><button type="button" class="btn sm" data-avd="${esc(n)}" aria-label="ลบรูป ${esc(n)}" ${avatars[lc(n)] ? '' : 'hidden'}>ลบรูป</button></span>`;
+document.addEventListener('click', e => {
+  const p = e.target.closest('[data-avp]'), d = e.target.closest('[data-avd]');
+  if (p) { e.preventDefault(); avPick(p.dataset.avp); } else if (d) { e.preventDefault(); avDel(d.dataset.avd); }
+});
 
 /* ---------- expenses math (per currency, no FX) ---------- */
 const participants = (e, names) => { const ps = e.type === 'shared' ? (e.with.length ? e.with : names) : e.type === 'personal' ? [e.payer] : (e.with.length ? e.with : [e.payer]); return ps.length ? ps : [e.payer]; };
@@ -539,7 +569,7 @@ function choose(name) {
 }
 function travellerPicker() {
   const list = travellers(), cur = me;
-  openDlg(`<form method="dialog"><h3>ใครกำลังใช้งาน?</h3><div class="mut" style="margin:4px 0 8px">แตะชื่อของคุณ (ไม่ต้องมีรหัสผ่าน) — ใช้กับบัญชีค่าใช้จ่ายและเอกสาร</div><div class="login-grid" id="whoList">${list.map(n => `<button type="button" data-u="${esc(n)}" class="${lc(n) === lc(cur) ? 'last' : ''}">${avatar(n, 'lg')}<span>${esc(n)}</span>${lc(n) === lc(cur) ? '<small>ใช้อยู่</small>' : ''}</button>`).join('') || '<span class="mut">ยังไม่พบรายชื่อ</span>'}</div><div class="btns"><button value="x" class="btn">ปิด</button></div></form>`);
+  openDlg(`<form method="dialog"><h3>ใครกำลังใช้งาน?</h3><div class="mut" style="margin:4px 0 8px">แตะชื่อของคุณ (ไม่ต้องมีรหัสผ่าน) — ใช้กับบัญชีค่าใช้จ่ายและเอกสาร</div><div class="login-grid" id="whoList">${list.map(n => `<button type="button" data-u="${esc(n)}" class="${lc(n) === lc(cur) ? 'last' : ''}">${avatar(n, 'lg')}<span>${esc(n)}</span>${lc(n) === lc(cur) ? '<small>ใช้อยู่</small>' : ''}</button>`).join('') || '<span class="mut">ยังไม่พบรายชื่อ</span>'}</div>${list.length ? `<h4 class="avh">รูปโปรไฟล์ (ทุกคนเปลี่ยนรูปให้ใครก็ได้)</h4><div id="avList">${list.map(n => `<div class="row">${avatar(n, 'sm')}<b>${esc(n)}</b>${avActions(n)}</div>`).join('')}</div>` : ''}<div class="btns"><button value="x" class="btn">ปิด</button></div></form>`);
   $$('#whoList [data-u]', dlg).forEach(b => b.onclick = () => { dlg.close(); choose(b.dataset.u); });
 }
 $('#btnMe').onclick = travellerPicker;
@@ -685,8 +715,7 @@ function renderPlan() {
 }
 async function toggleEdit() {
   if (!ui.edit) {
-    if (!sheetApi.on()) return googleDialog('แก้ไขแผนได้เมื่อเข้าสู่ระบบด้วย Google — เจ้าของแอปต้องตั้งค่า Client ID ก่อน (ครั้งเดียว)');
-    if (!auth.valid()) { try { await signIn(); } catch (e) { toast(e.message, 4500); return; } }
+    if (!sheetApi.on()) return toast('ยังไม่ได้ตั้งค่า Supabase จึงแก้ไขไม่ได้', 4000);
   }
   ui.edit = !ui.edit; renderPlan();
 }
@@ -948,7 +977,7 @@ function onPos(pos) {
   data.me = { lat, lng, acc, at: new Date() }; geo.state = 'ok';
   const moved = !geo.lastPt || distM(geo.lastPt, data.me) > 80;
   if (moved && Date.now() - geo.lastGeo > 8000) { geo.lastGeo = Date.now(); geo.lastPt = { lat, lng }; reverse(lat, lng); }
-  if (sheetApi.ready() && me && Date.now() - geo.lastPush > 60000) { geo.lastPush = Date.now(); pushLoc(); }
+  if (store.get('tt.shareLoc', false) && sheetApi.ready() && me && Date.now() - geo.lastPush > 60000) { geo.lastPush = Date.now(); pushLoc(); }
   drawMap(!ui.centered); ui.centered = true; renderMapStatus();
 }
 async function pushLoc() {
@@ -1313,8 +1342,7 @@ function sugHtml() {
 }
 /* insert the place as a stop in the plan, right after the stop it is near / on the way from */
 async function addSpotToPlan(it) {
-  if (!sheetApi.on()) return googleDialog('เพิ่มเข้าแผนได้เมื่อเข้าสู่ระบบด้วย Google');
-  if (!auth.valid()) { try { await signIn(); } catch (e) { return toast(e.message, 4500); } }
+  if (!sheetApi.on()) return toast('ยังไม่ได้ตั้งค่า Supabase จึงแก้ไขไม่ได้', 4000);
   const p = data.plan, d = p.days[it.di], ix = p.cols, afterQ = (it.kind === 'onway' ? it.from : it.stop).q;
   const k = d.steps.findIndex(st => qName(st.to) === afterQ);                                   // step that arrives at the stop
   const t = d.steps.findIndex((st, i) => i > k && qName(st.from) === afterQ && (st.to || st.from));   // step that leaves it
@@ -1334,8 +1362,7 @@ function removeIdea(gi, ii) {
 }
 /* put any place (an idea from the plan sheet or a saved place) into a chosen day, at a chosen time */
 async function addToPlanDialog(name, idea) {
-  if (!sheetApi.on()) return googleDialog('เพิ่มเข้าแผนได้เมื่อเข้าสู่ระบบด้วย Google');
-  if (!auth.valid()) { try { await signIn(); } catch (e) { return toast(e.message, 4500); } }
+  if (!sheetApi.on()) return toast('ยังไม่ได้ตั้งค่า Supabase จึงแก้ไขไม่ได้', 4000);
   const p = data.plan; if (!p || !p.days.length) return toast('ยังไม่มีวันในแผน');
   planDates(p); const cur = ui.day != null && ui.day < p.days.length ? ui.day : 0;
   const d = openDlg(`<form method="dialog"><h3>เพิ่มเข้าแผน</h3><div class="mut" style="margin-bottom:6px"><b>${esc(name)}</b></div>
@@ -1452,19 +1479,17 @@ const updAt = () => ui.updated ? ui.updated.toLocaleTimeString('th-TH', { hour: 
 const renderUpd = () => { const u = $('#updAt'); if (u) u.textContent = updAt(); };
 function renderMenu() {
   const el = $('#tab-menu'), on = sheetApi.on();
-  let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'แตะ “สลับ” เพื่อเลือกชื่อ'}</div></div><button class="btn" id="bSwitch">สลับ</button></div>`;
+  let h = `<div class="card profile">${me ? avatar(me, 'lg') : '<span class="avatar lg" style="--c:#94a3b8">?</span>'}<div style="flex:1"><b style="font-size:1.1rem">${esc(me || 'ผู้เยี่ยมชม')}</b><div class="mut">${me ? 'กำลังใช้งานในชื่อนี้' : 'แตะ “สลับ” เพื่อเลือกชื่อ'}</div>${me ? avActions(me) : ''}</div><button class="btn" id="bSwitch">สลับ</button></div>`;
   h += editCard(); h += mediaCard(); h += usageCard();
   h += notifCard();
   h += `<div class="card"><div class="row2" style="margin:0"><div><h2>โหมดมืด</h2><small>ค่าเริ่มต้นเป็นโหมดสว่าง</small></div><button class="switch ${cfg.theme === 'dark' ? 'on' : ''}" id="bTheme" aria-label="สลับโหมดมืด"><i></i></button></div></div>`;
   h += `<div class="card"><h2 style="margin-bottom:6px">ทริป</h2>${tripFilterBar('data-tfm')}${tripItems('data-trip')}${trip().priv ? '' : '<div class="btns"><button class="btn" id="bNew">+ เพิ่มทริป</button><button class="btn" id="bSet">ตั้งค่าทริปนี้</button></div>'}</div>`;
-  h += `<div class="card"><h2 style="margin-bottom:4px">สมาชิก</h2>${users().map(u => `<div class="row">${avatar(u.name, 'sm')}<div><b>${esc(u.name)}</b></div><div class="amt mut">${Object.entries(u.budgets || {}).map(([k, v]) => fmt(v) + ' ' + k).join(' · ') || '—'}</div></div>`).join('') || '<span class="mut">ยังไม่มี — เพิ่มในแท็บ ' + esc(trip().usersTab) + '</span>'}</div>`;
+  h += `<div class="card"><h2 style="margin-bottom:4px">สมาชิก</h2>${users().map(u => `<div class="row">${avatar(u.name, 'sm')}<div><b>${esc(u.name)}</b><div class="mut">${Object.entries(u.budgets || {}).map(([k, v]) => fmt(v) + ' ' + k).join(' · ') || '—'}</div>${avActions(u.name)}</div></div>`).join('') || '<span class="mut">ยังไม่มี — เพิ่มในแท็บ ' + esc(trip().usersTab) + '</span>'}</div>`;
   h += data.extra.map(x => tableCard(x.name, x.rows)).join('');
   h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด <span id="updAt">${updAt()}</span> · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
   el.innerHTML = h;
   $('#bSwitch').onclick = () => $('#btnMe').click();
   const bg = $('#bGallery'); if (bg) bg.onclick = openGallery;
-  const eu = $('#bUnlock'); if (eu) eu.onclick = () => askEditCode().then(() => renderMenu()).catch(() => { });
-  const el2 = $('#bLock'); if (el2) el2.onclick = signOut;
   fillUsage();
   bindNotif(el);
   $('#bTheme').onclick = () => { cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark'; saveCfg(); applyTheme(); renderMenu(); }; { const bn = $('#bNew'); if (bn) bn.onclick = newTripDialog; const bs2 = $('#bSet'); if (bs2) bs2.onclick = settingsDialog; }
@@ -1494,9 +1519,7 @@ const dlg = $('#dlg');
 function openDlg(html) { dlg.innerHTML = html; dlg.showModal(); return dlg; }
 dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
 function editCard() {
-  if (trip().priv) return `<div class="card"><div class="row2"><h2>แก้ไขทริป</h2><span class="chip ok">เปิดแก้ไขได้</span></div><div class="mut">ทริปนี้แก้แผนและบันทึกได้เลย ไม่ต้องใช้ PIN หรือรหัสแก้ไข (ใครมีลิงก์ก็แก้ได้)</div></div>`;
-  const on = !!cfg.editCode;
-  return `<div class="card"><div class="row2"><h2>แก้ไขทริป</h2><span class="chip ${on ? 'ok' : ''}">${on ? 'ปลดล็อกแล้ว' : 'ล็อกอยู่'}</span></div><div class="mut">${on ? 'แก้แผน เพิ่มค่าใช้จ่าย และเพิ่มสถานที่ได้ — ข้อมูลบันทึกลงฐานข้อมูล Supabase อัตโนมัติ' : 'ดูอย่างเดียว — ใส่รหัสแก้ไขเพื่อแก้แผน เพิ่มค่าใช้จ่าย/สถานที่'}</div><div class="btns">${on ? '<button class="btn" id="bLock">ล็อกเครื่องนี้</button>' : '<button class="btn pri" id="bUnlock">ใส่รหัสแก้ไข</button>'}</div></div>`;
+  return `<div class="card"><div class="row2"><h2>แก้ไขทริป</h2><span class="chip ok">เปิดแก้ไขได้</span></div><div class="mut">แก้แผน เพิ่มค่าใช้จ่ายและสถานที่ได้เลย ไม่ต้องใช้รหัสหรือ PIN (ใครมีลิงก์ก็แก้ได้) — ระบบเก็บสำรองแผนไว้ 30 ชุดเผื่อกู้คืน</div></div>`;
 }
 const usageCard = () => '<div class="card" id="usageBox"><div class="row2"><h2>โควตาฟรี Supabase</h2></div><div class="mut">กำลังตรวจสอบ…</div></div>';
 const mb = b => b < 102400 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(b < 10485760 ? 1 : 0) + ' MB';
@@ -1991,7 +2014,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && dv
 const TABS = { plan: () => renderPlan(), money: () => renderMoney(), spots: () => renderSpots(), docs: () => renderDocs(), menu: () => renderMenu() };
 function renderTab(t) { TABS[t](); ui.tabVer[t] = ui.ver; }
 function renderAll() {
-  ui.ver++; $('#btnMe').textContent = me ? initial(me) : '?';
+  ui.ver++; $('#btnMe').innerHTML = me ? avatar(me, 'hd') : '?';
   Object.keys(TABS).forEach(renderTab); renderSub();
 }
 $('#tabs').onclick = e => {
@@ -2012,7 +2035,7 @@ setInterval(() => {
   else if (g !== 'active' && (geo.watch != null || geo.state === 'ok')) { stopLocation(); startLocation(); }
   else if (g === 'before' || g === 'after') { geo.state = g; renderMapStatus(); }
 }, 30000);
-setInterval(silentRenew, 60000);
+setInterval(() => { if (!document.hidden) avLoad(); }, 300000);
 setInterval(tickCountdown, 1000);
 setInterval(() => { if (document.hidden || !map || !data.plan || ui.edit || (ui.tab !== 'plan' && !ui.ov)) return; const d = data.plan.days[ui.day]; if (!(d && isToday(d))) return; try { drawMap(false); } catch { } }, 60000);
 setInterval(() => { try { checkReminders(); } catch { } }, 15000);
@@ -2025,6 +2048,6 @@ dlg.addEventListener('close', retryStale); document.addEventListener('focusout',
 (async function boot() {
   ui.refit = true;
   { const t = allowedTrip(), c = readCache(t.id); if (c) { ui.updated = new Date(c.t); applyData(dataFromCache(t.id, c), c.snap, true); } else renderAll(); }          // last good copy first, then refresh
-  await load();
+  avLoad(); await load();
   if (me) startLocation();
 })();

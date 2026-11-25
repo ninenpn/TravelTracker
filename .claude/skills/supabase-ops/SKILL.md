@@ -19,7 +19,7 @@ Project ref `vqelnacauxxprredxjda` — URL in `config.js`. **The Supabase MCP co
 | Check state read-only | `node tests/live-smoke.js` (public key). `usage_stats` RPC for size/row counts. |
 
 ## Tables (RLS on; anon has no direct write)
-`sheet_rows` (public read) · `private_rows`, `trip_members`, `member_pins`, `pin_fail`, `app_secrets`, `sheet_history` (no anon access at all). Functions: `check_code`, `save_tab`, `append_row`, `upsert_row` (edit code) · `pin_status`, `verify_pin`, `set_first_pin`, `reset_pin` · `get_private`, `private_write` (member PIN) · `usage_stats`.
+`sheet_rows` (public read) · `private_rows`, `trip_members`, `member_pins`, `pin_fail`, `app_secrets`, `sheet_history` (no anon access at all). Functions: `check_code` (always true), `save_tab`, `append_row`, `upsert_row` (no edit code since supabase_nocode.sql), `avatar_list/put/delete` (member_avatars) · `pin_status`, `verify_pin`, `set_first_pin`, `reset_pin` · `get_private`, `private_write` (member PIN) · `usage_stats`.
 
 ## Procedures
 - **Always** say what you will change, back up what you replace (read it to a scratch file outside the repo first), change the minimum, then **read back and compare**. Report the counts.

@@ -70,10 +70,10 @@ function mockDocs(fn, a, docs, flags) {
   return { status: 404, body: { message: 'unknown ' + fn } };
 }
 
-/* opts: w,h, clock(ISO), active (saved trip id), editCode, stepsPerDay, init (function run in the page before any script), reducedMotion */
+/* opts: w,h, clock(ISO), active (saved trip id), stepsPerDay, init (function run in the page before any script), reducedMotion */
 async function open(opts = {}) {
   const b = await chromium.launch(), ctx = await b.newContext({ viewport: { width: opts.w || 390, height: opts.h || 844 }, hasTouch: true, isMobile: true, reducedMotion: opts.reducedMotion || 'no-preference' });
-  const rpc = [], docs = [], flags = { nullPriv: false, err500: false, delayMs: 0, noDocsSql: false, nullDocs: false, offline: false }, trips = Object.fromEntries(Object.keys(FAKE).map(k => [k, fakeTrip(k, opts.stepsPerDay || 3)]));
+  const rpc = [], docs = [], flags = { nullPriv: false, err500: false, delayMs: 0, noDocsSql: false, nullDocs: false, offline: false, noAvSql: false }, avs = {}, trips = Object.fromEntries(Object.keys(FAKE).map(k => [k, fakeTrip(k, opts.stepsPerDay || 3)]));
   await ctx.route(`${SB}/rest/v1/rpc/*`, async r => {
     if (flags.offline) return r.abort('internetdisconnected');
     const req = r.request(), HH = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
@@ -83,11 +83,18 @@ async function open(opts = {}) {
     if (flags.delayMs && fn === 'get_private') await new Promise(x => setTimeout(x, flags.delayMs));
     const trav = ['nine', 'mew'].includes(String(a.p_name || '').trim().toLowerCase());          // open rules (docs/supabase_open.sql): private trips = trip members by NAME, the hash is ignored
     if (fn === 'usage_stats') body = { db_bytes: 12e6, total_rows: 500, tables: { plan: 25, '(ทริปส่วนตัว)': 400 } };
-    else if (fn === 'check_code') body = a.code === 'good';
+    else if (fn.startsWith('avatar_')) {          /* twin of docs/supabase_avatars.sql: central photos, any known traveller may set/remove any traveller's photo */
+      if (flags.noAvSql) { status = 404; body = { message: `Could not find the function public.${fn} in the schema cache` }; }
+      else if (fn === 'avatar_list') body = avs;
+      else { const k = String(a.p_name || '').trim().toLowerCase(), known = ['nine', 'mew', ...(flags.users || [])].includes(k);
+        if (!known) body = -1;
+        else if (fn === 'avatar_put') body = !['image/jpeg', 'image/png', 'image/webp'].includes(a.p_mime) ? -2 : (!a.p_data || a.p_data.length > 120000) ? -3 : (avs[k] = { m: a.p_mime, d: a.p_data }, 1);
+        else { body = avs[k] ? 1 : 0; delete avs[k]; } }
+    }
     else if (fn === 'get_private') { if (flags.err500) { status = 500; body = { message: 'boom' }; } else body = trav && !flags.nullPriv ? ((trips[a.p_trip] || {})[a.p_tab] || []) : null; }
     else if (fn.startsWith('doc_')) { const r = mockDocs(fn, a, docs, flags); status = r.status; body = r.body; }
     else if (fn === 'private_write') body = trav ? 1 : -1;
-    else if (['save_tab', 'append_row', 'upsert_row'].includes(fn)) { if (a.code !== 'good') { status = 400; body = { message: 'wrong code' }; } else body = 1; }
+    else if (['save_tab', 'append_row', 'upsert_row'].includes(fn)) body = 1;          // no edit code any more (docs/supabase_nocode.sql)
     r.fulfill({ status, contentType: 'application/json', headers: HH, body: JSON.stringify(body) });
   });
   /* third-party geocoding / routing are not under test (and are rate limited): answer "nothing found" so runs are deterministic */
@@ -99,9 +106,9 @@ async function open(opts = {}) {
   if (opts.init) await p.addInitScript(opts.init);
   if (opts.clock) await p.clock.install({ time: new Date(opts.clock) });
   await p.addInitScript(([c]) => { if (!localStorage.getItem('tt.cfg')) localStorage.setItem('tt.cfg', JSON.stringify(c)); },
-    [{ v: 5, trips: [ALMATY], active: opts.active || ALMATY.id, lastMe: '', googleClientId: '', editCode: opts.editCode || '' }]);
+    [{ v: 5, trips: [ALMATY], active: opts.active || ALMATY.id, lastMe: '', googleClientId: '' }]);
   await p.goto(BASE); if (opts.clock) await p.clock.runFor(4000); await p.waitForTimeout(4500);
-  return { b, ctx, p, rpc, reqs, trips, flags, docs };
+  return { b, ctx, p, rpc, reqs, trips, flags, docs, avs };
 }
 /* "log in" = choose who you are from the plain traveller list (no PIN anywhere) */
 async function login(s, who) {

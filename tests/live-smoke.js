@@ -17,8 +17,8 @@ const rpc = async (fn, b) => { const r = await fetch(`${U}/rpc/${fn}`, { method:
   const w = await fetch(`${U}/sheet_rows`, { method: 'POST', headers: h, body: JSON.stringify({ tab: '__probe', row_no: 0, cells: [] }) });
   check('anon cannot write sheet_rows directly', w.status === 401 || w.status === 403, `status ${w.status}`);
   console.log('[live] function guards');
-  check('save_tab refuses a wrong edit code', (await rpc('save_tab', { p_tab: 'plan', p_rows: [['a'], ['b']], code: 'definitely-wrong' })).s === 400);
-  check('append_row refuses a wrong edit code', (await rpc('append_row', { p_tab: 'Expenses', p_cells: ['x'], code: 'definitely-wrong' })).s === 400);
+  /* NOTE: there is no edit code any more, so never send a writable payload here (it would really write). A 1-row plan is refused by the server guard before anything is touched. */
+  check('save_tab refuses an empty plan (1 row) without touching data', (await rpc('save_tab', { p_tab: 'plan', p_rows: [['a']], code: '' })).s === 400);
   check('private_write by a stranger returns -1', (await rpc('private_write', { p_trip: 'macau', p_tab: 'plan', p_op: 'save', p_payload: [['a'], ['b']], p_name: 'Stranger', p_hash: 'x' })).j === -1);
   check('get_private by a stranger returns null', (await rpc('get_private', { p_trip: 'macau', p_tab: 'plan', p_name: 'Stranger', p_hash: 'x' })).j === null);
   const st = await rpc('usage_stats', {}); check('usage_stats works and DB is far below the 500 MB free limit', st.s === 200 && st.j.db_bytes < 400 * 1048576, JSON.stringify(st.j).slice(0, 100));

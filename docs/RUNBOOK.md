@@ -1,17 +1,17 @@
 # Runbook
 
 ## One-time setup of a fresh Supabase project
-SQL Editor → run in order: `docs/supabase.sql` → `docs/supabase_edit.sql` → `select public.set_edit_code('<your code>');` → `docs/supabase_trips.sql` → `docs/supabase_trips_v2.sql` → `docs/supabase_docs.sql` (เอกสาร). Put the project URL + publishable key in `config.js`. All files are idempotent (safe to re-run). Verify: `node tests/live-smoke.js`.
+SQL Editor → run in order: `docs/supabase.sql` → `docs/supabase_edit.sql` → `docs/supabase_trips.sql` → `docs/supabase_trips_v2.sql` → `docs/supabase_docs.sql` (เอกสาร) → `docs/supabase_open.sql` → `docs/supabase_nocode.sql` (no edit code) → `docs/supabase_avatars.sql` (profile photos). Put the project URL + publishable key in `config.js`. All files are idempotent (safe to re-run). Verify: `node tests/live-smoke.js`.
 
 ## Everyday
 | Task | How |
 |---|---|
 | Run all checks | `bash tests/run.sh --sql --live` |
-| Edit the public plan | in the app (Menu → enter edit code → Plan → แก้ไข) or edit `sheet_rows` rows in Supabase Table Editor |
+| Edit the public plan | in the app (Plan → แก้ไข, no code) or edit `sheet_rows` rows in Supabase Table Editor |
 | Edit another trip | open the trip → แก้ไข (no PIN; the traveller is Nine or Mew) |
 | Add a member | add a row to tab `Users` (Table Editor on `sheet_rows`, tab=`Users`); the name then appears in the Almaty traveller list (private trips are fixed to Nine and Mew via `trip_members`) |
 | Apply open access | run `docs/supabase_open.sql` in the SQL Editor (idempotent). It removes the PIN requirement server-side and trims `trip_members` to Nine + Mew. To go back, re-run `supabase_trips.sql` + `supabase_trips_v2.sql` + `supabase_docs.sql` (restores the PIN-checking functions; the client would then need the PIN screen again) |
-| Change the edit code | `select public.set_edit_code('<new>');` in SQL Editor |
+| Restore an older plan | `select id, saved_at from sheet_history where tab='plan' order by id desc;` then copy `rows` back into `sheet_rows` (30 snapshots kept) |
 | Add another trip from Excel | skill `import-trip` / `python3 tools/import_trip.py --help` |
 | See free-tier usage | Menu → "โควตาฟรี Supabase" (DB size is exact; traffic is this device only) — real totals in Dashboard → Usage |
 | Restore an older plan | `sheet_history` (rows = JSON snapshot per save ≥10 min apart, last 30): read the snapshot you want and write it back with `save_tab` / the secret key |
@@ -22,14 +22,14 @@ Push to `main` → GitHub Actions "Deploy to GitHub Pages" (two jobs: `build` up
 ## Secrets
 - Publishable key: public (in `config.js`).
 - Secret key (`sb_secret_…`): only for data maintenance, passed via env `SB_SECRET_KEY`, never stored. **Rotate** in Dashboard → Settings → API Keys after any session where it was shared in chat.
-- Edit code: one shared secret (hash in `app_secrets`).
+- No edit code any more (owner's decision): anyone with the link can edit the public trip; `sheet_history` is the safety net.
 - If a secret or private data was committed: rotate/reset immediately, then remove from the tree (history stays public — treat as compromised).
 
 ## Incidents
 | Symptom | Likely cause → action |
 |---|---|
 | App shows old design after a push | deploy failed or still running → `deploy-and-verify`; hard refresh; check `BUILD` at the bottom of Menu |
-| Plan "saved" but gone after reload | save refused (wrong/expired edit code, RPC error toast) or you are looking at stale cache → check the toast text; `sheet_history` has snapshots |
+| Plan "saved" but gone after reload | save refused (RPC error toast) or you are looking at stale cache → check the toast text; `sheet_history` has snapshots |
 | Cannot open other trips / documents ("ไม่รู้จักชื่อนี้") | `supabase_open.sql` not applied yet, or the chosen name is not in the `Users` tab → `node tests/live-smoke.js`, check `_pin_ok` / `_member` definitions |
 | (retired) PIN throttle | no longer used after `supabase_open.sql` |
 | Everything empty / HTTP 5xx | free project paused after 7 idle days → Dashboard → Restore |
