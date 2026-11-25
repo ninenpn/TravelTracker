@@ -112,7 +112,7 @@ async function open(opts = {}) {
 }
 /* "log in" = choose who you are from the plain traveller list (no PIN anywhere) */
 async function login(s, who) {
-  if (!(await s.p.isVisible('#whoList'))) { await s.p.click('#btnMe'); await s.p.waitForTimeout(250); }
+  if (!(await s.p.isVisible('#whoList'))) { await s.p.evaluate(() => travellerPicker()); await s.p.waitForTimeout(250); }
   await s.p.click(`#whoList [data-u=${who}]`); await s.p.waitForTimeout(1500);
 }
 module.exports = { open, login, check, finish, fakeTrip, ALMATY, SB, FAKE, state };

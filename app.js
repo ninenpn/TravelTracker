@@ -572,7 +572,6 @@ function travellerPicker() {
   openDlg(`<form method="dialog"><h3>ใครกำลังใช้งาน?</h3><div class="mut" style="margin:4px 0 8px">แตะชื่อของคุณ (ไม่ต้องมีรหัสผ่าน) — ใช้กับบัญชีค่าใช้จ่ายและเอกสาร</div><div class="login-grid" id="whoList">${list.map(n => `<button type="button" data-u="${esc(n)}" class="${lc(n) === lc(cur) ? 'last' : ''}">${avatar(n, 'lg')}<span>${esc(n)}</span>${lc(n) === lc(cur) ? '<small>ใช้อยู่</small>' : ''}</button>`).join('') || '<span class="mut">ยังไม่พบรายชื่อ</span>'}</div>${list.length ? `<h4 class="avh">รูปโปรไฟล์ (ทุกคนเปลี่ยนรูปให้ใครก็ได้)</h4><div id="avList">${list.map(n => `<div class="row">${avatar(n, 'sm')}<b>${esc(n)}</b>${avActions(n)}</div>`).join('')}</div>` : ''}<div class="btns"><button value="x" class="btn">ปิด</button></div></form>`);
   $$('#whoList [data-u]', dlg).forEach(b => b.onclick = () => { dlg.close(); choose(b.dataset.u); });
 }
-$('#btnMe').onclick = travellerPicker;
 
 /* ---------- plan view ---------- */
 const link = s => esc(s).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">เปิดลิงก์</a>');
@@ -728,7 +727,7 @@ function renderSub() {
     planDates(p); const first = p.days.find(d => d.dt), last = [...p.days].reverse().find(d => d.dt), t0 = todayStart();
     if (first && last) { const diff = Math.round((first.dt - t0) / 864e5); s = diff > 0 ? `อีก ${diff} วันถึงวันเดินทาง` : last.dt < t0 ? `จบทริปแล้ว · ${p.days.length} วัน` : `กำลังเดินทาง · ${p.days.length} วัน`; }
   }
-  $('#tripSub').textContent = s;
+  $('#tripSub').textContent = s; updateChip();
 }
 /* auto-save plan to the sheet */
 let saveTimer;
@@ -1488,7 +1487,7 @@ function renderMenu() {
   h += data.extra.map(x => tableCard(x.name, x.rows)).join('');
   h += `<div class="btns" style="justify-content:center"><button class="btn" id="bReload">รีเฟรชข้อมูล</button></div><div style="text-align:center"><small>อัปเดตล่าสุด <span id="updAt">${updAt()}</span> · เวอร์ชัน ${esc(String(window.BUILD || 'dev').startsWith('__') ? 'dev' : window.BUILD)}</small></div>`;
   el.innerHTML = h;
-  $('#bSwitch').onclick = () => $('#btnMe').click();
+  $('#bSwitch').onclick = travellerPicker;
   const bg = $('#bGallery'); if (bg) bg.onclick = openGallery;
   fillUsage();
   bindNotif(el);
@@ -1686,6 +1685,79 @@ function bindNotif(el) {
   $('#nIcs').onclick = downloadIcs;
 }
 
+/* ---------- header countdown chip + sheet (นับถอยหลัง) ---------- */
+const thTime = d => `${pad2(d.getHours())}.${pad2(d.getMinutes())}`;
+/* ms -> "87 วัน" (3+ days) · "2 วัน 5 ชม." · "3 ชม. 20 น." · "45 น." */
+function fmtLeft(ms) {
+  const m = Math.max(1, Math.ceil(ms / 60000)), d = Math.floor(m / 1440), h = Math.floor(m % 1440 / 60), n = m % 60;
+  if (d >= 3) { const x = new Date(Date.now() + ms); x.setHours(0, 0, 0, 0); return `${Math.round((x - todayStart()) / 864e5)} วัน`; }          // calendar days, like the subtitle
+  if (d >= 1) return `${d} วัน${h ? ` ${h} ชม.` : ''}`;
+  if (h >= 1) return `${h} ชม.${n ? ` ${n} น.` : ''}`;
+  return `${n} น.`;
+}
+const tripDays = t => { const r = tripRange(t); return r ? Math.round((r.e - r.s) / 864e5) + 1 : 0; };
+const tripDayNo = t => { const r = tripRange(t); return r ? Math.min(tripDays(t), Math.floor((todayStart() - r.s) / 864e5) + 1) : 0; };
+/* what the chip says about the active trip right now (same date logic as tripStatus / planEvents) */
+function cdState(now = Date.now()) {
+  const t = trip(), r = tripRange(t), st = tripStatus(t);
+  if (!r) return { k: 'none', l: 'ทริป', v: '—', aria: 'ยังไม่ระบุวันที่ของทริป' };
+  if (st === 'upcoming') { const ms = r.s - now; return { k: 'up', l: 'ออกเดินทาง', v: 'อีก ' + fmtLeft(ms), aria: `อีก ${fmtLeft(ms)} ถึงวันเดินทาง` }; }
+  if (st === 'past') return { k: 'end', l: 'ทริป', v: 'สิ้นสุดแล้ว', aria: 'ทริปนี้สิ้นสุดแล้ว' };
+  const e = nextEvent();
+  if (e) { const ms = e.dt - now; return { k: 'cur', l: `ถัดไป · ${thTime(e.dt)}`, v: fmtLeft(ms), aria: `ถัดไป ${thTime(e.dt)} อีก ${fmtLeft(ms)} ${e.title}` }; }
+  return { k: 'cur', l: 'กำลังเดินทาง', v: `วันที่ ${tripDayNo(t)}/${tripDays(t)}`, aria: `กำลังเดินทาง วันที่ ${tripDayNo(t)} จาก ${tripDays(t)}` };
+}
+/* only text nodes + aria-label + class change: no re-render, no layout shift (the chip has a fixed box) */
+function updateChip() {
+  const b = $('#btnCd'); if (!b) return; const s = cdState(), l = $('#cdL'), v = $('#cdV');
+  if (l.textContent !== s.l) l.textContent = s.l; if (v.textContent !== s.v) v.textContent = s.v;
+  const cl = 'cd-chip ' + s.k; if (b.className !== cl) b.className = cl;
+  const ar = 'นับถอยหลัง: ' + s.aria; if (b.getAttribute('aria-label') !== ar) b.setAttribute('aria-label', ar);
+}
+function cdSheetHtml() {
+  const now = Date.now(), t = trip(), r = tripRange(t), st = tripStatus(t);
+  const row = (i0, a, b, c, attr = '', on = false) => { const tg = attr ? 'button type="button"' : 'div'; return `<${tg} class="cdr${on ? ' on' : ''}" ${attr}><span class="cdi">${ic(i0)}</span><span class="cdm"><b>${esc(a)}</b><small>${esc(b)}</small></span><span class="cdt">${esc(c)}</span></${attr ? 'button' : 'div'}>`; };
+  let h = `<h3>${ic('timer')} นับถอยหลัง</h3>`;
+  if (st === 'current') {
+    const ev = planEvents().filter(e => e.dt > now), today = ev.filter(e => e.dt.toDateString() === new Date().toDateString()), list = (today.length ? today : ev).slice(0, 5);
+    h += `<h4 class="cdh">จุดถัดไป</h4>` + (list.length ? list.map(e => row(howName(e.how, !!e.title), e.title || e.to || '—', thTime(e.dt) + (e.how ? ' · ' + e.how : ''), 'อีก ' + fmtLeft(e.dt - now))).join('') : '<div class="mut cdn">ไม่มีรายการที่เหลือแล้ว</div>');
+  }
+  h += `<h4 class="cdh">ทริปนี้</h4>`;
+  if (!r) h += row('map', t.name, 'ยังไม่ระบุวันที่', '—');
+  else if (st === 'upcoming') h += row('map', t.name, tripRangeText(t), 'อีก ' + fmtLeft(r.s - now));
+  else if (st === 'current') h += row('map', t.name, tripRangeText(t), `วันที่ ${tripDayNo(t)} จาก ${tripDays(t)}`);
+  else h += row('check', t.name, tripRangeText(t), 'เสร็จสิ้นแล้ว');
+  const ups = cfg.trips.filter(x => tripStatus(x) === 'upcoming' && tripRange(x)).sort((a, b) => tripRange(a).s - tripRange(b).s);
+  h += `<h4 class="cdh">ทริปที่กำลังจะมาถึง</h4>` + (ups.length ? ups.map(x => row('plane', x.name, tripRangeText(x), 'อีก ' + fmtLeft(tripRange(x).s - now), `data-cdtrip="${esc(x.id)}"`, x.id === cfg.active)).join('') : '<div class="mut cdn">ยังไม่มีทริปที่กำลังจะมาถึง</div>');
+  h += `<div class="cdf"><span>${me ? avatar(me, 'sm') : ''} <b>${esc(me || 'ผู้เยี่ยมชม')}</b></span><button type="button" class="btn" id="cdWho">สลับชื่อ</button></div><div class="btns"><button type="button" class="btn" id="cdClose">ปิด</button></div>`;
+  return h;
+}
+/* delegated once on the dialog: the sheet's buttons are not replaced while open, so a tap spanning a refresh is not lost */
+dlg.addEventListener('click', e => {
+  if (!dlg.classList.contains('cdsh')) return;
+  const tb = e.target.closest('[data-cdtrip]');
+  if (tb) { const id = tb.dataset.cdtrip; dlg.close(); if (id !== cfg.active) switchTrip(id); return; }
+  if (e.target.closest('#cdWho')) { dlg.close(); travellerPicker(); }
+  else if (e.target.closest('#cdClose')) dlg.close();
+});
+/* refresh: update .cdt texts in place; rebuild only if the structure changed */
+function refreshCdSheet() {
+  const sh = $('#cdSheet'); if (!sh || !dlg.open) return;
+  const t = document.createElement('div'); t.innerHTML = cdSheetHtml();
+  const strip = h => h.replace(/(<span class="cdt">)[^<]*/g, '$1');
+  if (strip(t.innerHTML) !== strip(sh.innerHTML)) { sh.innerHTML = t.innerHTML; return; }
+  const o = $$('.cdt', sh), n = $$('.cdt', t);
+  n.forEach((x, i) => { if (o[i] && o[i].textContent !== x.textContent) o[i].textContent = x.textContent; });
+}
+function openCdSheet() {
+  if (dlg.open) return;
+  dlg.innerHTML = `<div id="cdSheet">${cdSheetHtml()}</div>`; dlg.classList.add('cdsh'); dlg.showModal();
+}
+dlg.addEventListener('close', () => dlg.classList.remove('cdsh'));
+$('#btnCd').onclick = openCdSheet;
+setInterval(() => { if (document.hidden) return; updateChip(); refreshCdSheet(); }, 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) updateChip(); });
+
 /* ---------- documents (เอกสาร): personal + shared files, shown full-screen, cached offline in IndexedDB (per member) ---------- */
 const DOC_KINDS = { passport: ['passport', 'พาสปอร์ต/วีซ่า', 'พาสปอร์ต'], ticket: ['plane', 'ตั๋ว/บอร์ดดิงพาส', 'ตั๋วเครื่องบิน'], hotel: ['bed', 'ที่พัก', 'ใบจองที่พัก'], insurance: ['shield', 'ประกัน', 'ประกันการเดินทาง'], other: ['file', 'อื่นๆ', 'เอกสาร'] };
 const DOC_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'], DOC_MAX_B64 = 6e6, DOC_PDF_MAX = 4 * 1024 * 1024, DOC_CHUNK = 300000;
@@ -1799,7 +1871,7 @@ function bindDocs(el) {
   g('#infCopy', () => copyText([st.name, st.address].filter(Boolean).join('\n'), 'คัดลอกที่อยู่แล้ว'));
   g('#infTaxi', () => openViewer({ mode: 'taxi' }));
   $$('[data-icp]', el).forEach(b => b.onclick = () => copyText((data.info[+b.dataset.icp] || {}).v || '', 'คัดลอกแล้ว'));
-  g('#dcPick', () => $('#btnMe').click()); g('#dcRetry', () => { dc.status = 'idle'; renderDocs(); });
+  g('#dcPick', travellerPicker); g('#dcRetry', () => { dc.status = 'idle'; renderDocs(); });
   $$('#dcSeg [data-seg]', el).forEach(b => b.onclick = () => { dc.seg = b.dataset.seg; renderDocs(); });
   g('#dcAdd', addDocDialog); g('#dcAll', prefetchDialog);
   $$('[data-grp]', el).forEach(b => b.onclick = () => { const o = b.dataset.grp, cur = dc.open[o] !== undefined ? dc.open[o] : docsOf('friends').every(d => d.owner === o); dc.open[o] = !cur; renderDocs(); });
@@ -2014,7 +2086,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && dv
 const TABS = { plan: () => renderPlan(), money: () => renderMoney(), spots: () => renderSpots(), docs: () => renderDocs(), menu: () => renderMenu() };
 function renderTab(t) { TABS[t](); ui.tabVer[t] = ui.ver; }
 function renderAll() {
-  ui.ver++; $('#btnMe').innerHTML = me ? avatar(me, 'hd') : '?';
+  ui.ver++;
   Object.keys(TABS).forEach(renderTab); renderSub();
 }
 $('#tabs').onclick = e => {

@@ -27,7 +27,20 @@ section>*+*{margin-top:12px}
   background:linear-gradient(180deg,color-mix(in srgb,var(--pri) 14%,var(--bg)),color-mix(in srgb,var(--bg) 82%,transparent));backdrop-filter:blur(16px)}
 .top-t{flex:1;min-width:0}.top h1{font-size:1.35rem;font-weight:700;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .top small{display:block;font-size:.8rem;min-height:1.5em}
-.me-btn{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--pri),var(--pri2));color:#fff;font-weight:700;display:grid;place-items:center}
+.cd-chip{flex:none;width:112px;height:44px;box-sizing:border-box;padding:4px 10px;border-radius:16px;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:1px;text-align:left;
+  background:linear-gradient(135deg,var(--pri),var(--pri2));color:#fff;font-variant-numeric:tabular-nums;overflow:hidden;box-shadow:0 6px 14px -8px var(--pri)}
+.cd-chip span{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
+.cd-l{font-size:.72rem;opacity:.88}.cd-v{font-size:.84rem;font-weight:700}
+.cd-chip.end,.cd-chip.none{background:var(--soft);color:var(--mut);box-shadow:none;border:1px solid var(--line)}
+.cd-chip.cur{background:linear-gradient(135deg,#0fb77a,#10c6d8)}
+dialog.cdsh .cdh{margin:12px 0 6px;font-size:.78rem;color:var(--mut);font-weight:600}
+.cdr{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:10px 12px;margin-bottom:6px;border-radius:16px;background:var(--soft);border:1px solid var(--line);color:var(--ink);font-variant-numeric:tabular-nums}
+.cdr.on{border-color:var(--pri)}
+.cdi{flex:none;width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:var(--priSoft);color:var(--pri)}.cdi .ic{width:18px;height:18px}
+.cdm{flex:1;min-width:0}.cdm b,.cdm small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cdt{flex:none;font-weight:700;color:var(--pri);font-size:.86rem;text-align:right}
+.cdn{padding:4px 2px}
+.cdf{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px}.cdf span{display:flex;align-items:center;gap:8px;min-width:0}.cdf .avatar{flex:none}
 main{padding:6px 16px calc(104px + env(safe-area-inset-bottom))}
 
 /* floating nav */

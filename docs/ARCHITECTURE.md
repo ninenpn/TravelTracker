@@ -66,3 +66,6 @@ Excel pictures → JPEG ≤1000 px → base64 chunks (`private_rows`, tab `media
 
 ## Free-tier budget
 500 MB DB (now ~14 MB), 5 GB egress/month (`apiStat` counts this device's usage), 7-day idle pause. Menu → "โควตาฟรี Supabase" shows real DB size via `usage_stats`.
+
+## Header countdown chip
+`#btnCd` in the header (replaces the old avatar button). `cdState()` derives the text from `tripRange/tripStatus` (date logic) and `nextEvent()` (plan events); `updateChip()` only touches the two text nodes, the class and the aria-label; called from `renderSub()` and a 30 s interval (skipped while the page is hidden). `openCdSheet()` shows a bottom sheet in the shared `<dialog id=dlg>` (class `cdsh`, rebuilt every 30 s while open). The traveller picker is reachable from Menu > profile card and the sheet footer.

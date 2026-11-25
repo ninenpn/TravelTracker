@@ -6,8 +6,8 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   console.log('\n[A] public data load');
   let s = await open(), p = s.p;
   check('A1 fresh load opens straight to the plan: no login overlay, no PIN pad', await p.evaluate(() => !document.getElementById('login') && !document.querySelector('.pinpad, #loginPin, #loginUsers') && !document.getElementById('app').hidden && !!document.querySelector('#tl .step')));
-  await p.click('#btnMe'); await p.waitForTimeout(300);
-  check('A2 traveller list (names only) opens from the header button', await p.evaluate(() => document.querySelectorAll('#whoList [data-u]').length) >= 2);
+  await p.click('[data-tab=menu]'); await p.waitForTimeout(400); await p.click('#bSwitch'); await p.waitForTimeout(300);
+  check('A2 traveller list (names only) opens from the Menu profile card', await p.evaluate(() => document.querySelectorAll('#whoList [data-u]').length) >= 2);
   await p.click('#dlg button[value=x]'); await p.waitForTimeout(200);
   check('A3 Almaty plan loaded (>= 1 day)', await p.evaluate(() => data.plan && data.plan.days.length) >= 1);
   check('A4 data comes from Supabase, not the Google Sheet', s.reqs.includes('SB') && !s.reqs.includes('SHEET'));
@@ -20,20 +20,20 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   console.log('\n[B] travellers');
   s = await open(); p = s.p;
   const names = await p.evaluate(() => users().map(u => u.name));
-  await p.click('#btnMe'); await p.waitForTimeout(300);
+  await p.evaluate(() => travellerPicker()); await p.waitForTimeout(300);
   check('B1 Almaty list = every name in the Users tab, in order', JSON.stringify(await p.evaluate(() => [...document.querySelectorAll('#whoList [data-u]')].map(x => x.dataset.u))) === JSON.stringify(names));
   const solo = names.find(n => !['nine', 'mew'].includes(n.toLowerCase())) || names[0];
   await p.click(`#whoList [data-u="${solo}"]`); await p.waitForTimeout(800);
   check('B2 choosing a name sets "me" and stores it in localStorage (plain text, not secret)', await p.evaluate(n => me === n && JSON.parse(localStorage.getItem('tt.me')) === n, solo));
   check('B3 no PIN RPC or hash anywhere: only the constant dummy hash is ever sent', !s.rpc.some(r => ['verify_pin', 'set_first_pin', 'reset_pin', 'pin_status'].includes(r.fn)) && s.rpc.every(r => !('p_hash' in r.a) || r.a.p_hash === 'open') && await p.evaluate(() => !sessionStorage.getItem('tt.ph') && !localStorage.getItem('tt.ph')));
   await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
-  await p.click('#btnMe'); await p.waitForTimeout(300);
+  await p.evaluate(() => travellerPicker()); await p.waitForTimeout(300);
   check('B4 a private trip lists exactly Nine and Mew', JSON.stringify(await p.evaluate(() => [...document.querySelectorAll('#whoList [data-u]')].map(x => x.dataset.u))) === '["Nine","Mew"]');
   await p.click('#dlg button[value=x]'); await p.waitForTimeout(200);
   check('B5 chosen name not on this trip: falls back to Nine, the choice itself is kept, trip loads', await p.evaluate(n => me === 'Nine' && JSON.parse(localStorage.getItem('tt.me')) === n && !!data.plan && data.plan.days.length > 0, solo));
   check('B5b private RPCs use the fallback name and the dummy hash', s.rpc.filter(r => r.fn === 'get_private').every(r => r.a.p_name === 'Nine' && r.a.p_hash === 'open'));
-  await p.click('#btnMe'); await p.waitForTimeout(300); await p.click('#whoList [data-u=Mew]'); await p.waitForTimeout(1200);
-  check('B6 picking Mew on a private trip works', await p.evaluate(() => me === 'Mew' && document.getElementById('btnMe').textContent === 'M'));
+  await p.evaluate(() => travellerPicker()); await p.waitForTimeout(300); await p.click('#whoList [data-u=Mew]'); await p.waitForTimeout(1200);
+  check('B6 picking Mew on a private trip works', await p.evaluate(() => me === 'Mew' && document.querySelector('#tab-menu .profile .avatar').textContent.trim() === 'M'));
   await p.evaluate(() => switchTrip(DEFAULT_TRIP.id)); await p.waitForTimeout(2300);
   check('B7 back on Almaty "Mew" (a Users name) is still the effective name', await p.evaluate(() => me === 'Mew' || !users().some(u => u.name === 'Mew')));
   await p.reload(); await p.waitForTimeout(3500);
@@ -458,7 +458,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   s.flags.forcePut = ''; await p.click('#dfX'); await p.waitForTimeout(200);
   /* wipe on sign-out */
   check('K29 cached files exist in IndexedDB before the user switch', (await p.evaluate(async () => (await idbKeys()).length)) > 0);
-  await p.click('[data-tab=plan]'); await p.waitForTimeout(300); await p.click('#btnMe'); await p.waitForTimeout(300); await p.click('#whoList [data-u=Mew]'); await p.waitForTimeout(800); await p.evaluate(() => dc.wiping);
+  await p.click('[data-tab=plan]'); await p.waitForTimeout(300); await p.evaluate(() => travellerPicker()); await p.waitForTimeout(300); await p.click('#whoList [data-u=Mew]'); await p.waitForTimeout(800); await p.evaluate(() => dc.wiping);
   const wp = await p.evaluate(async () => ({ keys: (await idbKeys()).length, list: dc.list, urls: Object.keys(dc.urls).length }));
   check('K30 user switch wipes every document cache (IndexedDB, memory, blob URLs)', wp.keys === 0 && wp.list === null && wp.urls === 0, JSON.stringify(wp));
   /* group visibility: another member sees, opens and adds for others (policy: private group app) */
@@ -506,7 +506,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
     await p.click('.dgh >> nth=0'); await p.waitForTimeout(200);
     check('K37 two friends -> two groups (both open after adding); header collapses / expands its cards', g2x.length === 2 && g2x.every(x => x.open === 'true') && g2y.ex[0] === 'false' && g2y.ex[1] === 'true' && g2y.cards < 3 && await p.evaluate(() => document.querySelectorAll('.dcard[data-id]').length) === 3, JSON.stringify([g2x, g2y]));
   }
-  await p.click('#btnMe'); await p.waitForTimeout(500);
+  await p.evaluate(() => travellerPicker()); await p.waitForTimeout(500);
   await login(s, 'Nine'); await p.waitForTimeout(500); await p.click('[data-tab=docs]'); await p.waitForTimeout(1200);
   const nsg = await seg(p); await p.click('[data-seg=me]'); await p.waitForTimeout(300);
   const forMe = await p.evaluate(() => { const c = [...document.querySelectorAll('.dcard[data-id]')].find(x => /For Nine/.test(x.innerText)); return c && { t: c.innerText, more: !!c.querySelector('[data-more]') }; });
@@ -515,7 +515,7 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
   check('K39 the owner may rename a doc someone else uploaded for them', s.docs.some(d => d.title === 'For Nine ok'));
   s.flags.users = ['nine']; await p.evaluate(() => { dc.seg = 'friends'; }); await addDoc(p, { scope: 'other', owner: unames.find(n => n !== 'Nine'), file: png1 }); await p.click('#dfOk'); await p.waitForTimeout(800);
   check('K39a unknown owner (server -6) shows a clear Thai message', /ไม่พบสมาชิก/.test(await p.innerText('#dfErr'))); await p.click('#dfX'); await p.waitForTimeout(200); s.flags.users = null;
-  await p.click('#btnMe'); await p.waitForTimeout(500); await login(s, 'Mew'); await p.waitForTimeout(500); await p.click('[data-tab=docs]'); await p.waitForTimeout(1200);
+  await p.evaluate(() => travellerPicker()); await p.waitForTimeout(500); await login(s, 'Mew'); await p.waitForTimeout(500); await p.click('[data-tab=docs]'); await p.waitForTimeout(1200);
   /* the server does not know this name (null) -> message, stay put; transient errors -> retry panel */
   s.flags.nullDocs = true; await p.evaluate(() => docsRefresh(true)); await p.waitForTimeout(1500);
   check('K40 doc_list null (name unknown to the server): Thai message, name kept, no sign-out screen', await p.evaluate(() => !!me && !document.getElementById('login') && /ไม่รู้จักชื่อนี้/.test(document.getElementById('toast').textContent)));
@@ -571,36 +571,92 @@ const { open, login, check, finish, FAKE, ALMATY } = require('./lib');
 
 
 
+
+  /* ---------- N. header countdown chip + sheet ---------- */
+  console.log('\n[N] countdown chip');
+  const chip = () => p.evaluate(() => ({ l: document.getElementById('cdL').textContent, v: document.getElementById('cdV').textContent, c: document.getElementById('btnCd').className, a: document.getElementById('btnCd').getAttribute('aria-label') }));
+  for (const [w, h] of [[360, 640], [390, 844], [430, 932]]) {
+    s = await open({ w, h, clock: '2026-07-01T10:00:00', init: CLSK, active: 'priv:macau' }); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(500);
+    let c = await chip();
+    check(`N1 ${w}: upcoming trip -> "อีก 10 วัน", no #btnMe in the header`, c.v === 'อีก 10 วัน' && /up/.test(c.c) && await p.evaluate(() => !document.getElementById('btnMe')), JSON.stringify(c));
+    const g = await p.evaluate(() => { const b = document.getElementById('btnCd').getBoundingClientRect(), t = document.getElementById('tripTitle').getBoundingClientRect(); return { bw: b.width, bh: b.height, over: t.right > b.left + 0.5, out: b.right > innerWidth + 0.5 || b.left < 0 }; });
+    check(`N2 ${w}: chip fixed 112x44, inside the screen, title does not overlap`, Math.abs(g.bw - 112) < 0.5 && Math.abs(g.bh - 44) < 0.5 && !g.over && !g.out, JSON.stringify(g));
+    await p.click('#btnCd'); await p.waitForTimeout(400);
+    const sh = await p.evaluate(() => ({ t: document.getElementById('cdSheet').innerText, n: document.querySelectorAll('#cdSheet [data-cdtrip]').length, ids: [...document.querySelectorAll('#cdSheet [data-cdtrip]')].map(x => x.dataset.cdtrip) }));
+    check(`N3 ${w}: sheet lists this trip + upcoming trips (soonest first) + name switch`, /นับถอยหลัง/.test(sh.t) && /อีก 10 วัน/.test(sh.t) && sh.n >= 1 && /สลับชื่อ/.test(sh.t), JSON.stringify(sh).slice(0, 300));
+    if (w === 390) {
+      await p.evaluate(() => { cfg.dates = Object.assign(cfg.dates || {}, { 'priv:xian': { s: '2026-08-01', e: '2026-08-05' }, 'priv:nagoya': { s: '2026-07-20', e: '2026-07-25' } }); document.getElementById('dlg').close(); });
+      await p.click('#btnCd'); await p.waitForTimeout(300);
+      const ids = await p.evaluate(() => [...document.querySelectorAll('#cdSheet [data-cdtrip]')].map(x => x.dataset.cdtrip));
+      check('N4 upcoming trips are sorted soonest first', JSON.stringify(ids) === JSON.stringify(['priv:macau', 'priv:nagoya', 'priv:xian', ALMATY.id]), JSON.stringify(ids));
+      await p.click('#cdSheet [data-cdtrip="priv:nagoya"]'); await p.waitForTimeout(2500);
+      check('N5 tap on an upcoming trip switches to it and closes the sheet', await p.evaluate(() => cfg.active === 'priv:nagoya' && !document.getElementById('dlg').open));
+    }
+    check(`N6 ${w}: CLS <= 0.05`, await p.evaluate(() => window.__cls) <= 0.05);
+    await s.b.close();
+  }
+  /* current trip: next stop; tick updates only text */
+  s = await open({ clock: '2026-07-12T08:30:00', init: CLSK, active: 'priv:macau' }); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(500);
+  let c = await chip();
+  check('N7 current trip -> "ถัดไป · 09.00" and "30 น."', /^ถัดไป · 09\.00$/.test(c.l) && c.v === '30 น.' && /cur/.test(c.c), JSON.stringify(c));
+  await p.evaluate(() => { document.getElementById('tab-plan').dataset.mark = '1'; window.__cd0 = document.getElementById('btnCd'); });
+  const r0 = await p.evaluate(() => JSON.stringify(document.getElementById('btnCd').getBoundingClientRect()) + JSON.stringify(document.getElementById('tripTitle').getBoundingClientRect()));
+  await p.clock.runFor(61000); await p.waitForTimeout(100);
+  c = await chip();
+  check('N8 a 30 s tick updates the text only (30 min -> 29 min after ~1 min), nothing re-rendered, geometry unchanged', c.v === '29 น.' && await p.evaluate(() => document.getElementById('btnCd') === window.__cd0 && document.getElementById('tab-plan').dataset.mark === '1') && r0 === await p.evaluate(() => JSON.stringify(document.getElementById('btnCd').getBoundingClientRect()) + JSON.stringify(document.getElementById('tripTitle').getBoundingClientRect())), JSON.stringify(c));
+  check('N8b aria-label carries the full sentence', /ถัดไป 09\.00 อีก 29 น\./.test(c.a), c.a);
+  await p.click('#btnCd'); await p.waitForTimeout(400);
+  const stx = await p.evaluate(() => document.getElementById('cdSheet').innerText);
+  check('N9 sheet (current trip): next stops with time + "อีก", trip day "วันที่ 2 จาก 4"', /จุดถัดไป/.test(stx) && /09\.30|11\.00|09\.00/.test(stx) && /อีก 29 น\./.test(stx) && /วันที่ 2 จาก 4/.test(stx), stx.slice(0, 300));
+  /* N9b: a tap spanning the 30 s refresh must not be lost (Close, then who) */
+  await p.locator('#cdClose').hover(); await p.mouse.down(); await p.clock.runFor(30500); await p.mouse.up(); await p.waitForTimeout(200);
+  check('N9b tap on Close spanning a 30 s refresh still closes the sheet', await p.evaluate(() => !document.getElementById('dlg').open), '');
+  await p.click('#btnCd'); await p.waitForTimeout(300);
+  await p.locator('#cdWho').hover(); await p.mouse.down(); await p.clock.runFor(30500); await p.mouse.up(); await p.waitForTimeout(300);
+  check('N9c tap on #cdWho spanning a refresh opens the picker', await p.evaluate(() => !!document.getElementById('whoList')));
+  check('N10 sheet footer switches the traveller name (picker opens)', await p.evaluate(() => !!document.getElementById('whoList')));
+  await s.b.close();
+  /* past trip */
+  s = await open({ clock: '2026-08-20T10:00:00', active: 'priv:macau' }); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(500);
+  c = await chip(); check('N11 finished trip -> muted "สิ้นสุดแล้ว"', c.v === 'สิ้นสุดแล้ว' && /end/.test(c.c), JSON.stringify(c));
+  await p.click('#btnCd'); await p.waitForTimeout(300);
+  check('N12 sheet says "เสร็จสิ้นแล้ว" for the trip', /เสร็จสิ้นแล้ว/.test(await p.evaluate(() => document.getElementById('cdSheet').innerText)));
+  await s.b.close();
+  /* hidden tab: no tick work */
+  s = await open({ clock: '2026-07-12T08:30:00', active: 'priv:macau' }); p = s.p; await login(s, 'Nine'); await p.waitForTimeout(500);
+  check('N13 menu still reaches the avatar chooser ("สลับ") and avatars remain in the Menu', await p.evaluate(() => { renderMenu(); return !!document.getElementById('bSwitch') && !!document.querySelector('#tab-menu .profile .avatar'); }));
+  await s.b.close();
+
   /* ---------- M. profile photos (central; anyone sets / removes anyone's photo) ---------- */
   console.log('\n[M] profile photos');
   for (const [w, h] of [[360, 640], [390, 844], [430, 932]]) {
     s = await open({ w, h, init: CLSK }); p = s.p; await login(s, 'Nine');
     const un = await p.evaluate(() => users().map(u => u.name)), other = un.find(n => n !== 'Nine'); s.flags.users = un.map(n => n.toLowerCase());
-    const before = await p.evaluate(() => document.getElementById('btnMe').getBoundingClientRect().width);
+    const before = await p.evaluate(() => document.getElementById('btnCd').getBoundingClientRect().width);
     await p.click('[data-tab=menu]'); await p.waitForTimeout(700);
-    check(`M1 ${w}: header + menu show initials first (no photo, no img)`, await p.evaluate(() => document.querySelectorAll('.avatar img').length === 0 && /N/.test(document.getElementById('btnMe').innerText)));
+    check(`M1 ${w}: menu profile shows initials first (no photo, no img)`, await p.evaluate(() => document.querySelectorAll('.avatar img').length === 0 && /N/.test(document.querySelector('#tab-menu .profile .avatar').innerText)));
     const fc = p.waitForEvent('filechooser'); await p.click('#tab-menu .profile [data-avp]'); (await fc).setFiles({ name: 'me.png', mimeType: 'image/png', buffer: png(900, 500) }); await p.waitForTimeout(1500);
     const put = s.rpc.filter(r => r.fn === 'avatar_put').pop();
     check(`M2 ${w}: upload is a square JPEG <= 256 px, <= 120k chars, sent to avatar_put for Nine`, !!put && put.a.p_mime === 'image/jpeg' && put.a.p_name === 'Nine' && put.a.p_data.length < 120000 && await p.evaluate(d => new Promise(ok => { const i = new Image(); i.onload = () => ok(i.naturalWidth === 256 && i.naturalHeight === 256); i.src = 'data:image/jpeg;base64,' + d; }), put.a.p_data));
-    check(`M3 ${w}: photo appears in the header button and the Menu profile + members card`, await p.evaluate(() => document.querySelectorAll('#btnMe img').length === 1 && document.querySelectorAll('#tab-menu .profile img').length === 1 && document.querySelectorAll('#tab-menu .row img').length === 1));
+    check(`M3 ${w}: photo appears in the Menu profile + members card (header holds the countdown chip, no avatar)`, await p.evaluate(() => document.querySelectorAll('#btnMe').length === 0 && document.querySelectorAll('#tab-menu .profile img').length === 1 && document.querySelectorAll('#tab-menu .row img').length === 1));
     const fc2 = p.waitForEvent('filechooser'); await p.click(`#tab-menu [data-avp="${other}"]`); (await fc2).setFiles({ name: 'o.png', mimeType: 'image/png', buffer: png(300, 600) }); await p.waitForTimeout(1500);
     check(`M4 ${w}: anyone can set ANOTHER traveller's photo (central), request targets that name`, s.rpc.filter(r => r.fn === 'avatar_put').pop().a.p_name === other && !!s.avs[other.toLowerCase()]);
     await p.click('[data-tab=money]'); await p.waitForTimeout(500);
     await p.evaluate(() => { data.expenses = [{ item: 'x', cat: 'x', amount: 10, cur: 'THB', payer: 'Nine', type: 'personal', with: [] }]; renderMoney(); });
     check(`M5 ${w}: money rows show the photo`, await p.evaluate(() => document.querySelectorAll('#tab-money .avatar img').length >= 1));
-    await p.click('#btnMe'); await p.waitForTimeout(400);
+    await p.evaluate(() => travellerPicker()); await p.waitForTimeout(400);
     check(`M6 ${w}: chooser shows photos + per-traveller actions`, await p.evaluate(() => document.querySelectorAll('#whoList .avatar img').length >= 1 && document.querySelectorAll('#avList [data-avp]').length >= 2));
     await p.click('#dlg button[value=x]'); await p.waitForTimeout(200);
     s.docs.push({ id: '00000000-0000-4000-8000-0000000000aa', scope: 'person', owner: other.toLowerCase(), trip: '', title: 'Synthetic doc', kind: 'other', mime: 'image/png', size_bytes: 3, note: '', created_by: other.toLowerCase(), created_at: new Date().toISOString(), chunks: 1, chunkData: ['QUJD'] });
     await p.click('[data-tab=docs]'); await p.waitForTimeout(1500);
     check(`M7 ${w}: docs friend groups show the photo`, await p.evaluate(() => { dc.seg = 'friends'; renderDocs(); return true; }) && await p.evaluate(() => document.querySelectorAll('#tab-docs .dgh .avatar img, #tab-docs .avatar img').length >= 1));
-    check(`M8 ${w}: photo cached in localStorage <= 300 KB and CLS <= 0.05, header box fixed`, await p.evaluate(() => (localStorage.getItem('tt.av') || '').length) > 100 && await p.evaluate(() => localStorage.getItem('tt.av').length <= 300000) && await p.evaluate(() => window.__cls) <= 0.05 && Math.abs(before - await p.evaluate(() => document.getElementById('btnMe').getBoundingClientRect().width)) < 0.5);
+    check(`M8 ${w}: photo cached in localStorage <= 300 KB and CLS <= 0.05, chip box fixed`, await p.evaluate(() => (localStorage.getItem('tt.av') || '').length) > 100 && await p.evaluate(() => localStorage.getItem('tt.av').length <= 300000) && await p.evaluate(() => window.__cls) <= 0.05 && Math.abs(before - await p.evaluate(() => document.getElementById('btnCd').getBoundingClientRect().width)) < 0.5);
     await p.reload(); await p.waitForTimeout(1500);
-    check(`M9 ${w}: photo is there right after a reload (cache)`, await p.evaluate(() => document.querySelectorAll('#btnMe img').length === 1));
+    check(`M9 ${w}: photo is there right after a reload (cache)`, await p.evaluate(() => document.querySelectorAll('#tab-menu .profile img').length === 1));
     if (w === 390) {
       await p.click('[data-tab=menu]'); await p.waitForTimeout(600);
       await p.click('#tab-menu .profile [data-avd]'); await p.waitForTimeout(1000);
-      check('M10 remove returns to initials (header + server + cache)', await p.evaluate(() => document.querySelectorAll('#btnMe img').length === 0 && /N/.test(document.getElementById('btnMe').innerText) && !JSON.parse(localStorage.getItem('tt.av') || '{}').nine) && !s.avs.nine && !!s.avs[other.toLowerCase()]);
+      check('M10 remove returns to initials (menu + server + cache)', await p.evaluate(() => document.querySelectorAll('#tab-menu .profile img').length === 0 && /N/.test(document.querySelector('#tab-menu .profile .avatar').innerText) && !JSON.parse(localStorage.getItem('tt.av') || '{}').nine) && !s.avs.nine && !!s.avs[other.toLowerCase()]);
       await p.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
       const cr = await p.evaluate(() => { const a = document.querySelector('#tab-menu .row .avatar'), c = getComputedStyle(a); return { fg: c.color, bg: c.backgroundColor }; });
       check('M11 dark mode: initials stay white on the coloured circle', cr.fg === 'rgb(255, 255, 255)' && cr.bg !== 'rgba(0, 0, 0, 0)', JSON.stringify(cr));
