@@ -81,8 +81,12 @@ const PROBE = {
   check('Q2 dark theme overrides the surfaces and the accent text colour', /:root\[data-theme=dark\]\{[^}]*--bg:[^}]*--card:[^}]*--ink:[^}]*--priInk:/.test(CSS));
   const px = [...CSS.matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)].map(m => +m[1]);
   check('Q3 no font-size below 13px in style.css (12px floor, 13px for secondary)', px.every(v => v >= 13), px.filter(v => v < 13).join(','));
-  const lay = [...CSS.matchAll(/(?:^|[;{\s])transition:\s*([^;}]*)/g)].map(m => m[1]).filter(v => /\b(width|height|margin|padding|top|left|right|bottom|all)\b/.test(v) && !/^width \.2s$/.test(v.trim()));
-  check('Q4 transitions never animate layout properties (only transform / opacity / colours; the progress bar width is the one exception)', lay.length === 0, lay.join(' | '));
+  const trans = [...CSS.matchAll(/(?:^|[;{\s])transition:\s*([^;}]*)/g)].map(m => m[1]).filter(v => v.trim() !== 'none!important');
+  const lay = trans.filter(v => /\b(width|height|min-|max-|margin|padding|top|left|right|bottom|inset|box-shadow|border|outline|filter|all)\b/.test(v));
+  check('Q4 transitions never animate layout or paint-heavy properties (width/height/margin/padding/position/box-shadow/border/filter/all); only transform + opacity, plus colour/background-colour/fill on small controls and rows', lay.length === 0 && trans.length > 5, lay.join(' | '));
+  const kf = [...CSS.matchAll(/@keyframes\s+([\w-]+)\s*\{((?:[^{}]*\{[^{}]*\})*)\}/g)].map(m => ({ n: m[1], props: [...m[2].matchAll(/([\w-]+)\s*:/g)].map(x => x[1]) }));
+  const badKf = kf.filter(k => k.props.some(x => !['transform', 'opacity'].includes(x)));
+  check(`Q4b @keyframes (${kf.map(k => k.n).join(', ')}) only animate transform / opacity (no box-shadow pulse, no width bar)`, kf.length >= 3 && badKf.length === 0, JSON.stringify(badKf));
   check('Q5 reduced motion switches animations + transitions off', /prefers-reduced-motion:reduce\)\{\*,\*::before,\*::after\{animation:none!important;transition:none!important/.test(CSS));
   check('Q6 focus-visible ring + pressed states exist for buttons, chips, pills, rows', /:focus-visible\{outline:2px/.test(CSS) && /\.btn:active/.test(CSS) && /\.tag:active/.test(CSS) && /\.li:active/.test(CSS));
 

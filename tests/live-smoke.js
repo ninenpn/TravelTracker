@@ -9,7 +9,7 @@ const get = async p => { const r = await fetch(U + p, { headers: h }); return { 
 const rpc = async (fn, b) => { const r = await fetch(`${U}/rpc/${fn}`, { method: 'POST', headers: h, body: JSON.stringify(b) }); const t = await r.text(); return { s: r.status, j: t ? JSON.parse(t) : null }; };
 (async () => {
   console.log('[live] public data');
-  for (const t of ['plan', 'Users', 'Expenses', 'Stay', 'Tips', 'ค่าใช้จ่าย']) { const r = await get(`/sheet_rows?tab=eq.${encodeURIComponent(t)}&select=row_no`); check(`public tab "${t}" has rows`, Array.isArray(r.j) && r.j.length > 0, `status ${r.s}`); }
+  for (const t of ['plan', 'Users', 'Expenses', 'Stay', 'ค่าใช้จ่าย']) { const r = await get(`/sheet_rows?tab=eq.${encodeURIComponent(t)}&select=row_no`); check(`public tab "${t}" has rows`, Array.isArray(r.j) && r.j.length > 0, `status ${r.s}`); }
   const users = await get('/sheet_rows?tab=eq.Users&row_no=gt.0&select=cells');
   check('PIN column in public Users rows is empty', Array.isArray(users.j) && users.j.every(r => !(r.cells[2] || '').trim() || !/^[0-9a-f]{64}$/.test(r.cells[2])));
   console.log('[live] row-level security');
