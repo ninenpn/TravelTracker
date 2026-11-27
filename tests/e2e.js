@@ -240,12 +240,12 @@ const { open, settle, check, finish, FAKE, ALMATY } = require('./lib');
 
   /* per-tab scroll memory */
   s = await open({ stepsPerDay: 10 }); p = s.p; await settle(s); await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2500);
-  await p.evaluate(() => { window.scrollTo(0, 700); document.getElementById('tl').__keep = 1; }); await p.waitForTimeout(500);
+  await p.evaluate(() => { window.scrollTo(0, 700); document.getElementById('tl').__keep = 1; window.__y0 = scrollY; }); await p.waitForTimeout(500);
   await p.click('[data-tab=money]'); await p.waitForTimeout(300); await p.evaluate(() => { document.getElementById('tab-money').firstElementChild.__keep = 1; });
   await p.click('[data-tab=menu]'); await p.waitForTimeout(300); await p.evaluate(() => window.scrollTo(0, 120)); await p.waitForTimeout(300);
   await p.click('[data-tab=plan]'); await p.waitForTimeout(500);
-  const t1 = await p.evaluate(() => ({ y: scrollY, keep: document.getElementById('tl').__keep === 1 }));
-  check('J10 plan -> money -> menu -> plan: scroll restored (+-2 px), plan not re-rendered', Math.abs(t1.y - 700) <= 2 && t1.keep, JSON.stringify(t1));
+  const t1 = await p.evaluate(() => ({ y: scrollY, y0: window.__y0, keep: document.getElementById('tl').__keep === 1 }));          // y0 = what the page could really scroll to (<= 700: the compact design is shorter)
+  check('J10 plan -> money -> menu -> plan: scroll restored (+-2 px), plan not re-rendered', t1.y0 >= 300 && Math.abs(t1.y - t1.y0) <= 2 && t1.keep, JSON.stringify(t1));
   await p.click('[data-tab=menu]'); await p.waitForTimeout(400); const t2 = await p.evaluate(() => scrollY);
   await p.click('[data-tab=money]'); await p.waitForTimeout(400); const t3 = await p.evaluate(() => ({ keep: document.getElementById('tab-money').firstElementChild.__keep === 1 }));
   check('J11 each tab keeps its own scroll (menu 120) and an unchanged tab is not re-rendered', Math.abs(t2 - 120) <= 2 && t3.keep, JSON.stringify({ t2, t3 }));
@@ -466,7 +466,7 @@ const { open, settle, check, finish, FAKE, ALMATY } = require('./lib');
     await p.evaluate(() => showCard({ kind: 'place', title: 'ชื่อสถานที่ที่ยาวมากๆ ชื่อสถานที่ที่ยาวมากๆ ชื่อสถานที่ที่ยาวมากๆ Metro Station', lines: ['Day 2 10.00', 'มาโดย Metro'], lat: 22.2, lng: 113.5, name: 'x', how: 'Metro' })); await p.waitForTimeout(400);
     const lc = await p.evaluate(() => { const c = document.getElementById('ovCard').getBoundingClientRect(), m = document.getElementById('ovHolder').getBoundingClientRect(), hs = s => Math.min(...[...document.querySelectorAll(s)].map(b => b.getBoundingClientRect().height)); return { inside: c.left >= 0 && c.right <= innerWidth + 0.5 && c.bottom <= innerHeight + 0.5, over: Math.max(document.documentElement.scrollWidth - innerWidth, document.getElementById('ovCard').scrollWidth - document.getElementById('ovCard').clientWidth), go: hs('#ovcGo'), two: hs('.ovc-2 .btn'), seg: hs('#ovCard [data-m]'), x: document.getElementById('ovcX').getBoundingClientRect().width, mapVis: Math.round(m.height - c.height), bg: getComputedStyle(document.getElementById('ovCard')).backgroundColor }; });
     check(`M33 ${w}x${h}: bottom card inside the screen, no horizontal overflow, buttons >= 44 px (mode control >= 40), map still visible above`, lc.inside && lc.over <= 1 && lc.go >= 44 && lc.two >= 44 && lc.seg >= 40 && lc.x >= 36 && lc.mapVis >= 100, JSON.stringify(lc));
-    if (w === 390) check('M34 dark mode: card uses the dark card colour', lc.bg === 'rgb(20, 29, 51)', lc.bg);
+    if (w === 390) check('M34 dark mode: card uses the dark card colour', lc.bg === 'rgb(22, 29, 44)', lc.bg);
     await p.evaluate(() => hideCard()); await p.click('#ovFilt'); await p.waitForTimeout(400);
     const ls = await p.evaluate(() => { const i = document.querySelector('#ovSheet .ovs-in').getBoundingClientRect(), tags = [...document.querySelectorAll('#ovSheet .tag')].map(b => b.getBoundingClientRect()), sw = document.getElementById('shSw').getBoundingClientRect(); return { h: Math.round(i.height), max: Math.round(innerHeight * 0.8), left: i.left >= 0 && i.right <= innerWidth + 0.5, tag: Math.min(...tags.map(t => t.height)), done: document.getElementById('sfDone').getBoundingClientRect().height, over: document.documentElement.scrollWidth - innerWidth, swW: sw.width, swH: sw.height }; });
     check(`M35 ${w}x${h}: filters sheet <= 80% of the screen (scrolls), chips >= 44 px, "เสร็จ" >= 44 px, no overflow`, ls.h <= ls.max && ls.left && ls.tag >= 44 && ls.done >= 44 && ls.over <= 1, JSON.stringify(ls));
@@ -491,7 +491,7 @@ const { open, settle, check, finish, FAKE, ALMATY } = require('./lib');
   for (const [w, h] of [[390, 844], [360, 640]]) {
     s = await open({ w, h }); p = s.p; await settle(s); await p.evaluate(() => window.scrollTo(0, 0)); await p.waitForTimeout(600);
     const g = await p.evaluate(() => { const nav = document.querySelector('nav').getBoundingClientRect().top, st = document.querySelector('#tl .step'), hd = document.querySelector('.dayh h2').getBoundingClientRect(), dk = document.getElementById('homeDays').getBoundingClientRect(), mp = document.querySelector('.mapcard').getBoundingClientRect(); return { nav, stepBottom: st ? st.getBoundingClientRect().bottom : null, headTop: hd.top, headBottom: hd.bottom, dockBottom: dk.bottom, map: mp.height, nx: !!document.getElementById('cd'), stayOpen: !!document.getElementById('stayPn') }; });
-    if (w === 390) check('J22 390x844: first step card fully above the bottom nav at scroll 0; open-map card slim (60-80 px); stay collapsed', g.stepBottom != null && g.stepBottom <= g.nav && g.map >= 60 && g.map <= 80 && !g.stayOpen, JSON.stringify(g));
+    if (w === 390) check('J22 390x844: first step card fully above the bottom nav at scroll 0; open-map row slim (48-80 px); stay collapsed', g.stepBottom != null && g.stepBottom <= g.nav && g.map >= 48 && g.map <= 80 && !g.stayOpen, JSON.stringify(g));
     else check('J23 360x640: day heading visible (below the dock, above the nav) at scroll 0', g.headTop >= g.dockBottom - 1 && g.headBottom <= g.nav, JSON.stringify(g));
     await s.b.close();
   }
@@ -579,7 +579,7 @@ const { open, settle, check, finish, FAKE, ALMATY } = require('./lib');
   check('K8 two docs under Nine (a person chip lists only that person\'s documents, no group header)', (await seg(p)).Nine === 2 && await p.evaluate(() => document.querySelectorAll('.dgh').length === 0 && document.querySelectorAll('.dcard[data-id]').length === 2));
   /* lazy thumbnail: reserved box, picture arrives without moving the card */
   const th = await p.evaluate(async () => { const c = document.querySelector('.dcard[data-id]'), t = c.querySelector('.dthumb'); const h0 = c.getBoundingClientRect().height; await new Promise(r => setTimeout(r, 800)); return { img: !!t.querySelector('img'), h0, h1: c.getBoundingClientRect().height, box: t.getBoundingClientRect().height }; });
-  check('K9 thumbnail loads lazily into a fixed 84 px box (card height unchanged)', th.img && th.box === 84 && th.h0 === th.h1, JSON.stringify(th));
+  check('K9 thumbnail loads lazily into a fixed 72 px box (card height unchanged)', th.img && th.box === 72 && th.h0 === th.h1, JSON.stringify(th));
   /* viewer */
   await p.click('[data-show]'); await p.waitForSelector('#dvImg', { timeout: 5000 });
   const v0 = await p.evaluate(() => ({ open: dv.open, title: document.getElementById('dvTitle').textContent, owner: document.getElementById('dvOwner').textContent, bg: getComputedStyle(document.getElementById('docOv')).backgroundColor, lock: document.documentElement.classList.contains('noscroll'), i: dv.i, n: dv.list.length, off: document.getElementById('dvOff').classList.contains('on') && getComputedStyle(document.getElementById('dvOff')).visibility === 'visible', offT: document.getElementById('dvOff').innerText }));

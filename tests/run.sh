@@ -14,6 +14,7 @@ if [ $QUICK -eq 0 ]; then
   PORT=${PORT:-8123}; export BASE_URL="http://localhost:$PORT/"
   (python3 -m http.server "$PORT" >/dev/null 2>&1 & echo $! > /tmp/tt_http.pid); sleep 1
   echo; echo "== e2e (browser)"; node tests/e2e.js || rc=1
+  echo; echo "== design system (browser)"; node tests/design.js || rc=1
   kill "$(cat /tmp/tt_http.pid)" 2>/dev/null
 fi
 if [ $SQL -eq 1 ]; then echo; echo "== sql (local postgres)"; bash tests/sql/test.sh || rc=1; fi

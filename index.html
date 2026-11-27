@@ -21,7 +21,7 @@
   <div id="error" class="error" hidden></div>
   <main>
     <div id="homeDock" class="dock m">
-      <button id="dockFull" class="mapcard" aria-label="เปิดแผนที่"><span class="mapcard-i"><i data-ic="map"></i></span><span class="mapcard-t"><b>เปิดแผนที่</b><small>เส้นทาง ที่เที่ยว และตำแหน่งเพื่อน</small></span><span class="mapcard-go"><i data-ic="chev"></i></span></button>
+      <button id="dockFull" class="mapcard" aria-label="เปิดแผนที่"><span class="mapcard-i"><i data-ic="map"></i></span><span class="mapcard-t"><b>เปิดแผนที่</b><small>เส้นทาง · ที่เที่ยว · เพื่อน</small></span><span class="mapcard-go"><i data-ic="chev"></i></span></button>
     </div>
     <div class="days daybar" id="homeDays"></div>
     <section id="tab-plan"></section>
@@ -42,8 +42,7 @@
 <dialog id="dlg"></dialog>
 <div id="mapOv" class="mapov" hidden role="dialog" aria-label="แผนที่เต็มจอ">
   <div class="mapov-bar"><div class="chips" id="ovFilters"></div><button id="ovFilt" class="ov-btn" aria-label="ตัวกรอง"><i data-ic="filter"></i><b class="badge" id="ovBadge" hidden>0</b></button><button id="ovClose" class="ov-btn" aria-label="ปิดแผนที่"><i data-ic="x"></i></button></div>
-  <div class="mapov-map" id="ovHolder"></div>
-  <button id="ovLoc" class="ov-btn mapov-loc" aria-label="ไปที่ตำแหน่งฉัน"><i data-ic="locate"></i></button>
+  <div class="mapov-map" id="ovHolder"><button id="ovLoc" class="ov-btn mapov-loc" aria-label="ไปที่ตำแหน่งฉัน"><i data-ic="locate"></i></button></div>
   <div class="mapov-st" id="ovStatus"></div>
   <div class="ov-card" id="ovCard" hidden role="dialog" aria-label="รายละเอียดสถานที่"></div>
   <div class="ov-sheet" id="ovSheet" hidden role="dialog" aria-label="ตัวกรอง"></div>

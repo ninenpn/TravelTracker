@@ -3,7 +3,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const COLORS = ['#2f7bff', '#ff6b6b', '#12b886', '#ffb020', '#9b6bff', '#ff6bb5', '#22c55e', '#10c6d8'];
+const COLORS = ['#2563eb', '#dc2626', '#0f766e', '#b45309', '#7c3aed', '#be185d', '#15803d', '#0e7490'];          // white text on each >= 4.5:1
 const fmt = n => (Math.round(n * 100) / 100).toLocaleString('th-TH', { maximumFractionDigits: 2 });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const DEFAULT_TRIP = { id: '1PW6xAogCla1lhb4wMwhOQeo2d8g_OXmaRONo1OMSlOw', name: 'Almaty Trip', planGid: '101963523', usersTab: 'Users', expensesTab: 'Expenses', locationsTab: 'Locations', placesTab: 'Places', costTab: 'ค่าใช้จ่าย', extraTabs: '', currency: 'THB' };
@@ -72,6 +72,8 @@ const ICONS = {
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.6v.01"/>',
   unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.6-1.7"/>',
   cloud: '<path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 10a4 4 0 0 1-.5 8z"/><path d="m9 13.5 2.2 2.2L15.5 11"/>',
+  more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>',
+  share: '<path d="M12 15V3M7.5 7.5 12 3l4.5 4.5M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'
 };
 const ic = (n, cls = '') => `<svg class="ic${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[n] || ''}</svg>`;
@@ -319,7 +321,7 @@ const TAB_TH = { plan: 'แผนการเดินทาง', Cost: 'ค่�
 function openGallery() {
   const list = data.media || []; if (!list.length) return;
   const groups = {}; list.forEach(m => (groups[m.tab] = groups[m.tab] || []).push(m));
-  const d = openDlg(`<form method="dialog"><h3>${ic('image')} รูปภาพของทริป <small>(${list.length})</small></h3>${Object.entries(groups).map(([tab, arr]) => `<div class="dgroup" style="margin:10px 0 4px!important">${esc(TAB_TH[tab] || tab)}</div>${arr.map((m, i) => `${i === 0 || arr[i - 1].cap !== m.cap ? `<div class="mut" style="font-size:.78rem;margin:8px 2px 4px">${esc(m.cap || '')}</div>` : ''}${i === 0 || arr[i - 1].cap !== m.cap ? '<div class="gal">' : ''}<button type="button" class="gimg" data-g="${esc(m.id)}" aria-label="${esc(m.cap)}"></button>${i === arr.length - 1 || arr[i + 1].cap !== m.cap ? '</div>' : ''}`).join('')}`).join('')}<div class="btns"><button value="x" class="btn">ปิด</button></div></form>`);
+  const d = openDlg(`<form method="dialog"><h3>${ic('image')} รูปภาพของทริป <small>(${list.length})</small></h3>${Object.entries(groups).map(([tab, arr]) => `<div class="dgroup" >${esc(TAB_TH[tab] || tab)}</div>${arr.map((m, i) => `${i === 0 || arr[i - 1].cap !== m.cap ? `<div class="mut hint">${esc(m.cap || '')}</div>` : ''}${i === 0 || arr[i - 1].cap !== m.cap ? '<div class="gal">' : ''}<button type="button" class="gimg" data-g="${esc(m.id)}" aria-label="${esc(m.cap)}"></button>${i === arr.length - 1 || arr[i + 1].cap !== m.cap ? '</div>' : ''}`).join('')}`).join('')}<div class="btns"><button value="x" class="btn">ปิด</button></div></form>`);
   const load1 = async b => { const m = list.find(x => x.id === b.dataset.g); if (!m || b.dataset.done) return; b.dataset.done = '1'; try { const u = await mediaUrl(m); b.style.backgroundImage = `url(${u})`; b.onclick = () => lightbox(u, m.cap); } catch (e) { b.innerHTML = ic('warn'); b.title = e.message; } };
   const io = 'IntersectionObserver' in window ? new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { io.unobserve(e.target); load1(e.target); } }), { root: d, rootMargin: '200px' }) : null;
   $$('.gimg', d).forEach(b => io ? io.observe(b) : load1(b));
@@ -444,7 +446,7 @@ async function avDel(name) {
 function avFail(e) { toast(e.nosql || /ยังไม่ได้รันสคริปต์/.test(e.message) ? 'ยังตั้งรูปโปรไฟล์ไม่ได้ — ต้องรันสคริปต์ docs/supabase_avatars.sql ใน Supabase ก่อน' : e.message, 5000); }
 function avPick(name) { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = () => { if (i.files[0]) avSet(name, i.files[0]); }; i.click(); }
 /* per-traveller actions (chooser dialog, Menu members card, profile card): anyone may change anyone's photo */
-const avActions = n => `<span class="avact"><button type="button" class="btn sm" data-avp="${esc(n)}" aria-label="เปลี่ยนรูป ${esc(n)}">${ic('camera')} เปลี่ยนรูป</button><button type="button" class="btn sm" data-avd="${esc(n)}" aria-label="ลบรูป ${esc(n)}" ${avatars[lc(n)] ? '' : 'hidden'}>ลบรูป</button></span>`;
+const avActions = n => `<span class="avact"><button type="button" class="ov-btn" data-avp="${esc(n)}" aria-label="เปลี่ยนรูป ${esc(n)}" title="เปลี่ยนรูป">${ic('camera')}</button><button type="button" class="ov-btn" data-avd="${esc(n)}" aria-label="ลบรูป ${esc(n)}" title="ลบรูป" ${avatars[lc(n)] ? '' : 'hidden'}>${ic('trash')}</button></span>`;
 document.addEventListener('click', e => {
   const p = e.target.closest('[data-avp]'), d = e.target.closest('[data-avd]');
   if (p) { e.preventDefault(); avPick(p.dataset.avp); } else if (d) { e.preventDefault(); avDel(d.dataset.avd); }
@@ -531,7 +533,7 @@ function loadFailed(t, next) {
 }
 async function load() {
   const t = allowedTrip();
-  $('#tripTitle').innerHTML = esc(t.name) + (visibleTrips().length > 1 ? ' <span class="chev">▾</span>' : '');
+  $('#tripTitle').innerHTML = esc(t.name) + (visibleTrips().length > 1 ? ' <span class="chev" aria-hidden="true"></span>' : '');
   const tripChanged = data._trip !== t.id;
   ui.sync = tripChanged ? 'switch' : 'loading'; renderSub();
   const same = !tripChanged, next = { media: same ? (data.media || []) : [], _trip: t.id, tips: same ? (data.tips || []) : [], plan: null, costs: null, extra: [], users: [], expenses: [], locs: {}, places: {}, spots: [], settings: same ? (data.settings || {}) : {}, stay: same ? (data.stay || {}) : {}, info: same ? (data.info || []) : [], locks: same ? (data.locks || {}) : {}, me: data.me, meLabel: data.meLabel };
@@ -670,7 +672,7 @@ function stayDialog() {
   const chat = /^https?:\/\//i.test(st.chat || '') ? st.chat : '';
   const d = openDlg(`<h3>${ic('home')} ${esc(st.name || 'ที่พัก')}</h3>${st.platform ? `<small>${esc(st.platform)}</small>` : ''}
   <div id="stBody">${row('pin', 'ที่อยู่', st.address)}${row('mail', 'เช็คอิน', st.checkin)}${row('clock', 'เช็คเอาท์', st.checkout)}${row('ticket', 'เลขที่จอง', st.ref, `<button type="button" class="btn sm" data-cp="${esc(st.ref)}" aria-label="คัดลอกเลขที่จอง">คัดลอก</button>`)}${st.phone ? `<div class="stf">${ic('signal')}<div><small>โทรศัพท์</small><div class="stv"><a href="tel:${esc(String(st.phone).replace(/[^\d+]/g, ''))}">${esc(st.phone)}</a></div></div></div>` : ''}${row('note', 'โน้ต', st.note)}${chat ? `<div class="stf" id="stChatRow">${ic('mail')}<div><small>แชทกับที่พัก</small><div class="stv chatrow"><a class="btn pri" id="stChat" target="_blank" rel="noopener noreferrer" href="${esc(chat)}">เข้าร่วมแชท (Join)</a><button type="button" class="btn" id="stChatCp" aria-label="คัดลอกลิงก์แชท">${ic('copy')} คัดลอกลิงก์</button></div></div></div>` : ''}${rules.length ? `<div class="stf">${ic('warn')}<div><small>กฎของที่พัก</small><ul class="ideas">${rules.map(r => `<li>${esc(r)}</li>`).join('')}</ul></div></div>` : ''}</div>
-  <div class="btns stb">${L.google ? `<a class="btn pri" id="stGo" target="_blank" rel="noopener" href="${L.google}">${ic('navigate')} นำทาง</a>` : ''}${st.address ? `<button type="button" class="btn" id="stCopy">${ic('copy')} คัดลอกที่อยู่</button>` : ''}<button type="button" class="btn" id="stTaxi">${ic('car')} โชว์ให้คนขับแท็กซี่</button><button type="button" class="btn" id="stX">ปิด</button></div>`);
+  <div class="btns stb">${L.google ? `<a class="btn pri" id="stGo" target="_blank" rel="noopener" href="${L.google}">${ic('navigate')} นำทาง</a>` : ''}${st.address ? `<button type="button" class="btn" id="stCopy">${ic('copy')} คัดลอกที่อยู่</button>` : ''}<button type="button" class="btn" id="stTaxi">${ic('car')} โชว์ให้คนขับแท็กซี่</button><button type="button" class="btn ghost" id="stX">ปิด</button></div>`);
   $('#stX', d).onclick = () => d.close();
   const c = $('#stCopy', d); if (c) c.onclick = () => copyText([st.name, st.address].filter(Boolean).join('\n'), 'คัดลอกที่อยู่แล้ว');
   const cc = $('#stChatCp', d); if (cc) cc.onclick = () => copyText(chat, 'คัดลอกลิงก์แชทแล้ว');
@@ -719,18 +721,17 @@ function renderPlan() {
   if (ui.edit && locked) { ui.edit = false; toast(LOCKED_MSG, 3500); }          // somebody locked this day while it was open for editing
   let h = (ui.edit ? '' : nextCard());
   h += `<div class="dayh"><div><h2>${esc(dayTitle(d, ui.day))}</h2><small>${[wd, d.city].filter(Boolean).map(esc).join(' · ')}${isToday(d) ? ' <span class="chip">วันนี้</span>' : ''}${locked ? ` <span class="chip lockb" id="lockBadge">${ic('lock')} ล็อกอยู่${data.locks[d.label].who ? ' · ' + esc(data.locks[d.label].who) : ''}</span>` : ''}</small></div><div class="dayact">${ui.edit ? '' : `<button class="edit-btn lock-btn ${locked ? 'on' : ''}" id="lockBtn" aria-pressed="${locked}">${ic(locked ? 'unlock' : 'lock')}${locked ? 'ปลดล็อก' : 'ล็อกวัน'}</button>`}<button class="edit-btn ${ui.edit ? 'on' : ''}" id="editBtn" ${locked ? 'disabled aria-disabled="true"' : ''}>${ui.edit ? 'เสร็จ' : ic('edit') + 'แก้ไข'}</button></div></div>`;
-  if (!ui.edit && !isPast(d)) { const hits = spotMatches().items.filter(m => m.di === ui.day); if (hits.length) h += `<button class="nudge" id="nudge"><span>${ic('route')}</span><div><b>แวะได้ ${hits.length} ที่จากลิสของคุณ</b><small>อยู่ใกล้เส้นทางของวันนี้ — แตะเพื่อดู</small></div></button>`; }
+  if (!ui.edit && !isPast(d)) { const hits = spotMatches().items.filter(m => m.di === ui.day); if (hits.length) h += `<button class="nudge" id="nudge"><span>${ic('route')}</span><div><b>แวะได้ ${hits.length} ที่จากลิสของคุณ</b><small>ใกล้เส้นทางของวันนี้</small></div></button>`; }
   h += `<div class="tl ${ui.edit ? 'editing' : ''} ${locked ? 'locked' : ''}" id="tl">` + d.steps.map((s, k) => `<div class="step" data-i="${k}"><div class="step-t">${esc(s.time || '')}${s.toTime ? `<small>→ ${esc(s.toTime)}</small>` : ''}</div><div class="step-c"><div class="step-i">${howIcon(s.how, !!s.text)}</div><div class="step-b">
     ${s.text ? `<div>${link(s.text)}</div>` : ''}${(s.from || s.to) ? `<div class="route">${placeHtml(s.from)}${s.to ? ' <span class="arrow">→</span> ' + placeHtml(s.to) : ''}</div>` : ''}
     ${s.city ? `<span class="chip">${esc(s.city)}</span>` : ''}${s.how ? `<span class="chip">${esc(s.how)}</span>` : ''}${durChips(d.steps, k)}${s.tickets ? `<span class="chip">${ic('ticket')} ${link(s.tickets)}</span>` : ''}
     ${s.note ? `<div class="note">${link(s.note)}</div>` : ''}${s.notice ? `<div class="note">${ic('warn')} ${link(s.notice)}</div>` : ''}</div>
     ${ui.edit ? '' : stepNav(s)}${ui.edit ? '' : bell(ui.day, k)}<div class="grip" aria-label="ลากเพื่อจัดลำดับ"><svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></div></div></div>`).join('') + '</div>';
   if (!d.steps.length && !ui.edit) h += '<div class="card empty flat">ยังไม่มีแผนสำหรับวันนี้<br><small>กด “แก้ไข” เพื่อเพิ่มรายการ</small></div>';
-  if (ui.edit) h += '<button class="addstep" id="addStep">+ เพิ่มรายการ</button>';
+  if (ui.edit) h += `<div class="editbar"><button class="btn addstep" id="addStep">${ic('plus')} เพิ่มรายการ</button><button class="btn pri" id="editDone">${ic('check')} เสร็จ</button></div>`;
   if (!ui.edit) p.ideas.forEach((g, gi) => { if (g.items.length) h += `<div class="card flat"><h3>${ic('bulb')} ${esc(g.title)} <small>(ไอเดีย)</small></h3><ul class="ideas">${g.items.map((i, ii) => `<li>${mapLink(i)} <button class="tag sm" data-gi="${gi}" data-ii="${ii}">+ เพิ่มเข้าแผน</button></li>`).join('')}</ul></div>`; });
-  if (!ui.edit && (data.media || []).length) h += `<button class="nudge" id="planGallery"><span>${ic('image')}</span><div><b>รูปภาพของทริป (${data.media.length})</b><small>ภาพประกอบจากไฟล์ Excel — แตะเพื่อดู</small></div></button>`;
   el.innerHTML = h;
-  dayBar.innerHTML = `<button class="pill mapbtn" id="peekMap" aria-label="แผนที่">${ic('map')}แผนที่</button>` + p.days.map(pill).join('') + (ui.edit ? '<button class="pill add" id="addDay" aria-label="เพิ่มวัน">+</button>' : '');
+  dayBar.innerHTML = `<button class="pill mapbtn" id="peekMap" aria-label="แผนที่">${ic('map')}แผนที่</button>` + p.days.map(pill).join('') + (ui.edit ? `<button class="pill add" id="addDay" aria-label="เพิ่มวัน">${ic('plus')}</button>` : '');
   { const pm = $('#peekMap', dayBar); if (pm) pm.onclick = () => openMapOv(); }
   const sel = $('.pill.sel', dayBar); if (sel) dayBar.scrollLeft = sel.offsetLeft - dayBar.clientWidth / 2 + sel.clientWidth / 2;
   $$('[data-gi]', el).forEach(b => b.onclick = () => { const g = p.ideas[+b.dataset.gi]; addToPlanDialog(g.items[+b.dataset.ii], { gi: +b.dataset.gi, ii: +b.dataset.ii }); });
@@ -741,10 +742,9 @@ function renderPlan() {
   const sb = $('#stayBtn'); if (sb) sb.onclick = stayDialog;
   const ib = $('#infoBtn'); if (ib) ib.onclick = infoDialog;
   $$('[data-stay]', el).forEach(b => b.onclick = stayDialog);
-  const pg = $('#planGallery'); if (pg) pg.onclick = openGallery;
   const nd = $('#nudge'); if (nd) nd.onclick = () => { ui.spotView = 'sug'; $('[data-tab=spots]').click(); };
   if (ui.edit) {
-    $('#addStep').onclick = () => stepDialog(null);
+    $('#addStep').onclick = () => stepDialog(null); $('#editDone').onclick = toggleEdit;
     const ad = $('#addDay'); if (ad) ad.onclick = addDay;
     $$('.step', el).forEach(n => n.onclick = e => { if (e.target.closest('.grip')) return; stepDialog(+n.dataset.i); });
     if (window.Sortable) Sortable.create($('#tl'), { handle: '.grip', animation: 160, forceFallback: true, fallbackTolerance: 3, ghostClass: 'sortable-ghost', chosenClass: 'sortable-chosen',
@@ -962,7 +962,7 @@ function pendingHtml() {
 }
 function renderMoney() {
   const el = $('#tab-money');
-  el.innerHTML = `<div id="moneySum">${summaryHtml()}</div><div id="moneyBody"></div><button class="fab" id="addExp" aria-label="เพิ่มค่าใช้จ่าย"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>`;
+  el.innerHTML = `<div id="moneySum">${summaryHtml()}</div><div id="moneyBody"></div><button class="fab" id="addExp" aria-label="เพิ่มค่าใช้จ่าย"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>เพิ่มค่าใช้จ่าย</button>`;
   renderExpenses($('#moneyBody'));
   $('#addExp').onclick = expenseDialog;
 }
@@ -1143,7 +1143,7 @@ function drawMap(fit) {
     const mine = n === shareAs();
     if (!mine && (!ui.f.friends || ui.f.hide.includes(n))) continue;
     pts.push([p.lat, p.lng]);
-    if (mine && p.acc) L.circle([p.lat, p.lng], { radius: p.acc, color: '#2f7bff', weight: 1, fillOpacity: .08 }).addTo(layer);
+    if (mine && p.acc) L.circle([p.lat, p.lng], { radius: p.acc, color: '#2563eb', weight: 1, fillOpacity: .08 }).addTo(layer);
     const ago = mine && data.me ? 0 : agoMin(p.at);
     L.marker([p.lat, p.lng], { icon: friendIcon(n, mine, ago), zIndexOffset: 1000, title: n }).addTo(layer)
       .on('click', () => showCard({ kind: 'friend', title: n, avatar: n, lines: [p.label, mine ? 'ตำแหน่งที่กำลังแชร์จากเครื่องนี้' : agoTxt(ago)], lat: p.lat, lng: p.lng, name: n }));
@@ -1576,7 +1576,7 @@ function tipsHtml() {
   if (!all.length) return '<div class="empty">ยังไม่มีคำแนะนำ<br><small>เพิ่มข้อมูลแท็บ “Tips” (Type, Name, Detail, BestTime, Source)</small></div>';
   const list = all.filter(x => f === 'all' || x.type === f), cnt = t => all.filter(x => x.type === t).length;
   let h = `<div class="chips">${[['all', '', 'ทั้งหมด', all.length], ['travel', 'car', 'เดินทาง', cnt('travel')], ['food', 'food', 'อาหาร', cnt('food')], ['cafe', 'cafe', 'คาเฟ่', cnt('cafe')]].map(([k, i, l, n]) => `<button class="tag ${f === k ? 'on' : ''}" data-tf="${k}">${i ? ic(i) + ' ' : ''}${l} <small>${n}</small></button>`).join('')}</div>`;
-  h += '<div class="mut" style="font-size:.78rem;margin:2px 4px 8px">เวลาที่แนะนำเป็นคำแนะนำทั่วไป ไม่ใช่เวลาเปิด-ปิดร้าน · ข้อมูลรวมจากไกด์/Reddit/Yandex — กดปุ่ม TikTok / Facebook เพื่อดูคลิปและรีวิวจริง</div>';
+  h += '<div class="mut hint">เวลาที่แนะนำเป็นคำแนะนำทั่วไป ไม่ใช่เวลาเปิด-ปิดร้าน · ข้อมูลรวมจากไกด์/Reddit/Yandex — กดปุ่ม TikTok / Facebook เพื่อดูคลิปและรีวิวจริง</div>';
   h += list.map(x => {
     const [ik, col] = TIP[x.type] || TIP.food, q = encodeURIComponent(x.name.replace(/\(.*?\)/g, '').trim() + ' Almaty');
     const links = x.type === 'travel' ? '' : `<div class="spot-a"><a class="tag" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${q}">แผนที่</a><a class="tag" target="_blank" rel="noopener" href="https://www.tiktok.com/search?q=${q}">TikTok</a><a class="tag" target="_blank" rel="noopener" href="https://www.facebook.com/search/top?q=${q}">Facebook</a></div>`;
@@ -1593,10 +1593,10 @@ function renderSpots() {
   const el = $('#tab-spots'); if (!el) return;
   const ctx = planStops(), f = ui.spotFilter || 'all', all = data.spots.map(s => ({ ...s, c: { lat: s.lat, lng: s.lng } })), cnt = t => all.filter(s => s.type === t).length;
   const { items } = spotMatches(); ui._sug = items;
-  let h = `<div class="card"><label style="margin-top:0" for="linkIn">เพิ่มสถานที่ — วางลิงก์ Google Maps, พิกัด (เช่น 43.26, 76.95) หรือพิมพ์ชื่อสถานที่</label><div class="addrow"><input id="linkIn" inputmode="url" autocomplete="off" placeholder="ลิงก์ / พิกัด / ชื่อสถานที่"><button class="btn pri" id="linkGo">เพิ่ม</button></div><small class="mut" style="display:block;margin-top:6px">ระบบหาจุดในแผนที่อยู่ใกล้ และช่วงเวลาที่แทรกได้ให้ทันที</small></div>`;
+  let h = `<div class="card"><label style="margin-top:0" for="linkIn">เพิ่มสถานที่</label><div class="addrow"><input id="linkIn" inputmode="url" autocomplete="off" placeholder="ลิงก์ / พิกัด / ชื่อ"><button class="btn pri" id="linkGo">เพิ่ม</button></div><small class="hint">ระบบจะบอกให้ทันทีว่าอยู่ใกล้จุดไหนในแผน และแทรกได้ช่วงไหน</small></div>`;
   if (!all.length) h += `<div class="card dpanel" id="spotEmpty"><div class="dp-i">${ic('compass')}</div><h2>ยังไม่มีสถานที่</h2><div class="mut">เพิ่มร้านอาหารหรือที่เที่ยวที่อยากไป แล้วระบบจะบอกว่าอยู่ใกล้จุดไหนในแผน และแทรกได้ช่วงไหน</div><div class="btns" style="justify-content:center"><button class="btn pri" id="addSpotEmpty">${ic('plus')} เพิ่มสถานที่</button></div></div>`;
   else {
-    if (ctx.pending) h += `<div class="mut" style="font-size:.82rem;margin:2px 4px">${ic('hourglass')} กำลังหาพิกัดจุดในแผนอีก ${ctx.pending} จุด…</div>`;
+    if (ctx.pending) h += `<div class="mut hint">${ic('hourglass')} กำลังหาพิกัดจุดในแผนอีก ${ctx.pending} จุด…</div>`;
     h += `<h2 class="sech">${ic('spark')} แนะนำให้แทรกในแผน</h2>`;
     h += items.length ? items.map((it, i) => sugCard(it, i)).join('') : '<div class="mut" style="margin:2px 4px">ยังไม่มีช่วงเวลาว่างพอในแผน — เพิ่มสถานที่ใหม่ หรือแตะ “เลือกวันเอง” ที่สถานที่ด้านล่าง</div>';
     h += `<h2 class="sech">${ic('pin')} สถานที่ที่บันทึกไว้ <small>(${all.length})</small></h2>`;
@@ -1604,7 +1604,7 @@ function renderSpots() {
     h += all.filter(s => f === 'all' || s.type === f).reverse().map(s => spotCard(s, ctx)).join('');
   }
   h += tipsSection();
-  h += '<button class="fab" id="addSpot" aria-label="เพิ่มสถานที่"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>';
+  h += '<button class="fab" id="addSpot" aria-label="เพิ่มสถานที่"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>เพิ่มสถานที่</button>';
   const keep = $('#linkIn') && $('#linkIn').value; el.innerHTML = h;
   if (keep) $('#linkIn').value = keep;
   $('#addSpot').onclick = () => spotDialog();
@@ -1637,13 +1637,13 @@ async function detectLink(url) {
   if (/^https?:\/\//i.test(url)) return null;
   const g = await geocodePlace(url); return g ? { ...g, name: url, byName: true } : null;
 }
-const INSIGHT_HINT = '<div class="mut" style="font-size:.8rem;margin:10px 0 2px">เมื่อได้พิกัดแล้ว ระบบจะบอกว่าอยู่ใกล้จุดไหนในแผน และแทรกได้ช่วงไหน</div>';
+const INSIGHT_HINT = '<div class="mut hint">เมื่อได้พิกัดแล้ว ระบบจะบอกว่าอยู่ใกล้จุดไหนในแผน และแทรกได้ช่วงไหน</div>';
 function spotDialog(init = {}) {
   let type = init.type || 'sight', meal = init.meal || '', c = init.lat != null ? { lat: init.lat, lng: init.lng } : null, tok = 0, timer;
   const meals = ['เช้า', 'กลางวัน', 'เย็น', 'คาเฟ่', 'ของหวาน', 'ดึก', 'ได้ทุกมื้อ'], p = data.plan;
   const d = openDlg(`<form method="dialog"><h3>เพิ่มสถานที่</h3>
   <label>ตำแหน่ง — ลิงก์ Google Maps / พิกัด / ชื่อสถานที่</label><input name="u" inputmode="url" autocomplete="off" value="${esc(init.url || '')}" placeholder="https://maps.app.goo.gl/… หรือ 43.26, 76.95 หรือชื่อ" ${c ? 'disabled' : ''}>
-  <div id="detect" class="mut" style="margin-top:6px;font-size:.85rem">${c ? `พิกัด ${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}` : ''}</div>
+  <div id="detect" class="mut hint">${c ? `พิกัด ${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}` : ''}</div>
   <label>ชื่อสถานที่</label><input name="name" required value="${esc(init.name || '')}" placeholder="ชื่อร้าน / สถานที่">
   <label>ประเภท</label><div class="seg" id="typeSeg">${[['food', 'food', 'ร้านอาหาร'], ['sight', 'sight', 'ที่เที่ยว'], ['other', 'pin', 'อื่นๆ']].map(([k, i, l]) => `<button type="button" data-t="${k}" class="${k === type ? 'on' : ''}">${ic(i)} ${l}</button>`).join('')}</div>
   <div id="mealBox" ${type === 'food' ? '' : 'hidden'}><label>เหมาะกับมื้อ</label><div class="chips" style="margin:0;padding:0;flex-wrap:wrap">${meals.map(m => `<button type="button" class="tag ${m === meal ? 'on' : ''}" data-m="${m}">${m}</button>`).join('')}</div></div>
@@ -1652,7 +1652,7 @@ function spotDialog(init = {}) {
   ${p && p.days.length ? `<label>เพิ่มเข้าแผนของวัน (ไม่บังคับ)</label><select name="day"><option value="">ไม่เพิ่มเข้าแผน</option>${p.days.map((x, k) => `<option value="${k}" ${isLocked(x) ? 'disabled' : ''}>${esc(dayTitle(x, k))}${isLocked(x) ? ' (ล็อกอยู่)' : ''}</option>`).join('')}</select>` : ''}
   <div class="btns"><button value="ok" class="btn pri">บันทึก</button><button value="x" class="btn" formnovalidate>ยกเลิก</button></div></form>`);
   const form = $('form', d), url = form.elements.u;
-  const insight = () => { const box = $('#insight', d); if (!box) return; box.innerHTML = c ? `<div class="mut" style="font-size:.8rem;margin:10px 0 2px">สิ่งที่ระบบพบจากแผนของคุณ</div>` + insightHtml(analyzeSpot({ name: form.elements.name.value, type, meal, c })) : INSIGHT_HINT; };
+  const insight = () => { const box = $('#insight', d); if (!box) return; box.innerHTML = c ? `<div class="mut hint">สิ่งที่ระบบพบจากแผนของคุณ</div>` + insightHtml(analyzeSpot({ name: form.elements.name.value, type, meal, c })) : INSIGHT_HINT; };
   const detect = async () => {
     const my = ++tok, box = $('#detect'); box.textContent = 'กำลังหาพิกัด…'; $('#insight', d).innerHTML = INSIGHT_HINT;
     try { const r = await detectLink(url.value); if (my !== tok) return; if (r) { c = { lat: r.lat, lng: r.lng }; box.textContent = `พบพิกัด ${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}${r.byName ? ' (จากชื่อ)' : ''}`; if (r.name && !form.elements.name.value) form.elements.name.value = r.name; insight(); } else { c = null; box.textContent = url.value.trim() ? 'ไม่พบสถานที่นี้ — ลองวางลิงก์ Google Maps หรือพิกัด' : ''; } }
@@ -1690,9 +1690,9 @@ const renderUpd = () => { const u = $('#updAt'); if (u) u.textContent = updAt();
 /* Menu order: สมาชิก (anyone's photo) -> ทริป -> การแจ้งเตือน -> mode / pictures / extra tables -> refresh -> โควตาฟรี Supabase last */
 function membersCard() {
   const list = travellers();
-  return `<div class="card members" id="membersCard"><div class="row2"><h2>${ic('users')} สมาชิก</h2></div><div class="mut" style="margin:2px 0 4px">เปลี่ยนหรือลบรูปให้ใครก็ได้</div>`
+  return `<div class="card members" id="membersCard"><div class="row2"><h2>${ic('users')} สมาชิก</h2></div><div class="mut hint" style="margin-top:0">เปลี่ยนหรือลบรูปให้ใครก็ได้</div>`
     + (list.map(n => { const u = users().find(x => x.name === n), bud = u ? Object.entries(u.budgets || {}).map(([k, v]) => fmt(v) + ' ' + k).join(' · ') : '';
-      return `<div class="row mrow" data-n="${esc(n)}">${avatar(n, 'sm')}<div><b>${esc(n)}</b>${bud ? `<div class="mut">${esc(bud)}</div>` : ''}${avActions(n)}</div></div>`; }).join('') || '<span class="mut">ยังไม่มี — เพิ่มในแท็บ ' + esc(trip().usersTab) + '</span>')
+      return `<div class="row mrow" data-n="${esc(n)}">${avatar(n, 'sm')}<div><b>${esc(n)}</b>${bud ? `<div class="mut">${esc(bud)}</div>` : ''}</div>${avActions(n)}</div>`; }).join('') || '<span class="mut">ยังไม่มี — เพิ่มในแท็บ ' + esc(trip().usersTab) + '</span>')
     + '</div>';
 }
 function renderMenu() {
@@ -1747,7 +1747,7 @@ async function fillUsage() {
   box.innerHTML = `<div class="row2"><h2>โควตาฟรี Supabase</h2><small>แพ็กเกจ Free</small></div>
   ${u ? `<div class="usage"><span>ฐานข้อมูล</span><b>${mb(u.db_bytes)} / 500 MB (${(u.db_bytes / LIM_DB * 100).toFixed(1)}%)</b></div>${bar(u.db_bytes, LIM_DB)}<small class="mut">ข้อมูลแอป ${u.total_rows} แถว · ${rows}</small>` : `<div class="mut">วัดขนาดฐานข้อมูลไม่ได้: ${esc(err || '—')}<br><small>รันสคริปต์ docs/supabase_edit.sql เพื่อเปิดการวัดโควตา</small></div>`}
   <div class="usage" style="margin-top:10px"><span>ทราฟฟิกเดือนนี้ (เครื่องนี้)</span><b>~${mb(st.b)} / 5 GB · ${st.n} คำขอ</b></div>${bar(st.b, LIM_EG)}
-  <small class="mut" style="display:block;margin-top:6px">ขีดจำกัดฟรี: ฐานข้อมูล 500 MB · ทราฟฟิก 5 GB/เดือน · ผู้ใช้ 50,000 คน/เดือน · ไม่มีการใช้งาน 7 วันโปรเจกต์จะถูกพัก (ตัวเลขทราฟฟิกนับเฉพาะเครื่องนี้ ไม่ใช่ยอดรวมทุกคน — ดูยอดจริงที่ Dashboard › Usage)</small>`;
+  <small class="mut hint">ขีดจำกัดฟรี: ฐานข้อมูล 500 MB · ทราฟฟิก 5 GB/เดือน · ผู้ใช้ 50,000 คน/เดือน · ไม่มีการใช้งาน 7 วันโปรเจกต์จะถูกพัก (ตัวเลขทราฟฟิกนับเฉพาะเครื่องนี้ ไม่ใช่ยอดรวมทุกคน — ดูยอดจริงที่ Dashboard › Usage)</small>`;
 }
 function tripFields(t) {
   return `<label>ชื่อทริป</label><input name="name" value="${esc(t.name || '')}" required>
@@ -1885,12 +1885,12 @@ const lead0 = () => cfg.notif.lead;
 function notifCard() {
   const perm = !('Notification' in window) ? 'unsupported' : Notification.permission, n = planEvents().filter(e => (e.end || e.dt) > Date.now()).length;
   const chip = perm === 'granted' ? '<span class="chip ok">อนุญาตแล้ว</span>' : perm === 'denied' ? '<span class="chip bad">ถูกบล็อก</span>' : perm === 'unsupported' ? '<span class="chip bad">ไม่รองรับ</span>' : '<span class="chip">ยังไม่อนุญาต</span>';
-  if (!n) return `<div class="card"><div class="row2"><h2>การแจ้งเตือน</h2>${chip}</div><small id="nEnded" style="display:block;margin-top:8px">ทริปนี้จบแล้ว — ไม่มีรายการให้เตือน</small></div>`;
+  if (!n) return `<div class="card"><div class="row2"><h2>การแจ้งเตือน</h2>${chip}</div><small id="nEnded" class="hint">ทริปนี้จบแล้ว — ไม่มีรายการให้เตือน</small></div>`;
   return `<div class="card"><div class="row2"><h2>การแจ้งเตือน</h2>${chip}</div>
   <div class="row2" style="margin:8px 0"><div>เตือนทุกรายการที่มีเวลา<small style="display:block">${n} รายการ · เปิดปิดรายตัวด้วยกระดิ่ง</small></div><button class="switch ${cfg.notif.on ? 'on' : ''}" id="nOn" aria-label="เตือนทุกรายการ"><i></i></button></div>
   <div class="row2" style="margin:8px 0"><span>เตือนล่วงหน้า</span><select class="dropdown" id="nLead">${[5, 10, 15, 30, 60, 120].map(m => `<option value="${m}" ${cfg.notif.lead === m ? 'selected' : ''}>${m < 60 ? m + ' นาที' : m / 60 + ' ชั่วโมง'}</option>`).join('')}</select></div>
   <div class="btns" style="margin-top:6px">${perm === 'default' ? '<button class="btn pri" id="nAllow">อนุญาตการแจ้งเตือน</button>' : ''}<button class="btn" id="nIcs">เพิ่มลงปฏิทิน (.ics)</button></div>
-  <small style="display:block;margin-top:8px">เตือนได้ตอนเปิดแอปค้างไว้ · อยากให้เตือนตอนปิดแอป ให้ใช้ “เพิ่มลงปฏิทิน”</small></div>`;
+  <small class="hint">เตือนได้ตอนเปิดแอปค้างไว้ · อยากให้เตือนตอนปิดแอป ให้ใช้ “เพิ่มลงปฏิทิน”</small></div>`;
 }
 function bindNotif(el) {
   const on = $('#nOn'); if (!on) return;
@@ -2042,10 +2042,10 @@ const docCan = () => true;          // central system: anyone may rename / delet
 function docCard(d) {
   const u = dc.urls[d.id], img = d.mime !== 'application/pdf', by = d.created_by && (d.scope === 'shared' || d.created_by !== d.owner) ? ' · ' + (d.scope === 'shared' ? 'โดย ' : 'เพิ่มโดย ') + esc(ownerName(d.created_by)) : '';
   return `<div class="dcard" data-id="${esc(d.id)}"><div class="dthumb ${img ? '' : 'pdf'}" data-th="${esc(d.id)}">${u && img ? `<img src="${u}" alt="">` : docIcon(d.kind)}</div>
-  <div class="dbody"><div class="dt"><b>${docIcon(d.kind)} ${esc(d.title)}</b><button class="dmore" data-more="${esc(d.id)}" aria-label="เมนูเอกสาร">⋯</button></div>
+  <div class="dbody"><div class="dt"><b>${docIcon(d.kind)} ${esc(d.title)}</b><button class="dmore" data-more="${esc(d.id)}" aria-label="เมนูเอกสาร">${ic('more')}</button></div>
   ${d.note ? `<small class="dnote">${esc(d.note)}</small>` : ''}<small>${d.scope === 'person' ? 'ของ ' + esc(ownerName(d.owner)) + ' · ' : ''}เพิ่ม ${esc(docDate(d.created_at))}${by}</small>
   <small class="lock">${d.scope === 'shared' ? ic('users') + ' ทุกคนในทริปเห็น' : ic('user') + ' เอกสารของ ' + esc(ownerName(d.owner))}${dc.cached.has(d.id) ? ' · ' + ic('download') + ' ในเครื่อง' : ''}</small></div>
-  <div class="dact"><button class="btn pri big" data-show="${esc(d.id)}">โชว์</button><button class="btn" data-dl="${esc(d.id)}">ดาวน์โหลด/แชร์</button></div></div>`;
+  <div class="dact"><button class="btn pri big" data-show="${esc(d.id)}">โชว์</button><button class="btn" data-dl="${esc(d.id)}" aria-label="ดาวน์โหลดหรือแชร์ ${esc(d.title)}">${ic('share')} แชร์</button></div></div>`;
 }
 const SHARED_K = '__shared';
 function docGroups() {          // [{k, name, list}] in display order: each traveller (list order), unknown owners, then ส่วนกลาง
@@ -2249,7 +2249,7 @@ function openViewer(o) {
   dv.list = docsOf(dc.seg); dv.i = Math.max(0, dv.list.findIndex(d => d.id === o.id));
   ov.innerHTML = `<div class="dov-bar"><div class="dov-t"><small id="dvOwner"></small><b id="dvTitle"></b></div><button class="ov-btn" id="dvRot" aria-label="หมุน">${ic('rotate')}</button><button class="ov-btn" id="dvClose" aria-label="ปิด">${ic('x')}</button></div>
     <div class="dov-stage" id="dvStage"><div class="dov-msg" id="dvMsg"></div></div>
-    <div class="dov-foot"><div class="dov-off" id="dvOff">${ic('cloud')} บันทึกออฟไลน์แล้ว</div><div class="dov-hint" id="dvHint" hidden>เพิ่มความสว่าง/ปิดล็อกหน้าจออัตโนมัติ</div><div class="dov-nav"><button class="ov-btn" id="dvPrev" aria-label="ก่อนหน้า">‹</button><span id="dvCount"></span><button class="ov-btn" id="dvNext" aria-label="ถัดไป">›</button><button class="btn" id="dvShare">ดาวน์โหลด/แชร์</button></div></div>`;
+    <div class="dov-foot"><div class="dov-off" id="dvOff">${ic('cloud')} บันทึกออฟไลน์แล้ว</div><div class="dov-hint" id="dvHint" hidden>เพิ่มความสว่าง/ปิดล็อกหน้าจออัตโนมัติ</div><div class="dov-nav"><button class="ov-btn" id="dvPrev" aria-label="ก่อนหน้า">${ic('chev','flip')}</button><span id="dvCount"></span><button class="ov-btn" id="dvNext" aria-label="ถัดไป">${ic('chev')}</button><button class="btn" id="dvShare">ดาวน์โหลด/แชร์</button></div></div>`;
   $('#dvClose').onclick = () => closeViewer(); $('#dvRot').onclick = () => { dv.r = (dv.r + 90) % 360; dvClamp(); dvApply(); }; $('#dvPrev').onclick = () => dvGo(-1); $('#dvNext').onclick = () => dvGo(1); $('#dvShare').onclick = () => shareDoc(dv.list[dv.i]);
   dvGestures(); dvShow(); dvWake();
 }
