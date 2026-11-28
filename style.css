@@ -216,7 +216,9 @@ nav button.on svg{fill:color-mix(in srgb,currentColor 22%,transparent);stroke-wi
 .rt.two .rp.from::after{content:"";position:absolute;left:5px;top:19px;bottom:-14px;width:2px;background:var(--line)}
 .mrow{display:flex;flex-wrap:wrap;gap:var(--s1) var(--s2);align-items:center;margin-top:var(--s2)}.mrow .chip{margin:0}
 .mpill{display:inline-flex;align-items:center;gap:var(--s1);min-height:24px;padding:0 var(--s2);border-radius:99px;background:var(--priSoft);color:var(--priInk);font-size:var(--t1);font-weight:500;white-space:nowrap}.mpill .ic{width:16px;height:16px;vertical-align:0}
-.staychip{display:inline-flex;align-items:center;gap:var(--s2);min-height:var(--tap);max-width:100%;padding:0 var(--s3);border:0;border-radius:99px;background:var(--soft);color:var(--priInk);font:inherit;font-size:var(--t1);font-weight:600;text-align:left;cursor:pointer}.staychip .ic{width:16px;height:16px;flex:none;vertical-align:0}.staychip span{min-width:0}.staychip .nw{white-space:nowrap}.staychip.est{font-weight:500}.staychip:disabled{opacity:.55;cursor:default}
+.nw{white-space:nowrap}
+.tl:not(.editing) .stayrow{margin-right:calc(-1 * (var(--tap) * 2 + var(--s2) + var(--s3)))}.tl.editing .stayrow{margin-right:calc(-1 * (var(--tap) + var(--s3) * 2))}
+.staychip{display:inline-flex;align-items:center;gap:var(--s2);min-height:var(--tap);max-width:100%;padding:0 var(--s3);border:0;border-radius:99px;background:var(--soft);color:var(--priInk);font:inherit;font-size:var(--t1);font-weight:600;text-align:left;white-space:nowrap;cursor:pointer}.staychip .ic{width:16px;height:16px;flex:none;vertical-align:0}.staychip span{white-space:nowrap}.staychip.est{font-weight:500}.staychip.static{background:transparent;color:var(--mut);font-weight:500;cursor:default;padding:0 var(--s1)}.staychip .nw{white-space:nowrap}
 .step-ac{display:flex;flex-wrap:wrap;gap:var(--s2);align-content:flex-start;justify-content:flex-end;width:calc(var(--tap) * 2 + var(--s2));flex:none}
 .step-b .chip{background:none;padding:0;min-height:0;margin:0 var(--s3) 0 0;color:var(--mut);font-weight:400}
 .step-b .chip a{color:var(--priInk)}
@@ -476,3 +478,6 @@ html[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) bri
 .dshared.on{background:var(--pri);color:#fff;box-shadow:none}.dshared.on small,.dshared.on .dcount{color:#fff}.dshared.on .avatar{box-shadow:0 0 0 2px #ffffffd0}
 .dchips .dpc{gap:var(--s2)}.dpc .dcount{font-weight:600;opacity:.85}
 #dcSeg .dchips{margin:var(--s2) 0 0;padding:2px 0}
+
+#sqChips{flex-wrap:wrap;overflow:visible;margin:var(--s2) 0 0;padding:2px 0}
+.staychip .ic:last-child{margin-left:var(--s1)}
