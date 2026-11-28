@@ -44,3 +44,7 @@ Excel merged-cell layout and formulas are not preserved (values only); there is 
 
 
 **Batch 3 (plan card / times / notifications / tips / documents)** — A: start time of a new or edited step is >= previous arrival (+ stay), chip + inline warning + blocked save, same rule in "เพิ่มเข้าแผน" and "แทรกเข้าแผน"; B: place text does nothing, details icon only when the destination has details, from -> to card layout, one travel pill; C: one notification switch in the Menu (no bells elsewhere), permission state shown; D: no Tips / น่าไป / TikTok / Facebook; E: documents selector (ส่วนกลาง card + person chips). Motion: Q4/Q4b forbid layout / box-shadow transitions and non-transform/opacity keyframes.
+## Stay window
+- Every step with a destination + arrive time shows the chip "อยู่ที่นี่ HH.MM–HH.MM (N นาที)" (44 px, tappable; "~" = estimate). The last stop of a day has a window without any later stop. Old sheets without a `Stay` column render derived windows; the column appears in the saved header only after a stay is stored.
+- Chip sheet: minutes ⇄ end time, overlapping later stops are pushed with a visible note, locked day = disabled. Step dialog "ใช้เวลาที่จุดหมาย" is the same stored value.
+- Suggestions show "แทรกหลัง X · เดินทาง N นาที · อยู่ที่นั่น HH.MM–HH.MM" (arrival = previous leave + travel; stay = min(default, free gap) >= 20 min; also after a last stop); inserting writes arrive + Stay.

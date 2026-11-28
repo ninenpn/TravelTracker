@@ -70,7 +70,7 @@ function mockDocs(fn, a, docs, flags) {
   return { status: 404, body: { message: 'unknown ' + fn } };
 }
 
-/* opts: w,h, clock(ISO), active (saved trip id), stepsPerDay, init (function run in the page before any script), reducedMotion */
+/* opts: locks (rows of the public Locks tab, header first), w,h, clock(ISO), active (saved trip id), stepsPerDay, init (function run in the page before any script), reducedMotion */
 async function open(opts = {}) {
   const b = await chromium.launch(), ctx = await b.newContext({ viewport: { width: opts.w || 390, height: opts.h || 844 }, hasTouch: true, isMobile: true, reducedMotion: opts.reducedMotion || 'no-preference' });
   const rpc = [], docs = [], flags = { nullPriv: false, err500: false, delayMs: 0, noDocsSql: false, nullDocs: false, offline: false, noAvSql: false, failWrites: false }, avs = {}, trips = Object.fromEntries(Object.keys(FAKE).map(k => [k, fakeTrip(k, opts.stepsPerDay || 3)]));
@@ -100,6 +100,8 @@ async function open(opts = {}) {
   });
   /* third-party geocoding / routing are not under test (and are rate limited): answer "nothing found" so runs are deterministic */
   await ctx.route(/nominatim\.openstreetmap\.org|routing\.openstreetmap\.de/, r => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: r.request().url().includes('routing') ? '{"code":"NoRoute"}' : '[]' }));
+  /* the public Locks tab is answered from the fixture (empty unless opts.locks = rows incl. header), never from the live database */
+  await ctx.route(/\/rest\/v1\/sheet_rows\?.*tab=eq\.Locks/, r => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify((opts.locks || []).map((c, i) => ({ cells: c, row_no: i }))) }));
   const p = await ctx.newPage(), reqs = [];
   p.on('pageerror', e => state.errors.push('pageerror: ' + e.message));
   p.on('console', m => { if (m.type() === 'error' && !/404|Failed to load resource/.test(m.text())) state.errors.push('console: ' + m.text().slice(0, 140)); });

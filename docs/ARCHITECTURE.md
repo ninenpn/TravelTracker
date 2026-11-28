@@ -16,7 +16,7 @@ Every tab is a list of rows; a row is a JSON array of strings (`cells`).
 - `private_rows(trip, tab, row_no, cells)` — other trips (`macau`, `nagoya`, `kunming`, `xian`): tabs `plan`, `Cost`, extras, plus `media` (picture index) and `media:<id>` (base64 JPEG in ≤150 k-char chunks).
 - Private/secret tables: `trip_members`, `member_pins(name, hash)`, `pin_fail`, `app_secrets` (edit-code hash), `sheet_history` (plan snapshots, ≥10 min apart, last 30).
 - `Users` tab: `Name, Budget[, Budget <CUR>]` — the list of members (PIN values are **not** here).
-- `plan` tab columns: `Day, Start time, Start Location, Arrive time, Arrive Location, How to Travel, Note` (+ `Notice`, `Tickets`, `Location`). A row with text in `Day` starts a new day; rows with a text-only `Start time` are free-text lines; a row `Day2`/`Day4`… in the start-time column after the last day = "ideas" block.
+- `plan` tab columns: `Day, Start time, Start Location, Arrive time, Arrive Location, How to Travel, Note` (+ `Notice`, `Tickets`, `Location`, `Stay` = minutes spent at the destination; optional, the header is added only when a stay is first stored, sheets without it keep working with derived windows). A row with text in `Day` starts a new day; rows with a text-only `Start time` are free-text lines; a row `Day2`/`Day4`… in the start-time column after the last day = "ideas" block.
 
 ## Read path (`app.js`: `fetchTab` → `fetchSb` / `fetchPriv`)
 - Public tab: `GET /rest/v1/sheet_rows?tab=eq.<tab>&order=row_no` with the publishable key; if the table is missing/unreachable → Google Sheet gviz CSV (Almaty only).

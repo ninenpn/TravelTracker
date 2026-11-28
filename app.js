@@ -251,13 +251,13 @@ const cleanT = s => String(s || '').replace(/\s*น\.?\s*$/, '').trim();
 const isTime = s => /^\d{1,2}[.:]\d{2}$/.test(cleanT(s));
 const tm = s => { const m = String(s || '').match(/(\d{1,2})[.:](\d{2})/); return m ? [+m[1], +m[2]] : null; };
 function planCols(h) {
-  const ix = { day: colIndex(h, ['Day', 'วัน', 'วันที่']), loc: colIndex(h, ['Location', 'เมือง']), st: colIndex(h, ['Start time']), sl: colIndex(h, ['Start Location']), at: colIndex(h, ['Arrive time']), al: colIndex(h, ['Arrive Location']), how: colIndex(h, ['How to Travel']), note: colIndex(h, ['Note']), notice: colIndex(h, ['Notice']), tk: colIndex(h, ['Tickets']) };
+  const ix = { day: colIndex(h, ['Day', 'วัน', 'วันที่']), loc: colIndex(h, ['Location', 'เมือง']), st: colIndex(h, ['Start time']), sl: colIndex(h, ['Start Location']), at: colIndex(h, ['Arrive time']), al: colIndex(h, ['Arrive Location']), how: colIndex(h, ['How to Travel']), note: colIndex(h, ['Note']), notice: colIndex(h, ['Notice']), tk: colIndex(h, ['Tickets']), stay: colIndex(h, ['Stay']) };
   if (ix.day < 0) ix.day = 0; return ix;
 }
 function stepFromRow(r, ix, first) {
   const g = i => i >= 0 ? (r[i] || '') : '';
   const st = g(ix.st), step = isTime(st) ? { time: cleanT(st) } : { text: st };
-  return Object.assign(step, { from: g(ix.sl), toTime: cleanT(g(ix.at)), to: g(ix.al), how: g(ix.how), note: g(ix.note), notice: g(ix.notice), tickets: g(ix.tk), city: first ? '' : g(ix.loc), _row: r });
+  return Object.assign(step, { from: g(ix.sl), toTime: cleanT(g(ix.at)), to: g(ix.al), how: g(ix.how), note: g(ix.note), notice: g(ix.notice), tickets: g(ix.tk), stay: g(ix.stay), city: first ? '' : g(ix.loc), _row: r });
 }
 function parsePlan(rows) {
   const header = rows[0] || [], ix = planCols(header), g = (r, i) => i >= 0 ? (r[i] || '') : '';
@@ -710,13 +710,13 @@ async function setDayLock(d, on) {
 }
 /* a plan step: time column + card. Route = two labelled points (จาก / ไป) joined by a connector line, bigger destination; travel mode + time = ONE pill. Notes / notices / tickets / stay info of the DESTINATION live behind the details icon. */
 function stepHtml(d, s, k) {
-  const tr = travelMin(s), sy = stayMin(d.steps, k), hasRoute = !!(s.from || s.to), det = !ui.edit && stepHasDetails(s), inStay = s.to && stayInfo() && isStayPlace(s.to);
-  const pills = (s.how || tr ? `<span class="mpill">${s.how ? howIcon(s.how, false) : ic('timer')}${s.how ? ' ' + esc(s.how) : ''}${tr ? ' · เดินทาง ' + fmtDur(tr) : ''}</span>` : '') + (sy ? `<span class="chip tm">${ic('clock')} อยู่ที่นั่น ${fmtDur(sy)}</span>` : '') + (s.city ? `<span class="chip">${esc(s.city)}</span>` : '') + (ui.edit && stepHasDetails(s) ? `<span class="chip" data-hint="1">${ic('info')} มีรายละเอียด</span>` : '');
+  const tr = travelMin(s), sw = stayWindow(d.steps, k), hasRoute = !!(s.from || s.to), det = !ui.edit && stepHasDetails(s), inStay = s.to && stayInfo() && isStayPlace(s.to);
+  const pills = (s.how || tr ? `<span class="mpill">${s.how ? howIcon(s.how, false) : ic('timer')}${s.how ? ' ' + esc(s.how) : ''}${tr ? ' · เดินทาง ' + fmtDur(tr) : ''}</span>` : '')  + (s.city ? `<span class="chip">${esc(s.city)}</span>` : '') + (ui.edit && stepHasDetails(s) ? `<span class="chip" data-hint="1">${ic('info')} มีรายละเอียด</span>` : '');
   const route = !hasRoute ? '' : `<div class="rt${s.from && s.to ? ' two' : ''}">${s.from ? `<div class="rp from"><i class="dot"></i><div><small>${s.to ? 'จาก' : 'ที่'}</small><span class="nm">${placeHtml(s.from)}</span></div></div>` : ''}${s.to ? `<div class="rp to"><i class="dot"></i><div><small>${s.from ? 'ไป' : 'ไปที่'}</small><b class="nm">${placeHtml(s.to)}${inStay ? ` <i class="stbadge" aria-hidden="true">${ic('bed')}</i>` : ''}</b></div></div>` : ''}</div>`;
   const inline = s.to ? '' : `${s.tickets ? `<span class="chip">${ic('ticket')} ${link(s.tickets)}</span>` : ''}${s.note ? `<div class="note">${link(s.note)}</div>` : ''}${s.notice ? `<div class="note">${ic('warn')} ${link(s.notice)}</div>` : ''}`;
   const acts = ui.edit ? '' : `<div class="step-ac">${det ? `<button type="button" class="navbtn dtl" data-det="${k}" aria-label="รายละเอียดสถานที่">${ic('info')}</button>` : ''}${stepNav(s)}</div>`;
   return `<div class="step" data-i="${k}"><div class="step-t">${esc(s.time || '')}${s.toTime ? `<small>→ ${esc(s.toTime)}</small>` : ''}</div><div class="step-c">${s.text && !hasRoute ? `<div class="step-i">${howIcon(s.how, true)}</div>` : ''}<div class="step-b">
-    ${s.text ? `<div>${link(s.text)}</div>` : ''}${route}${pills ? `<div class="mrow">${pills}</div>` : ''}${inline}</div>
+    ${s.text ? `<div>${link(s.text)}</div>` : ''}${route}${pills ? `<div class="mrow">${pills}</div>` : ''}${sw ? `<div class="mrow"><button type="button" class="staychip${sw.kind === 'est' ? ' est' : ''}" data-stay="${k}" ${isLocked(d) ? 'disabled' : ''} aria-label="แก้เวลาที่อยู่ที่นี่"><span><span class="nw">อยู่ที่นี่ ${sw.kind === 'est' ? '~' : ''}${fmtT(sw.a)}–${fmtT(sw.a + sw.min)}</span> <span class="nw">(${sw.kind === 'est' ? '~' : ''}${sw.min} นาที)</span></span>${ic('edit')}</button></div>` : ''}${inline}</div>
     ${acts}<div class="grip" aria-label="ลากเพื่อจัดลำดับ"><svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></div></div></div>`;
 }
 function renderPlan() {
@@ -744,6 +744,7 @@ function renderPlan() {
   { const lb = $('#lockBtn'); if (lb) lb.onclick = () => setDayLock(d, !locked); }
   const sb = $('#stayBtn'); if (sb) sb.onclick = stayDialog;
   const ib = $('#infoBtn'); if (ib) ib.onclick = infoDialog;
+  $$('[data-stay]', el).forEach(b => b.onclick = e => { e.stopPropagation(); stayEditDialog(+b.dataset.stay); });
   $$('[data-det]', el).forEach(b => b.onclick = e => { e.stopPropagation(); stepDetailsDialog(d.steps[+b.dataset.det]); });
   const nd = $('#nudge'); if (nd) nd.onclick = () => { ui.spotView = 'sug'; $('[data-tab=spots]').click(); };
   if (ui.edit) {
@@ -803,10 +804,27 @@ function prevTimedIdx(day, at) { for (let j = Math.min(at, day.steps.length) - 1
 function earliestStart(day, at, stay = 0) {
   const j = prevTimedIdx(day, at); if (j < 0) return null;
   const pv = day.steps[j]; let m = tmin(pv.toTime); if (m < tmin(pv.time)) m += 1440;
-  return { m: m + (stay > 0 ? stay : 0), prev: pv, j };
+  return { m: m + (stayRaw(pv) || 0) + (stay > 0 ? stay : 0), prev: pv, j };
 }
 function dayClashes(steps) { let n = 0; steps.forEach((st, k) => { if (!isTime(st.time)) return; const e = earliestStart({ steps }, k); if (e && startClash(st.time, e)) n++; }); return n; }          // timed stops that start before the previous timed stop ends
 function startClash(str, e) { if (!e) return false; let s = tmin(str); if (s == null || !isTime(str)) return false; if (e.m >= 1440 && s < tmin(e.prev.time)) s += 1440; return s < e.m; }          // a start before the previous start only means "next day" when the previous stop ends after midnight
+/* ---- time spent at a stop. Source of truth = optional plan column "Stay" (minutes at the DESTINATION). Order: explicit Stay -> derived (next timed row's start) -> default estimate (60 min for places; none for flights / boats / the stay itself) ---- */
+const STAY_MAX = 720, STAY_MSG = 'ไม่เกิน 12 ชม.';          // a stay is 0..720 minutes everywhere (entered or read from the sheet)
+const stayRaw = st => { const t = String(st && st.stay || '').trim(); return /^\d{1,4}$/.test(t) && +t <= STAY_MAX ? +t : null; };
+const stayBad = v => v !== '' && v != null && !(+v >= 0 && +v <= STAY_MAX);
+const STAY_DEF = 60;
+function stayWindow(steps, k) {
+  const st = steps[k]; if (!st || !st.to || !isTime(st.toTime)) return null; const a = tmin(st.toTime); if (a == null) return null;
+  const ex = stayRaw(st); if (ex != null) return ex > 0 ? { a, min: ex, kind: 'set' } : null;
+  const dv = stayMin(steps, k); if (dv) return { a, min: dv, kind: 'derived' };
+  const hw = howName(st.how, false); if (hw === 'plane' || hw === 'ship' || (stayInfo() && isStayPlace(st.to))) return null;
+  return { a, min: STAY_DEF, kind: 'est' };
+}
+function setStayCell(row, min) {          // writes the Stay column; the header is added only when a stay is first stored
+  const p = data.plan, ix = p.cols;
+  if (ix.stay < 0) { if (min == null || min === '') return; const w = Math.max(p.header.length, row.length, ...p.days.flatMap(d => d.steps.map(x => x._row.length))); while (p.header.length < w) p.header.push(''); ix.stay = p.header.length; p.header.push('Stay'); }
+  while (row.length <= ix.stay) row.push(''); row[ix.stay] = min == null ? '' : String(min);
+}
 function stayMin(steps, k) { const nx = nextTimed(steps, k), g = nx ? gapMin(tmin(steps[k].toTime), tmin(nx.time)) : null; return g > 0 && g < 720 ? g : null; }
 /* how far the next timed stop after step k must move so that it starts >= this step's arrival + stay (cross-midnight aware; free-text rows skipped). delta > 0 = push later */
 function followShift(day, k, stay) {
@@ -836,7 +854,7 @@ function reuseLists() {
 function stepDialog(i) {
   const p = data.plan, d = p.days[ui.day], s = i == null ? { time: '', text: '', from: '', to: '', toTime: '', how: '', note: '', _row: [] } : d.steps[i];
   const d0 = d.steps[i == null ? d.steps.length - 1 : i - 1];
-  const trav0 = i == null ? null : travelMin(s) ?? gapMin(tmin(s.time), tmin(s.toTime)), stay0 = i == null ? null : stayMin(d.steps, i);
+  const trav0 = i == null ? null : travelMin(s) ?? gapMin(tmin(s.time), tmin(s.toTime)), stay0 = i == null ? null : (stayRaw(s) ?? stayMin(d.steps, i));
   const e0 = i == null ? earliestStart(d, d.steps.length, 0) : null;
   if (i == null && e0) s.time = fmtT(e0.m); else if (i == null && d0 && d0.toTime) s.time = d0.toTime;                // a new step starts when the previous one arrives (+ the stay)
   const dlgEl = openDlg(`<form method="dialog"><h3>${i == null ? 'เพิ่มรายการ' : 'แก้ไขรายการ'}</h3>
@@ -849,7 +867,7 @@ function stepDialog(i) {
   <label>วิธีเดินทาง</label><input name="how" value="${esc(s.how || '')}" placeholder="Airplane / Taxi / Walk"><div class="chips reuse" id="reuseHow">${reuseLists().how.map(n => `<button type="button" class="tag" data-v="${esc(n)}">${esc(n)}</button>`).join('')}</div>
   <label>เวลาเดินทาง (นาที) <small>(พิมพ์แล้วเวลาถึงคำนวณให้)</small></label><input name="trav" type="number" inputmode="numeric" min="0" value="${trav0 ?? ''}"><div class="chips reuse" id="reuseTrav">${[10, 15, 20, 30, 45, 60, 90, 120].map(m => `<button type="button" class="tag" data-m="${m}">${fmtDur(m)}</button>`).join('')}</div>
   <label>เวลาถึง</label><input name="at" value="${esc(s.toTime || '')}" placeholder="เช่น 10.35">
-  <label>ใช้เวลาที่จุดหมาย (นาที)</label><input name="stay" type="number" inputmode="numeric" min="0" value="${stay0 ?? ''}" placeholder="เช่น 90"><div class="chips reuse" id="reuseStay">${[30, 60, 90, 120, 180, 240].map(m => `<button type="button" class="tag" data-m="${m}">${fmtDur(m)}</button>`).join('')}</div>
+  <label>ใช้เวลาที่จุดหมาย (นาที)</label><input name="stay" type="number" inputmode="numeric" min="0" max="720" value="${stay0 ?? ''}" placeholder="เช่น 90"><div class="warn-in" id="stMax" hidden></div><div class="chips reuse" id="reuseStay">${[30, 60, 90, 120, 180, 240].map(m => `<button type="button" class="tag" data-m="${m}">${fmtDur(m)}</button>`).join('')}</div>
   <div class="warn-in" id="stShift" aria-live="polite" hidden></div>
   ${i != null && d.steps[i + 1] ? '<label class="chk"><input type="checkbox" name="shift" checked> เลื่อนรายการถัดไปในวันนี้ตามเวลา</label>' : ''}
   <label>โน้ต</label><input name="note" value="${esc(s.note || '')}">
@@ -881,15 +899,19 @@ function stepDialog(i) {
   const useE = () => { const e = dlgEl._e; if (!e) return; F.st.value = fmtT(e.m); F.st.dispatchEvent(new Event('input', { bubbles: true })); };
   $('#stChip', dlgEl).onclick = useE;
   F.st.addEventListener('input', guard); F.day.addEventListener('change', guard); ['at', 'trav', 'stay'].forEach(n => F[n].addEventListener('input', guard));
+  F.stay.addEventListener('input', () => { const b = stayBad(F.stay.value), m = $('#stMax', dlgEl); m.hidden = !b; if (b) m.innerHTML = `${ic('warn')}<span>${STAY_MSG}</span>`; });
   if (F.pstay) F.pstay.addEventListener('input', () => { guard(); if (dlgEl._e && !F.st.dataset.touched) useE(); });
   F.st.addEventListener('keydown', () => { F.st.dataset.touched = '1'; }); guard();
   $('form', dlgEl).onsubmit = async ev => {
     const v = ev.submitter ? ev.submitter.value : 'ok', f = new FormData(ev.target);
     if (v === 'x') return;
     if (v === 'del') { if (confirm('ลบรายการนี้?')) { d.steps.splice(i, 1); renderPlan(); scheduleSave(); } return; }
+    if (stayBad(String(f.get('stay') || '').trim())) { ev.preventDefault(); $('#stMax', dlgEl).hidden = false; $('#stMax', dlgEl).innerHTML = `${ic('warn')}<span>${STAY_MSG}</span>`; return toast(STAY_MSG, 3500); }
     if (guard()) { ev.preventDefault(); toast('เวลาเริ่มชนกับรายการก่อนหน้า — แตะ “ใช้ ' + fmtT(dlgEl._e.m) + '” หรือแก้เวลา', 4000); return; }
     const ix = p.cols, row = s._row.slice(), set = (c, val) => { if (c >= 0) { while (row.length <= c) row.push(''); row[c] = val; } };
     set(ix.st, f.get('st')); set(ix.sl, f.get('from')); set(ix.al, f.get('to')); set(ix.at, f.get('at')); set(ix.how, f.get('how')); set(ix.note, f.get('note')); if (f.has('notice')) set(ix.notice, f.get('notice')); if (f.has('tickets')) set(ix.tk, f.get('tickets'));
+    { const sv = String(f.get('stay') || '').trim(), had = i != null && stayRaw(s) != null;          // the field is the stored Stay (a derived prefill that was not changed is not written)
+      if (sv === '') { if (had) setStayCell(row, null); } else if (had || i == null || sv !== String(stay0 ?? '')) setStayCell(row, +sv); }
     const ns = stepFromRow(row, ix, i === 0);
     const target = p.days[+f.get('day')];
     if (target === d && i != null) d.steps[i] = ns; else { if (i != null) d.steps.splice(i, 1); target.steps.push(ns); }
@@ -900,6 +922,32 @@ function stepDialog(i) {
         else if (sh && sh.delta > 0) { shiftFrom(d, i + 1, sh.delta); toast('จะเลื่อนจุดถัดไปไป ' + fmtT(sh.to) + ' (ไม่ให้เวลาซ้อนกัน)', 4500); }   // never overlap: always push later stops
       } }
     const url = f.get('map').trim(); if (url && ns.to) { try { const c = await coordsFromLink(url); if (c) await savePlace(ns.to, c); else toast('อ่านพิกัดจากลิงก์ไม่ได้'); } catch (e) { toast(e.message); } }
+    renderPlan(); scheduleSave();
+  };
+}
+function stayEditDialog(k) {          // tiny sheet: how long at this stop (minutes <-> leave time), no need to create the next stop
+  const p = data.plan, d = p.days[ui.day], st = d && d.steps[k]; if (!st) return;
+  if (isLocked(d)) return toast(LOCKED_MSG, 3500);
+  if (!sheetApi.on()) return toast('ยังไม่ได้ตั้งค่า Supabase จึงแก้ไขไม่ได้', 4000);
+  const w = stayWindow(d.steps, k); if (!w) return;
+  const dl = openDlg(`<form method="dialog"><h3>${ic('clock')} อยู่ที่ ${esc(st.to)}</h3><div class="mut">ถึง ${fmtT(w.a)}</div>
+  <div class="chips reuse" id="sqChips">${[15, 30, 45, 60, 90, 120].map(m => `<button type="button" class="tag" data-m="${m}">${fmtDur(m)}</button>`).join('')}</div>
+  <label>อยู่กี่นาที</label><input name="min" type="number" inputmode="numeric" min="1" max="720" value="${w.min}">
+  <label>ถึงเวลา (เช่น 11.00)</label><input name="end" value="${fmtT(w.a + w.min)}">
+  <div class="warn-in" id="sqNote" aria-live="polite" hidden></div>
+  <div class="btns"><button value="ok" class="btn pri">บันทึก</button><button value="x" class="btn" formnovalidate>ยกเลิก</button></div></form>`);
+  const F = $('form', dl).elements, note = $('#sqNote', dl);
+  const upd = () => { const m = +F.min.value; if (m > STAY_MAX) { note.hidden = false; note.innerHTML = `${ic('warn')}<span>${STAY_MSG}</span>`; return; } const sh = m > 0 ? followShift(d, k, m) : null; note.hidden = !(sh && sh.delta > 0); if (!note.hidden) note.innerHTML = `${ic('warn')}<span>จะเลื่อนจุดถัดไปไป ${fmtT(sh.to)}</span>`; };
+  F.min.addEventListener('input', () => { const m = +F.min.value; if (m > 0) F.end.value = fmtT(w.a + m); upd(); });
+  F.end.addEventListener('input', () => { const e = tmin(F.end.value), g = e == null ? null : gapMin(w.a, e); if (g > 0) { F.min.value = g; upd(); } });          // (an end time more than 12 h away shows the same message)
+  $$('#sqChips .tag', dl).forEach(b => b.onclick = () => { F.min.value = b.dataset.m; F.min.dispatchEvent(new Event('input')); });
+  upd();
+  $('form', dl).onsubmit = ev => {
+    if (ev.submitter && ev.submitter.value !== 'ok') return;
+    const m = +F.min.value; if (!(m > 0)) { ev.preventDefault(); return toast('ใส่จำนวนนาทีที่อยู่ที่นี่'); }
+    if (m > STAY_MAX) { ev.preventDefault(); upd(); return toast(STAY_MSG, 3500); }
+    const row = st._row.slice(); setStayCell(row, m); d.steps[k] = stepFromRow(row, p.cols, k === 0);
+    const sh = followShift(d, k, m); if (sh && sh.delta > 0) { shiftFrom(d, k + 1, sh.delta); toast('จะเลื่อนจุดถัดไปไป ' + fmtT(sh.to) + ' (ไม่ให้เวลาซ้อนกัน)', 4500); }
     renderPlan(); scheduleSave();
   };
 }
@@ -1320,13 +1368,13 @@ const coordOf = q => ovr(q) || gc.cache[gKey(q)];
 const knownQ = q => !!ovr(q) || (gKey(q) in gc.cache);
 function dayWaypoints(di) {
   const p = data.plan, d = p && p.days[di]; if (!d) return [];
-  const out = [], add = (n, t, how, ts, te) => {
+  const out = [], add = (n, t, how, ts, te, lv) => {
     if (!n) return; const q = qName(n); if (!q) return;
     if (GENERIC.test(n.trim()) && !ovr(q)) return;
-    if (out.length && out[out.length - 1].q === q) { if (how && !out[out.length - 1].how) out[out.length - 1].how = how; return; }
-    out.push({ name: norm(q) === 'ที่พัก' && data.stay && data.stay.name ? `${n.trim()} · ${data.stay.name}` : n.trim(), q, time: t || '', di, day: dayTitle(d, di), how: how || '', ts: ts || '', te: te || '' });
+    if (out.length && out[out.length - 1].q === q) { if (how && !out[out.length - 1].how) out[out.length - 1].how = how; if (lv != null) out[out.length - 1].lv = lv; return; }
+    out.push({ name: norm(q) === 'ที่พัก' && data.stay && data.stay.name ? `${n.trim()} · ${data.stay.name}` : n.trim(), q, time: t || '', di, day: dayTitle(d, di), how: how || '', ts: ts || '', te: te || '', lv: lv ?? null });
   };
-  d.steps.forEach((st, k) => { if (k === 0) add(st.from, st.time, ''); add(st.to, st.toTime || st.time, st.how, st.time, st.toTime); });
+  d.steps.forEach((st, k) => { if (k === 0) add(st.from, st.time, ''); const w = stayWindow(d.steps, k); add(st.to, st.toTime || st.time, st.how, st.time, st.toTime, w && w.kind !== 'derived' ? w.a + w.min : null); });
   return out;
 }
 function scopeDays() {
@@ -1514,13 +1562,15 @@ function analyzeSpot(s, ctx) {
   near.sort((x, y) => x.d - y.d);
   const nearest = near.filter(x => { if (seen.has(x.stop.q)) return false; seen.add(x.stop.q); return true; }).slice(0, 2).map(x => ({ ...x, est: legEst(x.d) }));
   const V = visitMin(s);
-  for (const { di, wps } of ctx.days) {          // earliest day with a gap that is long enough; inside it the smallest detour
+  for (const { di, wps } of ctx.days) {          // earliest day with a gap that is long enough; inside it the smallest detour. Leave time of a stop = arrive + its stay (explicit / default), so a LAST stop of the day also gets suggestions.
     let best = null;
-    for (let i = 0; i < wps.length - 1; i++) {
-      const a = wps[i], b = wps[i + 1], ea = legEst(distM(a.c, s.c)), eb = legEst(distM(s.c, b.c)), base = legEst(distM(a.c, b.c)), vm = a.m + ea.min, est = !!(a.est || b.est);
-      if (ea.min > 45 || eb.min > 45 || vm + V + eb.min + 5 > b.m || !visitOk(s, vm, est, di)) continue;
-      const detour = ea.min + eb.min - base.min;
-      if (!best || detour < best.detour) best = { spot: s, di, a, b, ea, eb, vm, detour, est, free: b.m - (vm + V + eb.min) };
+    for (let i = 0; i < wps.length; i++) {
+      const a = wps[i], b = wps[i + 1] || null, ea = legEst(distM(a.c, s.c)), eb = b ? legEst(distM(s.c, b.c)) : null, base = b ? legEst(distM(a.c, b.c)) : null;
+      const dep = a.lv != null ? Math.max(a.lv, a.m) : a.m, vm = dep + ea.min, est = !!(a.est || (b && b.est));
+      if (ea.min > 45 || (eb && eb.min > 45) || !visitOk(s, vm, est, di)) continue;
+      const S = Math.min(V, b ? b.m - eb.min - 5 - vm : 1380 - vm); if (S < 20) continue;
+      const detour = ea.min + (b ? eb.min - base.min : 0);
+      if (!best || detour < best.detour) best = { spot: s, di, a, b, ea, eb, dep, vm, S, detour, est, free: b ? b.m - (vm + S + eb.min) : 0 };
     }
     if (best) { fit = best; break; }
   }
@@ -1529,7 +1579,7 @@ function analyzeSpot(s, ctx) {
 function insightHtml(r) {
   const days = data.plan ? data.plan.days : [];
   let h = r.near.length ? r.near.map(n => `<div class="ctx">${ic('pin')} ${n.d > 8000 ? 'ไกลจากแผน — จุดที่ใกล้สุดคือ' : 'ใกล้'} <b>${esc(n.stop.name)}</b> · ${esc(dayTitle(days[n.di], n.di))} · ${dist(n.d)} · ${legTxt(n.est)}</div>`).join('') : `<div class="ctx mut">${ic('pin')} ยังไม่พบจุดในแผนที่อยู่ใกล้ที่นี่${r.pending ? ' (กำลังหาพิกัดจุดในแผน…)' : ''}</div>`;
-  h += r.fit ? `<div class="ctx fit">${ic('check')} แทรกหลัง <b>${esc(r.fit.a.name)}</b> ช่วง ${fmtT(r.fit.a.m)}–${fmtT(r.fit.b.m)}, ${legTxt(r.fit.ea)}${r.fit.est ? ' (เวลาโดยประมาณ)' : ''}</div>` : (data.plan ? `<div class="ctx mut">${ic('hourglass')} ยังไม่มีช่วงเวลาว่างพอในแผนที่จะแทรกได้</div>` : '');
+  h += r.fit ? `<div class="ctx fit">${ic('check')} แทรกหลัง <b>${esc(r.fit.a.name)}</b> · เดินทาง ${legTxt(r.fit.ea).replace(/^\S+ /, '')} · อยู่ที่นั่น ${fmtT(r.fit.vm)}–${fmtT(r.fit.vm + r.fit.S)}${r.fit.est ? ' (เวลาโดยประมาณ)' : ''}</div>` : (data.plan ? `<div class="ctx mut">${ic('hourglass')} ยังไม่มีช่วงเวลาว่างพอในแผนที่จะแทรกได้</div>` : '');
   return h;
 }
 function spotCard(s, ctx) {
@@ -1560,12 +1610,12 @@ function spotMatches() {          // places of the list that fit into a gap of a
     if (ctx.days.some(d => d.wps.some(w => distM(w.c, s.c) < 80))) continue;
     const r = analyzeSpot(s, ctx); if (r.fit) items.push({ ...r.fit, near: r.near });
   }
-  return { items: items.sort((x, y) => x.di - y.di || x.a.m - y.a.m), pending: ctx.pending };
+  return { items: items.sort((x, y) => x.di - y.di || x.vm - y.vm), pending: ctx.pending };
 }
 function sugCard(it, idx) {
   const s = it.spot, [ik, col] = SPOT[s.type];
   return `<div class="spot sug" data-sug="${esc(s.name)}"><div class="spot-i" style="--c:${col}">${ic(ik)}</div><div class="spot-b"><b>${esc(s.name)}</b><small>${[nice(s.cuisine), s.meal].filter(Boolean).map(esc).join(' · ')}</small>
-  <div class="ctx fit">${ic('check')} แทรกหลัง <b>${esc(it.a.name)}</b> ช่วง ${fmtT(it.a.m)}–${fmtT(it.b.m)}, ${legTxt(it.ea)}${it.est ? ' (เวลาโดยประมาณ)' : ''}</div>
+  <div class="ctx fit">${ic('check')} แทรกหลัง <b>${esc(it.a.name)}</b> · เดินทาง ${legTxt(it.ea).replace(/^\S+ /, '')} · อยู่ที่นั่น ${fmtT(it.vm)}–${fmtT(it.vm + it.S)}${it.est ? ' (เวลาโดยประมาณ)' : ''}</div>
   <div class="ctx">${ic('route')} ${esc(dayTitle(data.plan.days[it.di], it.di))} · ${it.near && it.near[0] ? `ใกล้ <b>${esc(it.near[0].stop.name)}</b> ${dist(it.near[0].d)}` : 'ใกล้เส้นทางของวันนั้น'}</div>${s.note ? `<div class="note">${esc(s.note)}</div>` : ''}
   <div class="spot-a"><button class="tag pri" data-addplan="${idx}">${ic('plus')} แทรกเข้าแผน</button>${navA({ name: s.name, lat: s.c.lat, lng: s.c.lng }, 'นำทาง', 'tag')}<button class="tag" data-focus="${esc(s.name)}">ดูบนแผนที่</button></div></div></div>`;
 }
@@ -1580,10 +1630,10 @@ async function addSpotToPlan(it) {
   const setCell = (row, c, v) => { if (c >= 0) { while (row.length <= c) row.push(''); row[c] = v; } };
   const row = []; setCell(row, ix.sl, fromName); setCell(row, ix.al, it.spot.name); setCell(row, ix.how, it.ea.mode === 'walk' ? 'Walk' : 'Taxi');
   const at = t >= 0 ? t : k + 1;                                                                 // right before the departing step, so notes like "ผ่านตม." stay where they were
-  { const e = earliestStart(d, at); if (e) { setCell(row, ix.st, fmtT(e.m)); const tv = Math.round(it.ea && (it.ea.min || it.ea.mins) || 0); if (tv > 0) setCell(row, ix.at, fmtT(e.m + tv)); } }          // same no-overlap rule: start >= the previous stop's end
+  { const e = earliestStart(d, at), tv = Math.round(it.ea && (it.ea.min || it.ea.mins) || 0), t0 = Math.max(e ? e.m : 0, it.dep != null ? it.dep : 0); if (e || it.dep != null) { setCell(row, ix.st, fmtT(t0)); if (tv > 0) { setCell(row, ix.at, fmtT(t0 + tv)); if (it.S > 0) setStayCell(row, it.S); } } }          // same no-overlap rule: start >= the previous stop's end
   d.steps.splice(at, 0, stepFromRow(row, ix, at === 0));
   if (t >= 0) { const nx = d.steps[at + 1]; setCell(nx._row, ix.sl, it.spot.name); d.steps[at + 1] = stepFromRow(nx._row, ix, false); }
-  const sh = followShift(d, at, 0); if (sh && sh.delta > 0) shiftFrom(d, at + 1, sh.delta);
+  const sh = followShift(d, at, it.S || 0); if (sh && sh.delta > 0) shiftFrom(d, at + 1, sh.delta);
   ui.day = it.di; renderPlan(); renderSpots(); scheduleSave(); toast(`แทรก “${it.spot.name}” เข้าแผน ${dayTitle(d, it.di)} แล้ว` + (sh && sh.delta > 0 ? ` · จะเลื่อนจุดถัดไปไป ${fmtT(sh.to)}` : ''), 4500);
 }
 function removeIdea(gi, ii) {
@@ -1605,10 +1655,14 @@ async function addToPlanDialog(name, idea) {
   <div id="apGuard"><button type="button" class="tag" id="apChip" hidden></button><div class="warn-in" id="apWarn" hidden></div></div>
   <label>วิธีเดินทาง</label><input name="how" placeholder="Walk / Taxi / Metro"><div class="chips reuse" id="reuseHow2">${reuseLists().how.map(n => `<button type="button" class="tag" data-v="${esc(n)}">${esc(n)}</button>`).join('')}</div>
   <label>เวลาเดินทาง (นาที)</label><input name="trav" type="number" inputmode="numeric" min="0" placeholder="เช่น 20">
+  <label>อยู่ที่นั่น (นาที)</label><input name="stay" type="number" inputmode="numeric" min="0" max="720" value="60">
+  <div class="ctx fit" id="apWin" aria-live="polite" hidden></div>
   <div class="btns"><button value="ok" class="btn pri">เพิ่มเข้าแผน</button><button value="x" class="btn" formnovalidate>ยกเลิก</button></div></form>`);
   { const F2 = $('form', d).elements, g = () => { const day = p.days[+F2.day.value], e = earliestStart(day, day.steps.length), chip = $('#apChip', d), w = $('#apWarn', d); chip.hidden = !e; w.hidden = true; if (!e) return; chip.textContent = 'เริ่มได้ตั้งแต่ ' + fmtT(e.m); chip.onclick = () => { F2.time.value = fmtT(e.m).replace('.', ':'); g(); };
     const t = F2.time.value; if (t) { const mm = +t.slice(0, 2) * 60 + +t.slice(3, 5), k = day.steps.findIndex(st => { const x = tm(st.time); return x && x[0] * 60 + x[1] > mm; }), e2 = earliestStart(day, k >= 0 ? k : day.steps.length); if (e2 && startClash(fmtT(mm), e2)) { w.hidden = false; w.innerHTML = ic('warn') + '<span>เวลาเริ่มชนกับรายการก่อนหน้า — เริ่มได้ตั้งแต่ ' + fmtT(e2.m) + '</span>'; } } };
-    F2.day.addEventListener('change', g); F2.time.addEventListener('input', g); g(); }
+    F2.day.addEventListener('change', g); F2.time.addEventListener('input', g); g();
+    const win = () => { const w = $('#apWin', d), a = F2.time.value ? +F2.time.value.slice(0, 2) * 60 + +F2.time.value.slice(3, 5) : null, tv = F2.trav.value === '' ? null : +F2.trav.value, sy = F2.stay.value === '' ? null : +F2.stay.value; w.hidden = !(a != null && tv != null && sy > 0); if (sy > STAY_MAX) { w.hidden = false; w.innerHTML = `${ic('warn')} ${STAY_MSG}`; return; } if (!w.hidden) w.innerHTML = `${ic('clock')} ถึง ${fmtT(a + tv)} · อยู่ที่นั่น ${fmtT(a + tv)}–${fmtT(a + tv + sy)} (${sy} นาที)`; };
+    ['time', 'trav', 'stay'].forEach(n => F2[n].addEventListener('input', win)); win(); }
   $$('#reuseHow2 .tag', d).forEach(b => b.onclick = () => { $('form', d).elements.how.value = b.dataset.v; });
   $('form', d).onsubmit = ev => {
     if (ev.submitter && ev.submitter.value !== 'ok') return;
@@ -1622,11 +1676,13 @@ async function addToPlanDialog(name, idea) {
     const setCell = (row, c, v) => { if (c >= 0) { while (row.length <= c) row.push(''); row[c] = v; } };
     const row = []; if (t) setCell(row, ix.st, t.replace(':', '.')); setCell(row, ix.sl, from); setCell(row, ix.al, name);
     if (String(f.get('how') || '').trim()) setCell(row, ix.how, String(f.get('how')).trim());
-    if (t && f.get('trav') !== '' && +f.get('trav') >= 0) setCell(row, ix.at, fmtT(mins + +f.get('trav')));
+    const sy = String(f.get('stay') || '').trim(); if (stayBad(sy)) { ev.preventDefault(); return toast(STAY_MSG, 3500); }
+    const hasAt = t && f.get('trav') !== '' && +f.get('trav') >= 0;
+    if (hasAt) { setCell(row, ix.at, fmtT(mins + +f.get('trav'))); if (+sy > 0) setStayCell(row, +sy); }
     day.steps.splice(at, 0, stepFromRow(row, ix, at === 0));
     const nx = day.steps[at + 1];
     if (nx && from && qName(nx.from) === qName(from)) { setCell(nx._row, ix.sl, name); day.steps[at + 1] = stepFromRow(nx._row, ix, false); }
-    const sh = followShift(day, at, 0); if (sh && sh.delta > 0) shiftFrom(day, at + 1, sh.delta);
+    const sh = followShift(day, at, hasAt && +sy > 0 ? +sy : 0); if (sh && sh.delta > 0) shiftFrom(day, at + 1, sh.delta);
     if (idea) removeIdea(idea.gi, idea.ii);
     ui.day = di; renderPlan(); if (ui.tab === 'spots') renderSpots(); scheduleSave(); toast(`เพิ่ม “${name}” เข้า ${dayTitle(day, di)} แล้ว` + (sh && sh.delta > 0 ? ` · จะเลื่อนจุดถัดไปไป ${fmtT(sh.to)}` : ''), 4500);
   };
@@ -1712,7 +1768,7 @@ async function saveSpot(s, dayIdx) {
   s.c = { lat: s.lat, lng: s.lng }; data.spots = data.spots.filter(x => norm(x.name) !== norm(s.name)); data.spots.push(s); data.places[norm(s.name)] = s.c;
   ui.ver++; renderSpots(); renderFilters(); drawMap(false);          // the suggestions are recomputed by this render: nothing else to press
   const r = analyzeSpot(s), row = [s.name, +s.lat.toFixed(6), +s.lng.toFixed(6), s.note, s.type, s.meal, s.cuisine];
-  const found = r.fit ? `แทรกหลัง ${r.fit.a.name} ช่วง ${fmtT(r.fit.a.m)}–${fmtT(r.fit.b.m)} ได้` : r.near[0] && r.near[0].d <= 8000 ? `ใกล้ ${r.near[0].stop.name} ${dist(r.near[0].d)} (${legTxt(r.near[0].est)})` : '';
+  const found = r.fit ? `แทรกหลัง ${r.fit.a.name}  · อยู่ที่นั่น ${fmtT(r.fit.vm)}–${fmtT(r.fit.vm + r.fit.S)} ได้` : r.near[0] && r.near[0].d <= 8000 ? `ใกล้ ${r.near[0].stop.name} ${dist(r.near[0].d)} (${legTxt(r.near[0].est)})` : '';
   if (sheetApi.on()) { try { await sheetApi.call('upsert', { tab: trip().placesTab || 'Places', header: ['Name', 'Lat', 'Lng', 'Note', 'Type', 'Meal', 'Cuisine'], key: s.name, keyCol: 0, values: row }); toast('บันทึกแล้ว' + (found ? ' — ' + found : ''), 4500); } catch (e) { toast(e.message); } }
   else copyText(row.join('\t'), 'ยังไม่ได้เชื่อมต่อชีต — คัดลอกแถวแล้ว วางในแท็บ ' + (trip().placesTab || 'Places'));
   if (dayIdx !== '' && dayIdx != null && data.plan) {

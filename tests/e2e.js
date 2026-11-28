@@ -67,7 +67,7 @@ const { open, settle, check, finish, FAKE, ALMATY } = require('./lib');
   s = await open(); p = s.p; await settle(s);
   await p.evaluate(() => switchTrip('priv:macau')); await p.waitForTimeout(2300);
   check('D1 day bar has one pill per day', await p.evaluate(() => document.querySelectorAll('#homeDays .pill[data-day]').length) === FAKE.macau.days);
-  check('D2 cards show travel + stay durations', await p.evaluate(() => /เดินทาง 30 นาที/.test(document.getElementById('tl').innerText) && /อยู่ที่นั่น 1 ชม\. 30 น\./.test(document.getElementById('tl').innerText)));
+  check('D2 cards show travel + the stay window "อยู่ที่นี่ 09.30–11.00 (90 นาที)"', await p.evaluate(() => /เดินทาง 30 นาที/.test(document.getElementById('tl').innerText) && /อยู่ที่นี่ 09\.30–11\.00 \(90 นาที\)/.test(document.getElementById('tl').innerText)));
   await p.click('#editBtn'); await p.waitForTimeout(400);
   check('D3 private trip: edit mode needs no edit code and no PIN', await p.evaluate(() => ui.edit));
   await p.evaluate(() => stepDialog(0)); await p.waitForTimeout(300);
@@ -142,7 +142,7 @@ const { open, settle, check, finish, FAKE, ALMATY } = require('./lib');
   await p.evaluate(() => { ui.day = 3; ui.edit = false; renderPlan(); addToPlanDialog('Spot Zed', null); }); await p.waitForTimeout(300);
   await p.selectOption('#dlg [name=day]', '3'); await p.fill('#dlg input[name=time]', '09:40'); await p.fill('#dlg input[name=trav]', '240'); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(800);
   const R5 = await p.evaluate(() => data.plan.days[3].steps.filter(x => isTime(x.time)).map(x => x.time + '>' + x.toTime).join(' '));
-  check('R5 Places/idea insert that ends after the next timed stop starts pushes that stop (09.40>13.40 then 13.40>14.00)', /09\.40>13\.40 13\.40>14\.00/.test(R5), R5);
+  check('R5 Places/idea insert (stay 60 prefilled) that ends after the next timed stop starts pushes that stop (09.40>13.40, stay to 14.40, then 14.40>15.00)', /09\.40>13\.40 14\.40>15\.00/.test(R5), R5);
   { const ok = await p.evaluate(() => data.plan.days.every(d => { let end = null; return d.steps.filter(x => isTime(x.time) && tmin(x.toTime) != null).every(x => { const a = tmin(x.time); let e = tmin(x.toTime); const okk = end == null || a >= end || a + 1440 >= end && end >= 1440; end = e < a ? e + 1440 : e; return okk; }); }));
     check('R6 after all these saves no day has overlapping timed stops', ok); }
   /* R7: r7drag-reorder must not create overlapping / out-of-order times */
@@ -898,6 +898,8 @@ const { open, settle, check, finish, FAKE, ALMATY } = require('./lib');
   const hdr = s.rpc.filter(r => r.fn === 'append_row' && r.a.p_tab === 'Locks'), up = s.rpc.filter(r => r.fn === 'upsert_row' && r.a.p_tab === 'Locks').pop();
   const L1 = await p.evaluate(() => ({ btn: document.getElementById('lockBtn').innerText.trim(), dis: document.getElementById('editBtn').disabled, badge: document.getElementById('lockBadge') && document.getElementById('lockBadge').innerText, tl: document.getElementById('tl').classList.contains('locked'), cls: window.__cls, h: document.getElementById('lockBtn').getBoundingClientRect().height }));
   check('P3b lock: written to the shared tab Locks (header row once + upsert Day|1|who|time), button becomes "ปลดล็อก", edit disabled, badge "ล็อกอยู่" (nobody is recorded: no identity)', hdr.length === 1 && hdr[0].a.p_cells[0] === 'Day' && !!up && up.a.p_key === L0.label && up.a.p_cells[0] === L0.label && up.a.p_cells[1] === '1' && up.a.p_cells[2] === '' && !isNaN(Date.parse(up.a.p_cells[3])) && up.a.code === '' && L1.btn === 'ปลดล็อก' && L1.dis && /ล็อกอยู่/.test(L1.badge) && !/Nine/.test(L1.badge) && L1.tl && L1.h >= 44, JSON.stringify({ hdr: hdr.length, up: up && up.a, L1 }));
+  { const s2 = await open({ init: CLSK, locks: [['Day', 'Locked', 'By', 'Time']] }); await s2.p.click('[data-tab=plan]'); await s2.p.waitForTimeout(500); await s2.p.click('#lockBtn'); await s2.p.waitForTimeout(900);
+    check('P3b2 Locks tab already has its header: locking only upserts, the header is NOT appended again', s2.rpc.filter(r => r.fn === 'append_row' && r.a.p_tab === 'Locks').length === 0 && s2.rpc.filter(r => r.fn === 'upsert_row' && r.a.p_tab === 'Locks').length === 1); await s2.b.close(); }
   check('P3c locking causes no layout shift (CLS <= 0.05)', L1.cls <= 0.05, String(L1.cls));
   await p.evaluate(() => toggleEdit()); await p.waitForTimeout(200);
   check('P3d a locked day cannot be edited: toggleEdit refuses with a toast, edit mode stays off', await p.evaluate(() => !ui.edit && /ถูกล็อก/.test(document.getElementById('toast').textContent)));
@@ -986,6 +988,54 @@ const { open, settle, check, finish, FAKE, ALMATY } = require('./lib');
   check('P4g nothing of the quick-info card is left in the documents tab', await p.evaluate(() => !document.getElementById('infoCard') && !document.getElementById('infTaxi') && !/ข้อมูลด่วน|Test Hotel/.test(document.getElementById('tab-docs').innerText)));
   await s.b.close();
 
+  /* S: stay window per stop (optional "Stay" column) */
+  s = await open({ active: 'priv:macau' }); p = s.p; await settle(s);
+  const swN = () => s.rpc.filter(r => r.fn === 'private_write' && r.a.p_op === 'save').length, lastSave = () => s.rpc.filter(r => r.fn === 'private_write' && r.a.p_op === 'save').pop();
+  await p.evaluate(() => { ui.day = 1; renderPlan(); });
+  const S1 = await p.evaluate(() => { const st = data.plan.days[1].steps, w = stayWindow(st, st.length - 1), w0 = stayWindow(st, 0), cards = document.querySelectorAll('#tl .staychip'), r = cards[cards.length - 1].getBoundingClientRect(); return { colStay: data.plan.cols.stay, last: w && w.kind + ':' + fmtT(w.a) + '-' + fmtT(w.a + w.min), first: w0 && w0.kind, txt: cards[cards.length - 1].innerText, h: r.height, n: cards.length }; });
+  check('S1 old sheet (no Stay column): first stop shows the derived window, the LAST stop of the day (nothing after it) shows an estimated window "~11.20–12.20 (~60 นาที)"; chip is >= 44 px', S1.colStay === -1 && S1.first === 'derived' && S1.last === 'est:11.20-12.20' && /อยู่ที่นี่ ~11\.20–12\.20 \(~60 นาที\)/.test(S1.txt) && S1.h >= 43.5 && S1.n === 2, JSON.stringify(S1));
+  await p.evaluate(() => { ui.edit = true; renderPlan(); stepDialog(0); }); await p.waitForTimeout(300);
+  const sv0 = swN(); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(1500);
+  const S2a = lastSave(); check('S2a saving an untouched step on a sheet without the column does not add the Stay column', swN() > sv0 && !S2a.a.p_payload[0].includes('Stay'), JSON.stringify(S2a && S2a.a.p_payload[0]));
+  await p.evaluate(() => { ui.edit = false; renderPlan(); });
+  await p.click('#tl .staychip >> nth=1'); await p.waitForSelector('#sqChips');
+  await p.fill('#dlg [name=min]', '45'); const e45 = await p.inputValue('#dlg [name=end]');
+  await p.fill('#dlg [name=end]', '13.00'); const m100 = await p.inputValue('#dlg [name=min]');
+  await p.click('#sqChips [data-m="30"]'); const e30 = await p.inputValue('#dlg [name=end]');
+  check('S2b chip sheet: minutes <-> end time both ways (45 min -> 12.05, 13.00 -> 100 min, chip 30 -> 11.50)', e45 === '12.05' && m100 === '100' && e30 === '11.50', [e45, m100, e30].join());
+  await p.fill('#dlg [name=min]', '100'); const sv1 = swN(); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(1500);
+  const S2c = lastSave(), hd = S2c.a.p_payload[0], si = hd.indexOf('Stay');
+  check('S2c saving a stay adds the "Stay" column (header + that row only = 100) and the chip shows 11.20–13.00 (100 นาที)', swN() > sv1 && si > 0 && S2c.a.p_payload.filter(r => r[si] === '100').length === 1 && await p.evaluate(() => /อยู่ที่นี่ 11\.20–13\.00 \(100 นาที\)/.test(document.getElementById('tl').innerText)), JSON.stringify(hd));
+  await p.evaluate(() => { ui.day = 2; renderPlan(); });
+  await p.click('#tl .staychip >> nth=0'); await p.waitForSelector('#sqChips'); await p.fill('#dlg [name=min]', '150'); await p.waitForTimeout(100);
+  const S3a = await p.evaluate(() => ({ note: !document.getElementById('sqNote').hidden && document.getElementById('sqNote').innerText }));
+  await p.click('#dlg button[value=ok]'); await p.waitForTimeout(1200);
+  const S3 = await p.evaluate(() => { const st = data.plan.days[2].steps; return { a: st[0].toTime, n: st[2].time + '>' + st[2].toTime, st: st[0].stay, toast: document.getElementById('toast').textContent }; });
+  check('S3 chip edit that makes the next stop overlap (arrive 09.30 + 150 = 12.00 > 11.00): visible note "จะเลื่อนจุดถัดไปไป 12.00" in the sheet + toast, next stop pushed to 12.00>12.20, Stay stored 150', /จะเลื่อนจุดถัดไปไป 12\.00/.test(S3a.note) && S3.n === '12.00>12.20' && S3.st === '150' && /จะเลื่อนจุดถัดไปไป 12\.00/.test(S3.toast), JSON.stringify({ S3a, S3 }));
+  await p.evaluate(() => { const d = data.plan.days[2]; data.locks = { ...(data.locks || {}), [d.label]: { locked: true, who: 'x', at: '' } }; renderPlan(); });
+  const S4 = await p.evaluate(() => [...document.querySelectorAll('#tl .staychip')].every(b => b.disabled) && document.querySelectorAll('#tl .staychip').length > 0);
+  { await p.evaluate(() => { ui.day = 1; ui.edit = false; data.locks = {}; renderPlan(); }); const w9 = swN(), before9 = await p.evaluate(() => data.plan.days[1].steps.map(x => x.time + '>' + x.toTime).join());
+    await p.click('#tl .staychip >> nth=1'); await p.waitForSelector('#sqChips'); await p.fill('#dlg [name=min]', '9999'); const n9 = await p.evaluate(() => ({ note: !document.getElementById('sqNote').hidden && document.getElementById('sqNote').innerText }));
+    await p.click('#dlg button[value=ok]'); await p.waitForTimeout(500);
+    const a9 = await p.evaluate(() => ({ open: document.getElementById('dlg').open, steps: data.plan.days[1].steps.map(x => x.time + '>' + x.toTime).join() }));
+    check('S6 stay 9999 is rejected: inline "ไม่เกิน 12 ชม.", dialog stays open, nothing written, no stop moved', /ไม่เกิน 12 ชม\./.test(n9.note) && a9.open && swN() === w9 && a9.steps === before9, JSON.stringify({ n9, a9 }));
+    await p.evaluate(() => document.getElementById('dlg').close());
+    check('S6b a sheet Stay value above 720 is ignored when read (no stay window from 9999)', await p.evaluate(() => stayRaw({ stay: '9999' }) === null && stayRaw({ stay: '720' }) === 720 && stayBad('721') && !stayBad('720')));
+    await p.evaluate(() => { ui.edit = true; renderPlan(); stepDialog(0); }); await p.waitForTimeout(300); await p.fill('#dlg [name=stay]', '9999'); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(500);
+    check('S6c step dialog: stay 9999 is refused too (dialog open, nothing written)', await p.evaluate(() => document.getElementById('dlg').open && !document.getElementById('stMax').hidden) && swN() === w9);
+    await p.evaluate(() => { document.getElementById('dlg').close(); ui.edit = false; renderPlan(); }); }
+  check('S4 locked day: every stay chip is disabled', S4);
+  await p.evaluate(() => { data.locks = {}; renderPlan(); });
+  /* suggestion window: arrival = leave of the previous stop + travel, stay = min(default, free gap), none under 20 min, also after the LAST stop */
+  await p.evaluate(() => { window.__a = { q: 'a', name: 'A', c: { lat: 22.2, lng: 113.55 }, m: 600, lv: 660, est: false, di: 1 }; });
+  const S5 = await p.evaluate(() => {
+    const a = window.__a, spot = { name: 'Zed', type: 'sight', c: { lat: 22.2025, lng: 113.5515 } }, mk = (bm, withB) => analyzeSpot(spot, { pending: 0, days: [{ di: 1, wps: withB ? [a, { q: 'b', name: 'B', c: { lat: 22.205, lng: 113.553 }, m: bm, est: false, di: 1 }] : [a] }] }).fit;
+    const last = mk(0, false), roomy = mk(900, true), tight = mk(660 + 6 + 15, true);
+    return { last: last && [last.vm, last.S, !!last.b], roomy: roomy && [roomy.vm >= 660 && !!roomy.b && roomy.a.name === 'A', roomy.S, roomy.vm + roomy.S + roomy.eb.min + 5 <= 900], tight: tight && tight.a.name, txt: roomy && insightHtml({ near: [], fit: roomy, pending: 0 }).replace(/<[^>]+>/g, ' ') };
+  });
+  check('S5 suggestions use LEAVE times: after a last stop (11.00 leave) -> window starts after it with the default stay; with a later stop the stay is min(default, gap) and the text shows "อยู่ที่นั่น hh.mm–hh.mm"; a gap < 20 min gives no suggestion', S5.last && S5.last[0] > 660 && S5.last[1] >= 30 && S5.last[2] === false && S5.roomy && S5.roomy[0] && S5.roomy[2] && S5.tight !== 'A' && /แทรกหลัง\s+A\s+· เดินทาง \d+ นาที · อยู่ที่นั่น \d\d\.\d\d–\d\d\.\d\d/.test(S5.txt), JSON.stringify(S5));
+  await s.b.close();
+
   /* P5 places: one page, empty state, add -> instant insight + suggestion */
   s = await open({ clock: '2026-07-10T10:00:00', active: 'priv:macau', init: CLSK }); p = s.p; await settle(s);
   await s.ctx.route(/nominatim\.openstreetmap\.org/, r => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(/Named%20Cafe|Named Cafe/.test(decodeURIComponent(r.request().url())) ? [{ lat: '22.2105', lon: '113.5525' }] : []) }));
@@ -1001,13 +1051,15 @@ const { open, settle, check, finish, FAKE, ALMATY } = require('./lib');
   await p.click('#addSpotEmpty'); await p.waitForSelector('#dlg input[name=u]');
   await p.fill('#dlg input[name=u]', (w0.lat + 0.0025).toFixed(5) + ', ' + (w0.lng + 0.0015).toFixed(5)); await p.waitForFunction(() => /พบพิกัด/.test(document.getElementById('detect').textContent), null, { timeout: 8000 });
   const ins = await p.evaluate(() => ({ t: document.getElementById('insight').innerText, name: document.querySelector('#dlg input[name=name]').value }));
-  check('P5b the dialog finds the nearest plan stop + whether it fits BEFORE saving (distance, walk time, "แทรกหลัง X ช่วง hh.mm–hh.mm")', /ใกล้ Place 0A/.test(ins.t) && /เดิน \d+ นาที/.test(ins.t) && /แทรกหลัง Place 0A ช่วง \d\d\.\d\d–\d\d\.\d\d, เดิน \d+ นาที/.test(ins.t), ins.t);
+  check('P5b the dialog finds the nearest plan stop + whether it fits BEFORE saving (distance, walk time, "แทรกหลัง X ช่วง hh.mm–hh.mm")', /ใกล้ Place 0A/.test(ins.t) && /เดิน \d+ นาที/.test(ins.t) && /แทรกหลัง Place 0A · เดินทาง \d+ นาที · อยู่ที่นั่น \d\d\.\d\d–\d\d\.\d\d/.test(ins.t), ins.t);
   await p.fill('#dlg input[name=name]', 'Test Sight'); await p.click('#dlg #typeSeg [data-t=sight]'); await p.click('#dlg button[value=ok]'); await p.waitForTimeout(500);
   const sg1 = await p.evaluate(() => ({ sug: document.querySelectorAll('.spot.sug').length, t: (document.querySelector('.spot.sug') || {}).innerText || '', btn: !!document.querySelector('[data-addplan]'), toast: document.getElementById('toast').textContent, list: document.querySelectorAll('.spot[data-spot]').length, listT: (document.querySelector('.spot[data-spot]') || {}).innerText || '' }));
   const sw = s.rpc.filter(r => r.fn === 'private_write' && r.a.p_tab === 'Places').pop();
-  check('P5c right after saving (no extra step): a Suggestion card "แทรกหลัง Place 0A ช่วง ..." with the "แทรกเข้าแผน" button; the place is listed with its nearest stops; saved to Places', sg1.sug === 1 && /แทรกหลัง Place 0A ช่วง/.test(sg1.t) && sg1.btn && /แทรกเข้าแผน/.test(sg1.t) && /Test Sight/.test(sg1.t) && sg1.list === 1 && /ใกล้ Place 0A/.test(sg1.listT) && /แทรกหลัง Place 0A/.test(sg1.toast) && !!sw && sw.a.p_op === 'upsert' && sw.a.p_payload.key === 'Test Sight', JSON.stringify(sg1) + JSON.stringify(sw && sw.a.p_payload));
+  check('P5c right after saving (no extra step): a Suggestion card "แทรกหลัง Place 0A ช่วง ..." with the "แทรกเข้าแผน" button; the place is listed with its nearest stops; saved to Places', sg1.sug === 1 && /แทรกหลัง Place 0A · เดินทาง \d+ นาที · อยู่ที่นั่น \d\d\.\d\d–\d\d\.\d\d/.test(sg1.t) && sg1.btn && /แทรกเข้าแผน/.test(sg1.t) && /Test Sight/.test(sg1.t) && sg1.list === 1 && /ใกล้ Place 0A/.test(sg1.listT) && /แทรกหลัง Place 0A/.test(sg1.toast) && !!sw && sw.a.p_op === 'upsert' && sw.a.p_payload.key === 'Test Sight', JSON.stringify(sg1) + JSON.stringify(sw && sw.a.p_payload));
   const before = await p.evaluate(() => data.plan.days[0].steps.map(s => (s.from || '') + '>' + (s.to || '')).join('|'));
   await p.click('[data-addplan="0"]'); await p.waitForTimeout(1600);
+  const insSv = s.rpc.filter(r => r.fn === 'private_write' && r.a.p_op === 'save').pop(), insSi = insSv && insSv.a.p_payload[0].indexOf('Stay');
+  check('P5d2 inserting a suggestion writes its arrive time AND the Stay minutes (new "Stay" column)', !!insSv && insSi > 0 && insSv.a.p_payload.some(r => r.includes('Test Sight') && /^\d+$/.test(r[insSi] || '') && +r[insSi] >= 20 && /^\d\d\.\d\d$/.test(r[insSv.a.p_payload[0].indexOf('Arrive time')])), JSON.stringify(insSv && insSv.a.p_payload.filter(r => r.includes('Test Sight'))));
   const after = await p.evaluate(() => ({ st: data.plan.days[0].steps.map(s => (s.from || '') + '>' + (s.to || '')).join('|'), how: data.plan.days[0].steps.find(s => s.to === 'Test Sight').how, sug: document.querySelectorAll('.spot.sug').length }));
   const sv2 = s.rpc.filter(r => r.fn === 'private_write' && r.a.p_op === 'save').pop();
   check('P5d one tap "แทรกเข้าแผน": the stop is inserted right after Place 0A (and the next leg starts from it), saved with the plan, the suggestion disappears', before !== after.st && /Place 0A>Test Sight\|Test Sight>/.test(after.st) && after.how === 'Walk' && after.sug === 0 && !!sv2 && sv2.a.p_payload.some(r => r.includes('Test Sight')), JSON.stringify({ before, after }));
